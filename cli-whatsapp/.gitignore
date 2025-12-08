@@ -1,0 +1,5 @@
+node_modules/
+whatsapp-session/
+resultados.csv
+respuestas.csv
+*.log

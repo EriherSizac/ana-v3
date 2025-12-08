@@ -1,0 +1,15 @@
+{
+  "name": "whatsapp-cli-sender",
+  "version": "1.0.0",
+  "description": "CLI para envío masivo de WhatsApp",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.48.2",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0"
+  }
+}

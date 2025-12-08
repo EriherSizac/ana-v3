@@ -1,0 +1,13 @@
+Hola {{first_name}},
+
+Te escribo para informarte sobre tu crédito:
+
+📋 Número de crédito: {{credit}}
+💳 Saldo pendiente: ${{total_balanc}}
+🎁 Descuento disponible: {{discount}}%
+📦 Producto: {{product}}
+
+¿Tienes alguna pregunta?
+
+Saludos,
+Equipo de Cobranza
