@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "start-image": "node index.js --clipboard-media"
   },
   "dependencies": {
     "playwright": "^1.48.2",

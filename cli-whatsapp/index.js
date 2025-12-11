@@ -17,6 +17,7 @@ const CONFIG = {
   delayBetweenMessages: 5000, // 5 segundos entre mensajes
   waitForResponse: 10000, // 10 segundos para esperar respuesta
   typingSpeed: 50, // Milisegundos entre cada carácter (más alto = más lento)
+  useClipboardMedia: false, // Si es true, intentará pegar media desde el portapapeles antes del texto
 };
 
 let browser = null;
@@ -150,6 +151,30 @@ async function sendMessage(contact, messageTemplate) {
         sent_at: new Date().toISOString(),
         response: '',
       };
+    }
+
+    // Si está activado el modo de media por portapapeles, pegar y enviar antes del texto
+    if (CONFIG.useClipboardMedia) {
+      try {
+        const messageBoxSelector = 'div[contenteditable="true"][data-tab][aria-placeholder="Escribe un mensaje"]';
+        await page.waitForSelector(messageBoxSelector, { timeout: 30000 });
+        await page.click(messageBoxSelector);
+        await page.waitForTimeout(500);
+
+        // Ctrl+V (Windows) para pegar lo que haya en el portapapeles
+        await page.keyboard.down('Control');
+        await page.keyboard.press('v');
+        await page.keyboard.up('Control');
+
+        // Esperar a que se cargue la previsualización y enviar con Enter
+        await page.waitForTimeout(1500);
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(2000);
+
+        console.log('📎 Media pegada desde portapapeles y enviada');
+      } catch (e) {
+        console.log(`⚠️  No se pudo pegar media desde portapapeles para ${contact.phone}: ${e.message}`);
+      }
     }
 
     // Buscar el campo de mensaje del chat (no el buscador), usando el placeholder "Escribe un mensaje"
@@ -384,6 +409,14 @@ async function main() {
     console.log('─────────────────────────────────────');
     console.log(messageTemplate);
     console.log('─────────────────────────────────────\n');
+
+    // Activar modo media por portapapeles si se pasa el flag en la línea de comandos
+    if (process.argv.includes('--clipboard-media')) {
+      CONFIG.useClipboardMedia = true;
+      console.log('📎 Modo media por portapapeles ACTIVADO');
+      console.log('   Asegúrate de tener una imagen/video copiado antes de cada envío.');
+      console.log('─────────────────────────────────────\n');
+    }
 
     // Leer contactos
     const contacts = await readContacts();
