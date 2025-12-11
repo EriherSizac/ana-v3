@@ -15,7 +15,7 @@ const CONFIG = {
   responsesCsv: path.join(__dirname, 'respuestas.csv'),
   sessionPath: path.join(__dirname, 'whatsapp-session'),
   delayBetweenMessages: 5000, // 5 segundos entre mensajes
-  waitForResponse: 15000, // 15 segundos para esperar respuesta (aumentado)
+  waitForResponse: 10000, // 10 segundos para esperar respuesta
   typingSpeed: 50, // Milisegundos entre cada carácter (más alto = más lento)
 };
 
@@ -111,7 +111,7 @@ async function initWhatsApp() {
   console.log('📱 Si ves un código QR, escanéalo con tu teléfono');
   
   // Esperar a que aparezca el panel de chats (señal de que está conectado)
-  await page.waitForSelector('#side', { timeout: 60000 });
+  await page.waitForSelector('#side', { timeout: 300000 });
   
   console.log('✅ WhatsApp Web conectado!');
   await page.waitForTimeout(2000);
@@ -130,25 +130,84 @@ async function sendMessage(contact, messageTemplate) {
     await page.goto(chatUrl, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(3000);
 
-    // Verificar si el número es válido
-    const invalidNumber = await page.$('text=El número de teléfono compartido');
+    // Verificar si el número es válido usando el modal de error (sin WhatsApp)
+    const invalidNumberTextSelector = 'text="El número de teléfono compartido a través de la dirección URL no es válido."';
+    let invalidNumber = null;
+    try {
+      // Esperar unos segundos por el modal de número inválido (buscando por texto en todo el DOM)
+      invalidNumber = await page.waitForSelector(invalidNumberTextSelector, { timeout: 8000 });
+    } catch (_) {
+      // Si no aparece el texto en ese tiempo, asumimos que el número sí tiene WhatsApp y seguimos
+      invalidNumber = null;
+    }
+
     if (invalidNumber) {
-      console.log(`❌ Número inválido: ${contact.phone}`);
+      console.log(`❌ Número inválido (no tiene WhatsApp): ${contact.phone}`);
       return {
         ...contact,
-        status: 'error',
-        error: 'Número inválido',
+        status: 'no_whatsapp',
+        error: 'No tiene WhatsApp',
         sent_at: new Date().toISOString(),
         response: '',
       };
     }
 
-    // Buscar el campo de mensaje (nuevo selector)
-    const messageBoxSelector = 'div[contenteditable="true"][data-tab="10"]';
-    await page.waitForSelector(messageBoxSelector, { timeout: 10000 });
-    
+    // Buscar el campo de mensaje del chat (no el buscador), usando el placeholder "Escribe un mensaje"
+    const messageBoxSelector = 'div[contenteditable="true"][data-tab][aria-placeholder="Escribe un mensaje"]';
+    try {
+      await page.waitForSelector(messageBoxSelector, { timeout: 30000 });
+    } catch (e) {
+      // Antes de marcar error genérico, revisamos si apareció el texto de número inválido
+      const maybeInvalid = await page.$(invalidNumberTextSelector);
+      if (maybeInvalid) {
+        console.log(`❌ Número inválido (no tiene WhatsApp) detectado tarde: ${contact.phone}`);
+        return {
+          ...contact,
+          status: 'no_whatsapp',
+          error: 'No tiene WhatsApp',
+          sent_at: new Date().toISOString(),
+          response: '',
+        };
+      }
+
+      // Si no hay modal, es un error real de UI
+      console.log(`❌ No se encontró el cuadro de mensaje para ${contact.phone}: ${e.message}`);
+      return {
+        ...contact,
+        status: 'error',
+        error: 'No se encontró el cuadro de mensaje en WhatsApp',
+        sent_at: new Date().toISOString(),
+        response: '',
+      };
+    }
+
     // Hacer clic en el campo para enfocarlo
-    await page.click(messageBoxSelector);
+    try {
+      await page.click(messageBoxSelector);
+    } catch (e) {
+      // Si al hacer clic el popup de número inválido intercepta el click, lo tratamos como no_whatsapp
+      const maybeInvalid = await page.$(invalidNumberTextSelector);
+      if (maybeInvalid) {
+        console.log(`❌ Número inválido (no tiene WhatsApp) al intentar enfocar el cuadro: ${contact.phone}`);
+        return {
+          ...contact,
+          status: 'no_whatsapp',
+          error: 'No tiene WhatsApp',
+          sent_at: new Date().toISOString(),
+          response: '',
+        };
+      }
+
+      // Otro tipo de error de click
+      console.log(`❌ Error al hacer clic en el cuadro de mensaje para ${contact.phone}: ${e.message}`);
+      return {
+        ...contact,
+        status: 'error',
+        error: 'No se pudo enfocar el cuadro de mensaje en WhatsApp',
+        sent_at: new Date().toISOString(),
+        response: '',
+      };
+    }
     await page.waitForTimeout(1000);
 
     // Escribir mensaje línea por línea con saltos de línea (más lento)
