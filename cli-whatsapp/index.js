@@ -173,6 +173,19 @@ async function sendMessage(contact, messageTemplate) {
 
         console.log('📎 Media pegada desde portapapeles y enviada');
       } catch (e) {
+        // Si no encontramos el cuadro de mensaje, puede ser porque el número es inválido
+        const maybeInvalid = await page.$('text="El número de teléfono compartido a través de la dirección URL no es válido."');
+        if (maybeInvalid) {
+          console.log(`❌ Número inválido (no tiene WhatsApp) detectado durante pegado de media: ${contact.phone}`);
+          return {
+            ...contact,
+            status: 'no_whatsapp',
+            error: 'No tiene WhatsApp',
+            sent_at: new Date().toISOString(),
+            response: '',
+          };
+        }
+
         console.log(`⚠️  No se pudo pegar media desde portapapeles para ${contact.phone}: ${e.message}`);
       }
     }
