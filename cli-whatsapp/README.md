@@ -1,6 +1,6 @@
-# 📱 WhatsApp CLI Mass Sender
+# 📱 WhatsApp CLI Mass Sender v2.0
 
-Sistema de línea de comandos para envío masivo de mensajes por WhatsApp con captura de respuestas.
+Sistema de línea de comandos para envío masivo de mensajes por WhatsApp con **sistema de dos ventanas**: una para automatización y otra para respuestas manuales.
 
 ## 🚀 Instalación
 
@@ -65,25 +65,55 @@ Descuento: {{discount}}
 npm start
 ```
 
+## 🪟 Sistema de Dos Ventanas
+
+El sistema ahora abre **DOS ventanas de WhatsApp** simultáneamente:
+
+### 🤖 Ventana de Automatización
+- **Propósito**: Envío masivo automatizado
+- **Sesión**: `whatsapp-session/` (tu cuenta principal)
+- **Características**:
+  - Overlay de protección (no se puede interactuar)
+  - Envío automático de mensajes
+  - Captura de respuestas
+  - Se cierra automáticamente al terminar
+
+### 💬 Ventana Manual
+- **Propósito**: Responder mensajes manualmente
+- **Sesión**: `whatsapp-session-manual/` (segunda cuenta/teléfono)
+- **Características**:
+  - ✅ Puedes interactuar libremente
+  - ❌ Botones de llamada/videollamada ocultos
+  - ❌ Botón de audio/grabación oculto
+  - ❌ No puedes iniciar chats nuevos
+  - ✅ Solo responder a contactos existentes
+  - Permanece abierta hasta que presiones Ctrl+C
+
 ### Flujo del Programa:
 
 1. **Carga archivos**
    - Lee `contactos.csv`
    - Lee `mensaje.txt`
 
-2. **Abre WhatsApp Web**
-   - Se abre una ventana de Chromium
-   - Si es primera vez, escanea el código QR
-   - Si ya tienes sesión guardada, se conecta automáticamente
+2. **Abre ventanas según configuración**
+   - **Si hay contactos**: Abre ventana de automatización
+   - **Si `enableManualWindow: true`**: Abre ventana manual
+   - **Si NO hay contactos**: Solo abre ventana manual
 
-3. **Envía mensajes**
-   - Procesa cada contacto uno por uno
-   - Reemplaza las variables con los datos del contacto
-   - Envía el mensaje
-   - Espera 10 segundos por si hay respuesta
-   - Espera 5 segundos antes del siguiente mensaje
+3. **Ventana de Automatización** (si hay contactos)
+   - Escanea QR con tu teléfono principal
+   - Se activa overlay de protección
+   - Envía mensajes automáticamente
+   - Guarda resultados y respuestas
+   - Se cierra al terminar
 
-4. **Guarda resultados**
+4. **Ventana Manual** (si está habilitada)
+   - Escanea QR con OTRO teléfono/cuenta
+   - Muestra indicador "Modo Manual"
+   - Restricciones UI aplicadas
+   - Permanece abierta para responder
+
+5. **Guarda resultados** (solo automatización)
    - `resultados.csv` - Todos los contactos con estado de envío
    - `respuestas.csv` - Solo los que respondieron
 
@@ -112,18 +142,81 @@ phone,name,sent_at,response
 
 ## ⚙️ Configuración
 
-Puedes modificar estos valores en `index.js`:
+Puedes modificar estos valores en `config.js`:
 
 ```javascript
 const CONFIG = {
-  inputCsv: 'contactos.csv',           // Archivo de entrada
-  outputCsv: 'resultados.csv',         // Resultados completos
-  responsesCsv: 'respuestas.csv',      // Solo respuestas
-  sessionPath: 'whatsapp-session',     // Carpeta de sesión
-  delayBetweenMessages: 5000,          // 5 segundos entre mensajes
-  waitForResponse: 10000,              // 10 segundos esperando respuesta
+  inputCsv: 'contactos.csv',                    // Archivo de entrada
+  outputCsv: 'resultados.csv',                  // Resultados completos
+  responsesCsv: 'respuestas.csv',               // Solo respuestas
+  sessionPath: 'whatsapp-session',              // Sesión automatización
+  manualSessionPath: 'whatsapp-session-manual', // Sesión manual
+  delayBetweenMessages: 5000,                   // 5 segundos entre mensajes
+  waitForResponse: 10000,                       // 10 segundos esperando respuesta
+  useClipboardMedia: false,                     // Pegar media desde portapapeles
+  showOverlay: true,                            // 🛡️ Overlay en automatización
+  enableManualWindow: true,                     // 🔓 Abrir ventana manual
 };
 ```
+
+### Opciones importantes:
+
+- **`enableManualWindow`**: Si es `true`, abre la ventana manual. Si es `false`, solo automatización.
+- **`manualSessionPath`**: Carpeta de sesión separada para la ventana manual (requiere otro teléfono/cuenta)
+
+### 🛡️ Overlay de Protección
+
+El overlay de protección es una capa visual que cubre la ventana de WhatsApp durante la automatización para:
+
+- **Bloquear interacción** del usuario con la ventana automatizada
+- **Indicar visualmente** que la ventana está siendo automatizada
+- **Prevenir clics accidentales** que interrumpan el proceso
+
+**Características:**
+- Se activa automáticamente después de conectar WhatsApp
+- No bloquea el escaneo del código QR (se activa después)
+- Es semi-transparente para ver el progreso
+- Bloquea completamente la interacción (`pointer-events: auto`)
+- Persiste durante toda la automatización (se recrea cada segundo)
+- Se puede desactivar poniendo `showOverlay: false` en la configuración
+
+## 🎯 Casos de Uso
+
+### Caso 1: Envío masivo + Respuestas manuales
+**Escenario**: Tienes 100 contactos para enviar mensajes automáticos, pero quieres responder personalmente.
+
+**Configuración**:
+```javascript
+enableManualWindow: true  // Activar ventana manual
+```
+
+**Resultado**:
+- Ventana 1 (Automatización): Envía 100 mensajes automáticamente
+- Ventana 2 (Manual): Puedes responder a los que contesten
+
+### Caso 2: Solo respuestas manuales
+**Escenario**: No tienes contactos.csv o está vacío, solo quieres responder mensajes.
+
+**Configuración**:
+```javascript
+enableManualWindow: true  // Activar ventana manual
+```
+
+**Resultado**:
+- Solo se abre la ventana manual
+- Puedes responder libremente sin automatización
+
+### Caso 3: Solo automatización
+**Escenario**: Solo quieres envío masivo sin ventana manual.
+
+**Configuración**:
+```javascript
+enableManualWindow: false  // Desactivar ventana manual
+```
+
+**Resultado**:
+- Solo se abre la ventana de automatización
+- Se cierra al terminar
 
 ## 📝 Ejemplo Completo
 
@@ -159,16 +252,23 @@ npm start
 
 ```
 ╔════════════════════════════════════════╗
-║   WhatsApp CLI Mass Sender v1.0       ║
+║   WhatsApp CLI Mass Sender v2.0       ║
+║      Sistema de Dos Ventanas          ║
 ╚════════════════════════════════════════╝
 
-📝 Plantilla de mensaje cargada
-✅ 2 contactos cargados desde CSV
-📊 Total de contactos: 2
+📊 Contactos para automatización: 2
+🔓 Ventana manual: ACTIVADA
 
-🚀 Iniciando WhatsApp Web...
+📝 Plantilla de mensaje cargada
+─────────────────────────────────────
+Hola {{first_name}}, ...
+─────────────────────────────────────
+
+🤖 Iniciando WhatsApp Web (Automatización)...
 📱 Si ves un código QR, escanéalo con tu teléfono
-✅ WhatsApp Web conectado!
+✅ WhatsApp Web (Automatización) conectado!
+🛡️  Activando overlay de protección...
+✅ Overlay activado - La ventana está protegida
 
 [1/2] Procesando: Ana Martínez
 📤 Enviando a Ana Martínez (5215512345678)...
@@ -195,17 +295,38 @@ npm start
 💬 Respuestas recibidas: 1
 📊 Total procesados: 2
 
-✨ Proceso completado!
+✨ Proceso de automatización completado!
+
+═══════════════════════════════════════
+🔓 Abriendo ventana manual para respuestas...
+═══════════════════════════════════════
+
+🔓 Iniciando ventana manual de WhatsApp...
+⏳ Esperando a que WhatsApp Web (Manual) cargue...
+📱 Escanea el código QR con OTRO teléfono/cuenta
+✅ WhatsApp Web (Manual) conectado!
+🔒 Restricciones aplicadas a la ventana manual
+
+💬 Ventana manual lista para responder
+⚠️  Esta ventana permanecerá abierta
+   Presiona Ctrl+C para cerrar el programa
 ```
 
 ## ⚠️ Notas Importantes
 
-1. **Primera vez:** Tendrás que escanear el código QR
-2. **Sesión guardada:** La carpeta `whatsapp-session` guarda tu sesión
-3. **No cierres la ventana:** Déjala abierta durante todo el proceso
-4. **Formato de números:** Incluye código de país sin `+` (ej: 521234567890)
-5. **Retraso:** Usa mínimo 5 segundos entre mensajes para evitar bloqueos
-6. **Respuestas:** El sistema espera 10 segundos, ajusta si necesitas más tiempo
+### Sistema de Dos Ventanas
+1. **Dos cuentas necesarias:** Necesitas DOS teléfonos/cuentas de WhatsApp para usar ambas ventanas
+2. **Sesiones separadas:**
+   - `whatsapp-session/` → Cuenta principal (automatización)
+   - `whatsapp-session-manual/` → Segunda cuenta (manual)
+3. **Primera vez:** Escanea QR en cada ventana con su respectivo teléfono
+4. **Ventana manual:** Puedes desactivarla con `enableManualWindow: false`
+
+### General
+5. **Formato de números:** Incluye código de país sin `+` (ej: 521234567890)
+6. **Retraso:** Usa mínimo 5 segundos entre mensajes para evitar bloqueos
+7. **Respuestas:** Por defecto `waitForResponse: 0` (no espera). Cambia a 10000+ si quieres capturar respuestas
+8. **Overlay:** El overlay bloquea completamente la interacción con la ventana de automatización
 
 ## 🐛 Solución de Problemas
 
