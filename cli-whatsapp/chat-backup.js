@@ -267,6 +267,119 @@ async function clickChat(page, index) {
 }
 
 /**
+ * Hace scroll en la lista de contactos para asegurar que el chat en el índice dado esté visible
+ * @param {Object} page - Instancia de Playwright page
+ * @param {number} targetIndex - Índice del chat que queremos que esté visible
+ */
+async function scrollToChat(page, targetIndex) {
+  await page.evaluate((idx) => {
+    const paneSize = document.querySelector('#pane-side');
+    if (!paneSize) return;
+    
+    const chatRows = paneSize.querySelectorAll('[role="row"]');
+    if (chatRows[idx]) {
+      // Hacer scroll para que el elemento esté visible
+      chatRows[idx].scrollIntoView({ behavior: 'instant', block: 'center' });
+    } else {
+      // Si no existe, hacer scroll hacia abajo para cargar más
+      paneSize.scrollTop = paneSize.scrollHeight;
+    }
+  }, targetIndex);
+  await page.waitForTimeout(300);
+}
+
+/**
+ * Obtiene el chat en un índice específico (con scroll si es necesario)
+ * @param {Object} page - Instancia de Playwright page
+ * @param {number} index - Índice del chat
+ * @returns {Promise<Object|null>} Info del chat o null
+ */
+async function getChatAtIndex(page, index) {
+  // Primero hacer scroll para asegurar que el chat esté en el DOM
+  await scrollToChat(page, index);
+  
+  return await page.evaluate((idx) => {
+    const paneSize = document.querySelector('#pane-side');
+    if (!paneSize) return null;
+    
+    const chatRows = paneSize.querySelectorAll('[role="row"]');
+    const chat = chatRows[idx];
+    
+    if (!chat) return null;
+    
+    try {
+      const titleEl = chat.querySelector('span[dir="auto"][title]');
+      const title = titleEl ? titleEl.getAttribute('title') : `Chat ${idx + 1}`;
+      
+      const lastMsgEl = chat.querySelector('span[dir="ltr"]');
+      const lastMessage = lastMsgEl ? lastMsgEl.textContent : '';
+      
+      return {
+        index: idx,
+        title,
+        lastMessage,
+      };
+    } catch (e) {
+      return null;
+    }
+  }, index);
+}
+
+/**
+ * Cuenta el total de chats haciendo scroll completo
+ * @param {Object} page - Instancia de Playwright page
+ * @returns {Promise<number>} Total de chats
+ */
+async function countTotalChats(page) {
+  console.log('📜 Contando chats disponibles...');
+  
+  let maxCount = 0;
+  let lastCount = -1;
+  let noChangeCount = 0;
+  
+  // Hacer scroll hasta que no aparezcan más chats
+  while (noChangeCount < 3) {
+    const currentCount = await page.evaluate(() => {
+      const paneSize = document.querySelector('#pane-side');
+      if (!paneSize) return 0;
+      return paneSize.querySelectorAll('[role="row"]').length;
+    });
+    
+    if (currentCount > maxCount) {
+      maxCount = currentCount;
+    }
+    
+    if (currentCount === lastCount) {
+      noChangeCount++;
+    } else {
+      noChangeCount = 0;
+    }
+    lastCount = currentCount;
+    
+    // Scroll hacia abajo
+    await page.evaluate(() => {
+      const paneSize = document.querySelector('#pane-side');
+      if (paneSize) {
+        paneSize.scrollTop = paneSize.scrollHeight;
+      }
+    });
+    await page.waitForTimeout(400);
+  }
+  
+  // Volver al inicio
+  await page.evaluate(() => {
+    const paneSize = document.querySelector('#pane-side');
+    if (paneSize) {
+      paneSize.scrollTop = 0;
+    }
+  });
+  await page.waitForTimeout(300);
+  
+  console.log(`✅ Total de chats encontrados: ${maxCount}`);
+  return maxCount;
+}
+
+/**
  * Hace scroll hacia arriba en el chat para cargar más mensajes
  * @param {Object} page - Instancia de Playwright page
  * @param {number} times - Número de veces a hacer scroll
@@ -316,16 +429,21 @@ export async function runChatBackup(page, onProgress = () => {}) {
   const allChats = [];
   
   try {
-    onProgress({ status: 'starting', message: 'Obteniendo lista de chats...' });
+    onProgress({ status: 'starting', message: 'Contando chats disponibles...' });
     
-    // Obtener lista de chats
-    const chatList = await getChatList(page);
-    const totalChats = chatList.length;
+    // Contar total de chats haciendo scroll completo
+    const totalChats = await countTotalChats(page);
     
     onProgress({ status: 'found', message: `Encontrados ${totalChats} chats`, total: totalChats });
     
     for (let i = 0; i < totalChats; i++) {
-      const chat = chatList[i];
+      // Obtener info del chat en este índice (con scroll progresivo)
+      const chat = await getChatAtIndex(page, i);
+      
+      if (!chat) {
+        console.log(`⚠️ No se pudo obtener chat en índice ${i}, saltando...`);
+        continue;
+      }
       
       onProgress({ 
         status: 'processing', 
@@ -334,7 +452,8 @@ export async function runChatBackup(page, onProgress = () => {}) {
         total: totalChats 
       });
       
-      // Hacer clic en el chat
+      // Hacer clic en el chat (con scroll previo para asegurarnos que está visible)
+      await scrollToChat(page, i);
       await clickChat(page, i);
       
       // Esperar a que el contenedor de mensajes aparezca
