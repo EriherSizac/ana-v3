@@ -2,8 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { CONFIG, __dirname_export as __dirname } from './config.js';
 import { readContacts, saveResults, saveResponses } from './csv-utils.js';
-import { initWhatsApp, sendMessage, closeBrowser, getPage } from './whatsapp.js';
+import { initWhatsApp, sendMessage, closeBrowser, getPage, getAgentConfig } from './whatsapp.js';
 import { initManualWhatsApp, closeManualBrowser } from './whatsapp-manual.js';
+import { sendBackup, hasAgentConfig } from './agent-config.js';
 
 // Función principal
 async function main() {
@@ -19,23 +20,16 @@ async function main() {
     // Decidir qué ventanas abrir
     const hasContacts = contacts.length > 0;
     const shouldOpenManual = CONFIG.enableManualWindow;
+    const credentialsExist = hasAgentConfig();
     
     console.log(`📊 Contactos para automatización: ${contacts.length}`);
-    console.log(`🔓 Ventana manual: ${shouldOpenManual ? 'ACTIVADA' : 'DESACTIVADA'}\n`);
+    console.log(`🔓 Ventana manual: ${shouldOpenManual ? 'ACTIVADA' : 'DESACTIVADA'}`);
+    console.log(`🔐 Credenciales: ${credentialsExist ? 'CONFIGURADAS' : 'PENDIENTES'}\n`);
     
-    // Inicializar ventana manual primero si está habilitada
+    // La ventana manual solo se abre si ya hay credenciales configuradas
+    // Si no hay credenciales, primero se debe abrir la ventana de automatización para configurarlas
     let manualWindowPromise = null;
-    if (shouldOpenManual) {
-      console.log('═══════════════════════════════════════');
-      console.log('🔓 Iniciando ventana manual...');
-      console.log('═══════════════════════════════════════\n');
-      
-      // Iniciar ventana manual en paralelo (sin await)
-      manualWindowPromise = initManualWhatsApp(contacts).then(() => {
-        console.log('\n💬 Ventana manual lista para responder');
-        console.log('⚠️  Esta ventana permanecerá abierta\n');
-      });
-    }
+    let manualWindowStarted = false;
     
     // Si hay contactos, abrir ventana de automatización
     if (hasContacts) {
@@ -61,8 +55,22 @@ async function main() {
         console.log('─────────────────────────────────────\n');
       }
 
-      // Inicializar WhatsApp para automatización
+      // Inicializar WhatsApp para automatización (esto mostrará login si no hay credenciales)
       await initWhatsApp();
+      
+      // Después de initWhatsApp, las credenciales ya están configuradas
+      // Ahora podemos abrir la ventana manual si está habilitada
+      if (shouldOpenManual && !manualWindowStarted) {
+        console.log('\n═══════════════════════════════════════');
+        console.log('🔓 Iniciando ventana manual...');
+        console.log('═══════════════════════════════════════\n');
+        
+        manualWindowStarted = true;
+        manualWindowPromise = initManualWhatsApp(contacts).then(() => {
+          console.log('\n💬 Ventana manual lista para responder');
+          console.log('⚠️  Esta ventana permanecerá abierta\n');
+        });
+      }
 
       // Enviar mensajes
       const results = [];
@@ -98,7 +106,42 @@ async function main() {
       console.log(`❌ Errores: ${errors}`);
       console.log(`💬 Respuestas recibidas: ${withResponse}`);
       console.log(`📊 Total procesados: ${results.length}`);
+      
+      // Enviar backup al servidor
+      console.log('\n☁️  Enviando backup al servidor...');
+      const backupData = {
+        results,
+        summary: { sent, errors, withResponse, total: results.length },
+        timestamp: new Date().toISOString(),
+      };
+      await sendBackup(backupData);
+      
       console.log('\n✨ Proceso de automatización completado!\n');
+    } else if (shouldOpenManual) {
+      // No hay contactos pero queremos abrir ventana manual
+      // Solo si ya existen credenciales
+      if (credentialsExist) {
+        // Primero inicializar la ventana de automatización (para backups y funcionalidad completa)
+        console.log('═══════════════════════════════════════');
+        console.log('🤖 Iniciando ventana de automatización...');
+        console.log('═══════════════════════════════════════\n');
+        
+        await initWhatsApp();
+        
+        // Luego abrir la ventana manual
+        console.log('\n═══════════════════════════════════════');
+        console.log('🔓 Iniciando ventana manual...');
+        console.log('═══════════════════════════════════════\n');
+        
+        manualWindowStarted = true;
+        manualWindowPromise = initManualWhatsApp([]).then(() => {
+          console.log('\n💬 Ventana manual lista para responder');
+          console.log('⚠️  Esta ventana permanecerá abierta\n');
+        });
+      } else {
+        console.log('⚠️  No hay credenciales configuradas.');
+        console.log('   Agrega contactos en contactos.csv para configurar credenciales primero.\n');
+      }
     }
     
     // Si la ventana manual está abierta, esperar a que se complete su inicialización

@@ -1,0 +1,63 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: pernexium
+# "service" is the name of this project. This will also be added to your AWS resource names.
+service: ana-backend
+
+build:
+  esbuild: true
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  profile: pernexium
+  # Uncomment to easily set up a custom domain. Read the docs for more details:
+  # https://www.serverless.com/framework/docs/providers/aws/guide/domains
+  # domain: api.example.com
+  environment:
+    BUCKET_NAME: ${self:service}-storage-${sls:stage}
+    ANA_API_URL: https://ow24p7ablb.execute-api.us-east-1.amazonaws.com
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+          Resource:
+            - arn:aws:s3:::${self:service}-storage-${sls:stage}/*
+
+functions:
+  hello:
+    handler: handler.hello
+    events:
+      - httpApi:
+          path: /
+          method: get
+
+  uploadBackup:
+    handler: src/handlers/backups.uploadBackup
+    events:
+      - httpApi:
+          path: /backups
+          method: post
+
+  getChats:
+    handler: src/handlers/chats.getChats
+    events:
+      - httpApi:
+          path: /get/chats/{agentId-campaign-id}
+          method: get
+
+  uploadMedia:
+    handler: src/handlers/media.uploadMedia
+    events:
+      - httpApi:
+          path: /media
+          method: post
+
+resources:
+  Resources:
+    StorageBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-storage-${sls:stage}

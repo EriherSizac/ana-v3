@@ -1,8 +1,10 @@
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
+import { startBackupMonitor } from './chat-backup.js';
 
 let manualBrowser = null;
 let manualPage = null;
+let backupMonitorInterval = null;
 
 /**
  * Inicializa la ventana manual de WhatsApp para respuestas
@@ -49,6 +51,10 @@ export async function initManualWhatsApp(allowedContacts = []) {
   await manualPage.waitForTimeout(2000);
   
   console.log('🔒 Restricciones aplicadas a la ventana manual');
+  
+  // Iniciar monitor de backup (agrega botón "Respaldar Chats")
+  backupMonitorInterval = await startBackupMonitor(manualPage);
+  console.log('☁️  Botón de respaldo de chats activado');
 }
 
 /**
