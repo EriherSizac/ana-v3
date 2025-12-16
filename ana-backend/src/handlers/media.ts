@@ -15,20 +15,20 @@ export const uploadMedia = async (event: APIGatewayProxyEvent): Promise<APIGatew
     }
 
     const body = JSON.parse(event.body);
-    const { campaign, agent_id, phone_number, filename, content_type, data } = body;
+    const { campaign, agent_id, filename, content_type, data } = body;
 
-    if (!campaign || !agent_id || !phone_number || !filename || !data) {
+    if (!campaign || !agent_id || !filename || !data) {
       return {
         statusCode: 400,
         headers: { 'Access-Control-Allow-Origin': '*' },
-        body: JSON.stringify({ error: 'campaign, agent_id, phone_number, filename and data fields are required' }),
+        body: JSON.stringify({ error: 'campaign, agent_id, filename and data fields are required' }),
       };
     }
 
     // data viene en base64
     const buffer = Buffer.from(data, 'base64');
 
-    const key = `media/${campaign}/${agent_id}/${phone_number}/${filename}`;
+    const key = `media/${campaign}/${agent_id}/${filename}`;
 
     await s3Client.send(new PutObjectCommand({
       Bucket: BUCKET_NAME,

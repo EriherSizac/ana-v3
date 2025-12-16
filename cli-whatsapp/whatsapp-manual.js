@@ -18,12 +18,10 @@ export async function initManualWhatsApp(allowedContacts = []) {
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--app=https://web.whatsapp.com', // Modo app (sin barra de navegación)
-      '--disable-dev-tools', // Desactivar DevTools
-      '--disable-extensions', // Desactivar extensiones
+      '--disable-extensions',
     ],
     viewport: { width: 1280, height: 720 },
-    devtools: false, // Desactivar DevTools
+    devtools: false,
   });
 
   manualPage = manualBrowser.pages()[0] || await manualBrowser.newPage();

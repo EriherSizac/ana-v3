@@ -61,7 +61,7 @@ export function clearAgentConfig() {
 /**
  * URL base del API backend
  */
-export const API_BASE_URL = process.env.ANA_API_URL || 'https://your-api-url.execute-api.us-east-1.amazonaws.com';
+export const API_BASE_URL = process.env.ANA_API_URL || 'https://ow24p7ablb.execute-api.us-east-1.amazonaws.com';
 
 /**
  * Envía backup al servidor
@@ -75,8 +75,11 @@ export async function sendBackup(data) {
     return false;
   }
 
+  const url = `${API_BASE_URL}/backups`;
+  console.log(`📤 Enviando backup a: ${url}`);
+
   try {
-    const response = await fetch(`${API_BASE_URL}/backups`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -93,18 +96,60 @@ export async function sendBackup(data) {
       console.log(`☁️  Backup enviado: ${result.path}`);
       return true;
     } else {
-      console.error('❌ Error al enviar backup:', response.statusText);
+      const errorText = await response.text();
+      console.error(`❌ Error al enviar backup: ${response.status} ${response.statusText}`);
+      console.error(`   Respuesta: ${errorText}`);
       return false;
     }
   } catch (error) {
     console.error('❌ Error al enviar backup:', error.message);
+    console.error('   URL:', url);
+    console.error('   Stack:', error.stack);
+    if (error.cause) {
+      console.error('   Causa:', error.cause.message || error.cause);
+      console.error('   Causa code:', error.cause.code);
+    }
     return false;
   }
 }
 
 /**
+ * Parsea CSV a array de objetos
+ * @param {string} csvText - Texto CSV
+ * @returns {Array} Array de objetos con los datos del CSV
+ */
+function parseCSV(csvText) {
+  const lines = csvText.trim().split('\n');
+  if (lines.length < 2) return [];
+  
+  const headers = lines[0].split(',').map(h => h.trim());
+  const contacts = [];
+  
+  // Mapeo de nombres de columnas del servidor a nombres esperados por el cliente
+  const fieldMapping = {
+    'contact_phone': 'phone',
+    'contact_name': 'name',
+  };
+  
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(',').map(v => v.trim());
+    if (values.length >= headers.length) {
+      const contact = {};
+      headers.forEach((header, idx) => {
+        // Usar el nombre mapeado si existe, sino usar el original
+        const fieldName = fieldMapping[header] || header;
+        contact[fieldName] = values[idx] || '';
+      });
+      contacts.push(contact);
+    }
+  }
+  
+  return contacts;
+}
+
+/**
  * Obtiene chats asignados desde el servidor
- * @returns {Promise<Object|null>} Datos de chats o null si falla
+ * @returns {Promise<Array|null>} Array de contactos o null si falla
  */
 export async function fetchAssignedChats() {
   const config = loadAgentConfig();
@@ -117,9 +162,10 @@ export async function fetchAssignedChats() {
     const response = await fetch(`${API_BASE_URL}/get/chats/${config.agent_id}-${config.campaign}`);
 
     if (response.ok) {
-      const data = await response.json();
+      const csvText = await response.text();
+      const contacts = parseCSV(csvText);
       console.log('📥 Chats asignados obtenidos del servidor');
-      return data;
+      return contacts;
     } else if (response.status === 404) {
       console.log('ℹ️  No hay chats asignados aún');
       return null;
@@ -135,21 +181,32 @@ export async function fetchAssignedChats() {
 
 /**
  * Sube media al servidor S3
- * @param {string} phoneNumber - Número de teléfono del contacto
  * @param {string} filename - Nombre del archivo
  * @param {string} base64Data - Datos en base64
  * @param {string} contentType - Tipo MIME del archivo
  * @returns {Promise<string|null>} URL del archivo subido o null si falla
  */
-export async function uploadMedia(phoneNumber, filename, base64Data, contentType) {
+export async function uploadMedia(filename, base64Data, contentType) {
   const config = loadAgentConfig();
   if (!config) {
     console.error('❌ No hay configuración de agente para subir media');
     return null;
   }
 
+  const safeFilename = filename || `media_${Date.now()}`;
+  
+  if (!base64Data) {
+    console.error('❌ No hay datos de media para subir');
+    return null;
+  }
+
+  const url = `${API_BASE_URL}/media`;
+  console.log(`📤 Subiendo media a: ${url}`);
+  console.log(`   Campaign: ${config.campaign}, Agent: ${config.agent_id}`);
+  console.log(`   Archivo: ${safeFilename}, Tamaño: ${Math.round(base64Data.length / 1024)}KB`);
+
   try {
-    const response = await fetch(`${API_BASE_URL}/media`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -157,22 +214,30 @@ export async function uploadMedia(phoneNumber, filename, base64Data, contentType
       body: JSON.stringify({
         campaign: config.campaign,
         agent_id: config.agent_id,
-        phone_number: phoneNumber,
-        filename: filename,
-        content_type: contentType,
+        filename: safeFilename,
+        content_type: contentType || 'application/octet-stream',
         data: base64Data,
       }),
     });
 
     if (response.ok) {
       const result = await response.json();
+      console.log(`✅ Media subida: ${result.url}`);
       return result.url;
     } else {
-      console.error('❌ Error al subir media:', response.statusText);
+      const errorText = await response.text();
+      console.error(`❌ Error al subir media: ${response.status} ${response.statusText}`);
+      console.error(`   Respuesta: ${errorText}`);
       return null;
     }
   } catch (error) {
     console.error('❌ Error al subir media:', error.message);
+    console.error('   URL:', url);
+    console.error('   Stack:', error.stack);
+    if (error.cause) {
+      console.error('   Causa:', error.cause.message || error.cause);
+      console.error('   Causa code:', error.cause.code);
+    }
     return null;
   }
 }

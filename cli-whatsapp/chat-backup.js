@@ -11,10 +11,20 @@ async function extractMessagesFromChat(page) {
     
     // Buscar el contenedor principal de mensajes (#main)
     const mainContainer = document.querySelector('#main');
-    if (!mainContainer) return messages;
+    if (!mainContainer) {
+      console.log('[Backup] No se encontró #main');
+      return messages;
+    }
     
-    // Buscar todos los contenedores de mensajes con data-id
-    const messageContainers = mainContainer.querySelectorAll('[data-id]');
+    // Buscar todos los contenedores de mensajes con data-id que empiecen con "true_" o "false_"
+    // Estos son los IDs de mensajes reales de WhatsApp
+    const allDataIds = mainContainer.querySelectorAll('[data-id]');
+    const messageContainers = Array.from(allDataIds).filter(el => {
+      const dataId = el.getAttribute('data-id');
+      return dataId && (dataId.startsWith('true_') || dataId.startsWith('false_'));
+    });
+    
+    console.log(`[Backup] Encontrados ${messageContainers.length} mensajes en #main`);
     
     messageContainers.forEach(container => {
       try {
@@ -120,10 +130,9 @@ async function downloadBlobAsBase64(page, blobUrl) {
  * Procesa y sube media de los mensajes al S3
  * @param {Object} page - Instancia de Playwright page
  * @param {Array} messages - Array de mensajes
- * @param {string} phoneNumber - Número de teléfono del contacto
  * @returns {Promise<Array>} Mensajes con URLs de media actualizadas
  */
-async function processAndUploadMedia(page, messages, phoneNumber) {
+async function processAndUploadMedia(page, messages) {
   const processedMessages = [];
   
   for (const msg of messages) {
@@ -138,7 +147,6 @@ async function processAndUploadMedia(page, messages, phoneNumber) {
           
           // Subir al S3
           const mediaUrl = await uploadMedia(
-            phoneNumber,
             filename,
             blobData.base64,
             blobData.contentType
@@ -228,20 +236,34 @@ async function getChatList(page) {
  * @param {number} index - Índice del chat
  */
 async function clickChat(page, index) {
-  await page.evaluate((idx) => {
-    const paneSize = document.querySelector('#pane-side');
-    if (!paneSize) return;
+  try {
+    // Ocultar overlay temporalmente para permitir clics
+    await page.evaluate(() => {
+      const overlay = document.getElementById('backup-progress-overlay');
+      if (overlay) overlay.style.pointerEvents = 'none';
+    });
     
-    const chatElements = paneSize.querySelectorAll('[role="row"]');
-    if (chatElements[idx]) {
-      // Hacer clic en el elemento clickeable dentro del row
-      const clickable = chatElements[idx].querySelector('[tabindex="-1"]') || chatElements[idx];
-      clickable.click();
+    // Usar Playwright locator para hacer clic de forma más confiable
+    const chatRows = page.locator('#pane-side [role="row"]');
+    const count = await chatRows.count();
+    
+    if (index < count) {
+      await chatRows.nth(index).click({ timeout: 3000 });
+    } else {
+      console.log(`⚠️ Índice ${index} fuera de rango (total: ${count})`);
     }
-  }, index);
+    
+    // Restaurar overlay
+    await page.evaluate(() => {
+      const overlay = document.getElementById('backup-progress-overlay');
+      if (overlay) overlay.style.pointerEvents = 'auto';
+    });
+  } catch (e) {
+    console.log(`⚠️ Error al hacer clic en chat ${index}: ${e.message}`);
+  }
   
   // Esperar a que cargue el chat
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(1000);
 }
 
 /**
@@ -249,17 +271,34 @@ async function clickChat(page, index) {
  * @param {Object} page - Instancia de Playwright page
  * @param {number} times - Número de veces a hacer scroll
  */
-async function scrollUpChat(page, times = 5) {
+async function scrollUpChat(page, times = 10) {
   for (let i = 0; i < times; i++) {
     await page.evaluate(() => {
+      // Buscar el contenedor de mensajes con varios selectores
       const messageList = document.querySelector('[data-testid="conversation-panel-messages"]') ||
-                         document.querySelector('[role="application"]');
+                         document.querySelector('#main [role="application"]') ||
+                         document.querySelector('#main .copyable-area > div:nth-child(2)');
       if (messageList) {
+        // Scroll hacia arriba de forma más agresiva
         messageList.scrollTop = 0;
+        // También intentar con scrollBy para simular scroll de usuario
+        messageList.scrollBy(0, -1000);
       }
     });
-    await page.waitForTimeout(800);
+    // Esperar a que se carguen los mensajes
+    await page.waitForTimeout(500);
   }
+  
+  // Scroll final hacia abajo para asegurar que todos los mensajes están en el DOM
+  await page.evaluate(() => {
+    const messageList = document.querySelector('[data-testid="conversation-panel-messages"]') ||
+                       document.querySelector('#main [role="application"]') ||
+                       document.querySelector('#main .copyable-area > div:nth-child(2)');
+    if (messageList) {
+      messageList.scrollTop = messageList.scrollHeight;
+    }
+  });
+  await page.waitForTimeout(300);
 }
 
 /**
@@ -298,17 +337,30 @@ export async function runChatBackup(page, onProgress = () => {}) {
       // Hacer clic en el chat
       await clickChat(page, i);
       
-      // Hacer scroll para cargar más mensajes
-      await scrollUpChat(page, 3);
+      // Esperar a que el contenedor de mensajes aparezca
+      try {
+        await page.waitForSelector('#main', { timeout: 8000 });
+        // Esperar a que los mensajes se carguen
+        await page.waitForSelector('#main [data-id]', { timeout: 5000 });
+      } catch (e) {
+        // Intentar una vez más con espera adicional
+        await page.waitForTimeout(1000);
+        const mainExists = await page.$('#main');
+        if (!mainExists) {
+          console.log(`⚠️ Chat ${chat.title}: No se pudo cargar contenedor de mensajes`);
+        }
+      }
+      await page.waitForTimeout(800);
+      
+      // Hacer scroll para cargar más mensajes (más scrolls = más mensajes cargados)
+      await scrollUpChat(page, 15);
       
       // Obtener info del chat
       const chatInfo = await getChatInfo(page);
       
       // Extraer mensajes
       const rawMessages = await extractMessagesFromChat(page);
-      
-      // Obtener número de teléfono para la ruta de media
-      const phoneNumber = (chatInfo.phone || chat.title || 'unknown').replace(/[^0-9]/g, '');
+      console.log(`📝 Chat ${chat.title}: ${rawMessages.length} mensajes extraídos, ${rawMessages.filter(m => m.hasMedia).length} con media`);
       
       // Procesar y subir media al S3
       onProgress({ 
@@ -318,7 +370,7 @@ export async function runChatBackup(page, onProgress = () => {}) {
         total: totalChats 
       });
       
-      const messages = await processAndUploadMedia(page, rawMessages, phoneNumber);
+      const messages = await processAndUploadMedia(page, rawMessages);
       
       allChats.push({
         chatIndex: i,
@@ -440,7 +492,7 @@ export async function updateBackupProgress(page, progress) {
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(0, 0, 0, 0.9);
+        background: rgba(0, 0, 0, 0.3);
         z-index: 9999999;
         display: flex;
         align-items: center;

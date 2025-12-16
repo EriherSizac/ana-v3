@@ -4,7 +4,7 @@ import { CONFIG, __dirname_export as __dirname } from './config.js';
 import { readContacts, saveResults, saveResponses } from './csv-utils.js';
 import { initWhatsApp, sendMessage, closeBrowser, getPage, getAgentConfig } from './whatsapp.js';
 import { initManualWhatsApp, closeManualBrowser } from './whatsapp-manual.js';
-import { sendBackup, hasAgentConfig } from './agent-config.js';
+import { sendBackup, hasAgentConfig, fetchAssignedChats } from './agent-config.js';
 
 // Función principal
 async function main() {
@@ -14,13 +14,29 @@ async function main() {
   console.log('╚════════════════════════════════════════╝\n');
 
   try {
-    // Leer contactos primero
-    const contacts = await readContacts().catch(() => []);
+    // Obtener contactos del servidor (si hay credenciales) o del archivo local
+    let contacts = [];
+    const credentialsExist = hasAgentConfig();
+    
+    if (credentialsExist) {
+      // Intentar obtener contactos del servidor
+      console.log('📡 Obteniendo contactos del servidor...');
+      const serverContacts = await fetchAssignedChats();
+      if (serverContacts && serverContacts.length > 0) {
+        contacts = serverContacts;
+        console.log(`✅ ${contacts.length} contactos obtenidos del servidor`);
+      } else {
+        console.log('ℹ️  No hay contactos asignados en el servidor, usando archivo local...');
+        contacts = await readContacts().catch(() => []);
+      }
+    } else {
+      // Sin credenciales, usar archivo local
+      contacts = await readContacts().catch(() => []);
+    }
     
     // Decidir qué ventanas abrir
     const hasContacts = contacts.length > 0;
     const shouldOpenManual = CONFIG.enableManualWindow;
-    const credentialsExist = hasAgentConfig();
     
     console.log(`📊 Contactos para automatización: ${contacts.length}`);
     console.log(`🔓 Ventana manual: ${shouldOpenManual ? 'ACTIVADA' : 'DESACTIVADA'}`);
