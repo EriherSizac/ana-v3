@@ -16,15 +16,18 @@ async function extractMessagesFromChat(page) {
       return messages;
     }
     
+    // Debug: verificar si hay elementos con data-id
+    const allDataIds = mainContainer.querySelectorAll('[data-id]');
+    console.log(`[Backup] Total elementos con data-id: ${allDataIds.length}`);
+    
     // Buscar todos los contenedores de mensajes con data-id que empiecen con "true_" o "false_"
     // Estos son los IDs de mensajes reales de WhatsApp
-    const allDataIds = mainContainer.querySelectorAll('[data-id]');
     const messageContainers = Array.from(allDataIds).filter(el => {
       const dataId = el.getAttribute('data-id');
       return dataId && (dataId.startsWith('true_') || dataId.startsWith('false_'));
     });
     
-    console.log(`[Backup] Encontrados ${messageContainers.length} mensajes en #main`);
+    console.log(`[Backup] Mensajes filtrados (true_/false_): ${messageContainers.length}`);
     
     messageContainers.forEach(container => {
       try {
@@ -385,7 +388,34 @@ async function countTotalChats(page) {
  * @param {number} times - Número de veces a hacer scroll
  */
 async function scrollUpChat(page, times = 10) {
+  let lastMessageCount = 0;
+  let noChangeCount = 0;
+  
   for (let i = 0; i < times; i++) {
+    // Contar mensajes actuales
+    const currentCount = await page.evaluate(() => {
+      const mainContainer = document.querySelector('#main');
+      if (!mainContainer) return 0;
+      const allDataIds = mainContainer.querySelectorAll('[data-id]');
+      return Array.from(allDataIds).filter(el => {
+        const dataId = el.getAttribute('data-id');
+        return dataId && (dataId.startsWith('true_') || dataId.startsWith('false_'));
+      }).length;
+    });
+    
+    // Si no hay cambios en 3 intentos consecutivos, detener
+    if (currentCount === lastMessageCount) {
+      noChangeCount++;
+      if (noChangeCount >= 3) {
+        console.log(`📊 Scroll detenido: ${currentCount} mensajes cargados (sin cambios en 3 intentos)`);
+        break;
+      }
+    } else {
+      noChangeCount = 0;
+      console.log(`📊 Mensajes cargados: ${currentCount}`);
+    }
+    lastMessageCount = currentCount;
+    
     await page.evaluate(() => {
       // Buscar el contenedor de mensajes con varios selectores
       const messageList = document.querySelector('[data-testid="conversation-panel-messages"]') ||
@@ -395,11 +425,11 @@ async function scrollUpChat(page, times = 10) {
         // Scroll hacia arriba de forma más agresiva
         messageList.scrollTop = 0;
         // También intentar con scrollBy para simular scroll de usuario
-        messageList.scrollBy(0, -1000);
+        messageList.scrollBy(0, -1500);
       }
     });
-    // Esperar a que se carguen los mensajes
-    await page.waitForTimeout(500);
+    // Esperar más tiempo a que se carguen los mensajes (aumentado de 500ms a 800ms)
+    await page.waitForTimeout(800);
   }
   
   // Scroll final hacia abajo para asegurar que todos los mensajes están en el DOM
@@ -411,7 +441,7 @@ async function scrollUpChat(page, times = 10) {
       messageList.scrollTop = messageList.scrollHeight;
     }
   });
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(500);
 }
 
 /**
@@ -458,21 +488,27 @@ export async function runChatBackup(page, onProgress = () => {}) {
       
       // Esperar a que el contenedor de mensajes aparezca
       try {
-        await page.waitForSelector('#main', { timeout: 8000 });
+        await page.waitForSelector('#main', { timeout: 10000 });
         // Esperar a que los mensajes se carguen
-        await page.waitForSelector('#main [data-id]', { timeout: 5000 });
+        await page.waitForSelector('#main [data-id]', { timeout: 8000 });
       } catch (e) {
         // Intentar una vez más con espera adicional
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(2000);
         const mainExists = await page.$('#main');
         if (!mainExists) {
           console.log(`⚠️ Chat ${chat.title}: No se pudo cargar contenedor de mensajes`);
+          continue; // Saltar este chat si no se puede cargar
         }
       }
-      await page.waitForTimeout(800);
+      
+      // Esperar más tiempo para que los mensajes iniciales se rendericen
+      await page.waitForTimeout(1500);
       
       // Hacer scroll para cargar más mensajes (más scrolls = más mensajes cargados)
-      await scrollUpChat(page, 15);
+      await scrollUpChat(page, 20);
+      
+      // Esperar después del scroll para que todos los mensajes se carguen
+      await page.waitForTimeout(2000);
       
       // Obtener info del chat
       const chatInfo = await getChatInfo(page);
