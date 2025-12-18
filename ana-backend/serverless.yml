@@ -23,8 +23,10 @@ provider:
           Action:
             - s3:PutObject
             - s3:GetObject
+            - s3:ListBucket
           Resource:
             - arn:aws:s3:::${self:service}-storage-${sls:stage}/*
+            - arn:aws:s3:::${self:service}-storage-${sls:stage}
 
 functions:
   hello:
@@ -33,13 +35,23 @@ functions:
       - httpApi:
           path: /
           method: get
+          cors: true
 
   uploadBackup:
     handler: src/handlers/backups.uploadBackup
     events:
       - httpApi:
+          cors: true
           path: /backups
           method: post
+
+  getLatestBackup:
+    handler: src/handlers/backups.getLatestBackup
+    events:
+      - httpApi:
+          cors: true
+          path: /backups/latest/{agentId}/{campaign}
+          method: get
 
   getChats:
     handler: src/handlers/chats.getChats
@@ -47,6 +59,7 @@ functions:
       - httpApi:
           path: /get/chats/{agentId-campaign-id}
           method: get
+          cors: true
 
   uploadMedia:
     handler: src/handlers/media.uploadMedia
@@ -54,6 +67,7 @@ functions:
       - httpApi:
           path: /media
           method: post
+          cors: true
 
   updatePendingContacts:
     handler: src/handlers/contacts.updatePendingContacts
@@ -61,6 +75,7 @@ functions:
       - httpApi:
           path: /contacts/pending
           method: post
+          cors: true
 
 resources:
   Resources:

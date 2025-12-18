@@ -12,8 +12,8 @@ let agentConfig = null;
  * @returns {Promise<Object>} Configuración del agente
  */
 async function showLoginOverlay() {
-  return new Promise((resolve) => {
-    autoPage.evaluate(() => {
+  return new Promise(async (resolve) => {
+    await autoPage.evaluate(() => {
       // Remover overlay existente si hay
       const existing = document.getElementById('login-overlay');
       if (existing) existing.remove();
@@ -317,9 +317,57 @@ export async function initWhatsApp() {
   // Activar overlay inmediatamente después de conectar
   if (CONFIG.showOverlay) {
     await autoPage.evaluate(() => {
-      if (window.createAutomationOverlay) {
-        window.createAutomationOverlay();
-      }
+      // Función para crear/recrear el overlay
+      const createOverlay = () => {
+        // Remover overlay existente si hay
+        const existing = document.getElementById('automation-overlay');
+        if (existing) existing.remove();
+        
+        // Crear overlay con pointer-events: none para que Playwright pueda hacer clics
+        const overlay = document.createElement('div');
+        overlay.id = 'automation-overlay';
+        overlay.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.85);
+          z-index: 999999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: Arial, sans-serif;
+          color: white;
+          pointer-events: none;
+        `;
+        
+        overlay.innerHTML = `
+          <div style="text-align: center; padding: 40px; background: rgba(0, 0, 0, 0.9); border-radius: 20px; border: 2px solid #25D366;">
+            <div style="font-size: 60px; margin-bottom: 20px;">🤖</div>
+            <h1 style="margin: 0 0 10px 0; font-size: 32px; color: #25D366;">Automatización en Proceso</h1>
+            <p style="margin: 0; font-size: 18px; opacity: 0.9;">No interactúes con esta ventana</p>
+            <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.7;">El proceso se está ejecutando automáticamente</p>
+          </div>
+        `;
+        
+        document.body.appendChild(overlay);
+      };
+      
+      // Crear overlay inicial
+      createOverlay();
+      
+      // Observar cambios en el DOM para recrear el overlay si se elimina
+      const observer = new MutationObserver(() => {
+        if (!document.getElementById('automation-overlay')) {
+          createOverlay();
+        }
+      });
+      
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
     });
     console.log('✅ Overlay activado - La ventana está protegida');
   }

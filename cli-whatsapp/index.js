@@ -82,10 +82,15 @@ async function main() {
         console.log('═══════════════════════════════════════\n');
         
         manualWindowStarted = true;
-        manualWindowPromise = initManualWhatsApp(contacts).then(() => {
-          console.log('\n💬 Ventana manual lista para responder');
-          console.log('⚠️  Esta ventana permanecerá abierta\n');
-        });
+        manualWindowPromise = initManualWhatsApp(contacts)
+          .then(() => {
+            console.log('\n💬 Ventana manual lista para responder');
+            console.log('⚠️  Esta ventana permanecerá abierta\n');
+          })
+          .catch((error) => {
+            console.error('❌ Error al iniciar ventana manual:', error.message);
+            console.error('Stack:', error.stack);
+          });
       }
 
       // Enviar mensajes con límite de 45
