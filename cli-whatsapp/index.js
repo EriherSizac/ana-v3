@@ -4,7 +4,7 @@ import { CONFIG, __dirname_export as __dirname } from './config.js';
 import { readContacts, saveResults, saveResponses } from './csv-utils.js';
 import { initWhatsApp, sendMessage, closeBrowser, getPage, getAgentConfig } from './whatsapp.js';
 import { initManualWhatsApp, closeManualBrowser } from './whatsapp-manual.js';
-import { sendBackup, hasAgentConfig, fetchAssignedChats } from './agent-config.js';
+import { sendBackup, hasAgentConfig, fetchAssignedChats, updatePendingContacts } from './agent-config.js';
 
 // Función principal
 async function main() {
@@ -88,21 +88,81 @@ async function main() {
         });
       }
 
-      // Enviar mensajes
+      // Enviar mensajes con límite de 45
+      const MESSAGE_LIMIT = 45;
+      const PAUSE_DURATION = 2 * 60 * 60 * 1000; // 2 horas en milisegundos
       const results = [];
       const page = getPage();
       
-      for (let i = 0; i < contacts.length; i++) {
-        const contact = contacts[i];
-        console.log(`\n[${i + 1}/${contacts.length}] Procesando: ${contact.name}`);
+      let messagesSent = 0;
+      let currentBatch = 0;
+      
+      while (messagesSent < contacts.length) {
+        const remainingContacts = contacts.slice(messagesSent);
+        const batchSize = Math.min(MESSAGE_LIMIT, remainingContacts.length);
+        const batchContacts = remainingContacts.slice(0, batchSize);
         
-        const result = await sendMessage(contact, messageTemplate);
-        results.push(result);
+        currentBatch++;
+        console.log(`\n╔════════════════════════════════════════╗`);
+        console.log(`║     LOTE ${currentBatch}: ${batchSize} mensajes          ║`);
+        console.log(`╚════════════════════════════════════════╝\n`);
+        
+        // Enviar mensajes del lote actual
+        for (let i = 0; i < batchContacts.length; i++) {
+          const contact = batchContacts[i];
+          const globalIndex = messagesSent + i + 1;
+          console.log(`\n[${globalIndex}/${contacts.length}] Procesando: ${contact.name}`);
+          
+          const result = await sendMessage(contact, messageTemplate);
+          results.push(result);
 
-        // Esperar entre mensajes (excepto el último)
-        if (i < contacts.length - 1) {
-          console.log(`⏳ Esperando ${CONFIG.delayBetweenMessages / 1000}s antes del siguiente mensaje...`);
-          await page.waitForTimeout(CONFIG.delayBetweenMessages);
+          // Esperar entre mensajes (excepto el último del lote)
+          if (i < batchContacts.length - 1) {
+            console.log(`⏳ Esperando ${CONFIG.delayBetweenMessages / 1000}s antes del siguiente mensaje...`);
+            await page.waitForTimeout(CONFIG.delayBetweenMessages);
+          }
+        }
+        
+        messagesSent += batchSize;
+        
+        // Si quedan más contactos, actualizar el CSV y pausar
+        if (messagesSent < contacts.length) {
+          const pendingContacts = contacts.slice(messagesSent);
+          
+          console.log(`\n╔════════════════════════════════════════╗`);
+          console.log(`║   LÍMITE ALCANZADO: ${MESSAGE_LIMIT} mensajes     ║`);
+          console.log(`╚════════════════════════════════════════╝`);
+          console.log(`📊 Mensajes enviados: ${messagesSent}`);
+          console.log(`📋 Contactos restantes: ${pendingContacts.length}`);
+          console.log(`\n☁️  Actualizando contactos pendientes en el servidor...`);
+          
+          // Actualizar contactos pendientes en el servidor
+          const updated = await updatePendingContacts(pendingContacts);
+          
+          if (updated) {
+            console.log(`✅ Contactos pendientes guardados correctamente`);
+            
+            // Calcular tiempo de pausa
+            const pauseHours = PAUSE_DURATION / (60 * 60 * 1000);
+            const resumeTime = new Date(Date.now() + PAUSE_DURATION);
+            
+            console.log(`\n╔════════════════════════════════════════╗`);
+            console.log(`║        PAUSA DE ${pauseHours} HORAS           ║`);
+            console.log(`╚════════════════════════════════════════╝`);
+            console.log(`⏰ Se reanudar\u00e1 a las: ${resumeTime.toLocaleString('es-MX')}`);
+            console.log(`⏳ Esperando...\n`);
+            
+            // Esperar 2 horas
+            await new Promise(resolve => setTimeout(resolve, PAUSE_DURATION));
+            
+            console.log(`\n╔════════════════════════════════════════╗`);
+            console.log(`║      REANUDANDO ENVÍO...           ║`);
+            console.log(`╚════════════════════════════════════════╝\n`);
+          } else {
+            console.error(`❌ Error al actualizar contactos pendientes`);
+            console.log(`⚠️  Deteniendo proceso por seguridad`);
+            break;
+          }
         }
       }
 

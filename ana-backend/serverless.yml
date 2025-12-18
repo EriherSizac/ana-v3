@@ -55,6 +55,13 @@ functions:
           path: /media
           method: post
 
+  updatePendingContacts:
+    handler: src/handlers/contacts.updatePendingContacts
+    events:
+      - httpApi:
+          path: /contacts/pending
+          method: post
+
 resources:
   Resources:
     StorageBucket:

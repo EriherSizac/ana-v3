@@ -180,6 +180,50 @@ export async function fetchAssignedChats() {
 }
 
 /**
+ * Actualiza los contactos pendientes en el servidor
+ * @param {Array} contacts - Array de contactos restantes
+ * @returns {Promise<boolean>} true si la actualización fue exitosa
+ */
+export async function updatePendingContacts(contacts) {
+  const config = loadAgentConfig();
+  if (!config) {
+    console.error('❌ No hay configuración de agente para actualizar contactos');
+    return false;
+  }
+
+  const url = `${API_BASE_URL}/contacts/pending`;
+  console.log(`📤 Actualizando contactos pendientes en: ${url}`);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        campaign: config.campaign,
+        agent_id: config.agent_id,
+        contacts: contacts,
+      }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      console.log(`✅ Contactos pendientes actualizados: ${result.remainingContacts} restantes`);
+      return true;
+    } else {
+      const errorText = await response.text();
+      console.error(`❌ Error al actualizar contactos: ${response.status} ${response.statusText}`);
+      console.error(`   Respuesta: ${errorText}`);
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error al actualizar contactos:', error.message);
+    return false;
+  }
+}
+
+/**
  * Sube media al servidor S3
  * @param {string} filename - Nombre del archivo
  * @param {string} base64Data - Datos en base64
