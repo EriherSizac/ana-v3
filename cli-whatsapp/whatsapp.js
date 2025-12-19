@@ -248,33 +248,33 @@ export async function initWhatsApp() {
     }, true);
   });
   
-  // Preparar función del overlay (pero NO activarlo aún - esperar a que se conecte)
+  // Preparar overlay que se ejecutará en CADA navegación
   if (CONFIG.showOverlay) {
-    console.log('🛡️  Preparando overlay de protección (se activará después de conectar)...');
+    console.log('🛡️  Preparando overlay de protección (se activará automáticamente)...');
     await autoPage.addInitScript(() => {
-      // Función para crear/recrear el overlay (se llamará manualmente después de conectar)
-      window.createAutomationOverlay = () => {
-        // Remover overlay existente si hay
+      // Función para crear/recrear el overlay
+      const createOverlay = () => {
+        // Si ya existe, no crear otro
         const existing = document.getElementById('automation-overlay');
-        if (existing) existing.remove();
+        if (existing) return;
         
         // Crear overlay con pointer-events: none para que Playwright pueda hacer clics
         const overlay = document.createElement('div');
         overlay.id = 'automation-overlay';
         overlay.style.cssText = `
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0, 0, 0, 0.85);
-          z-index: 999999;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-family: Arial, sans-serif;
-          color: white;
-          pointer-events: none;
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          background: rgba(0, 0, 0, 0.85) !important;
+          z-index: 999999999 !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          font-family: Arial, sans-serif !important;
+          color: white !important;
+          pointer-events: none !important;
         `;
         
         overlay.innerHTML = `
@@ -287,10 +287,40 @@ export async function initWhatsApp() {
         `;
         
         document.body.appendChild(overlay);
+        console.log('[Overlay] Overlay creado automáticamente');
       };
       
-      // NO crear overlay automáticamente - esperar a que se llame manualmente
-      // después de que el usuario escanee el QR
+      // Esperar a que el DOM esté listo y crear overlay
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+          setTimeout(createOverlay, 100);
+        });
+      } else {
+        setTimeout(createOverlay, 100);
+      }
+      
+      // Observar cambios para recrear si se elimina
+      const observer = new MutationObserver(() => {
+        if (!document.getElementById('automation-overlay')) {
+          console.log('[Overlay] Recreando overlay...');
+          createOverlay();
+        }
+      });
+      
+      // Esperar a que body exista antes de observar
+      const waitForBody = setInterval(() => {
+        if (document.body) {
+          clearInterval(waitForBody);
+          observer.observe(document.body, { childList: true, subtree: true });
+          
+          // Verificación periódica cada segundo
+          setInterval(() => {
+            if (!document.getElementById('automation-overlay')) {
+              createOverlay();
+            }
+          }, 1000);
+        }
+      }, 100);
     });
   }
   
@@ -314,61 +344,8 @@ export async function initWhatsApp() {
     console.log(`👤 Agente: ${agentConfig.agent_id} | Campaña: ${agentConfig.campaign}`);
   }
   
-  // Activar overlay inmediatamente después de conectar
+  // El overlay ya se activó automáticamente con addInitScript
   if (CONFIG.showOverlay) {
-    await autoPage.evaluate(() => {
-      // Función para crear/recrear el overlay
-      const createOverlay = () => {
-        // Remover overlay existente si hay
-        const existing = document.getElementById('automation-overlay');
-        if (existing) existing.remove();
-        
-        // Crear overlay con pointer-events: none para que Playwright pueda hacer clics
-        const overlay = document.createElement('div');
-        overlay.id = 'automation-overlay';
-        overlay.style.cssText = `
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0, 0, 0, 0.85);
-          z-index: 999999;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-family: Arial, sans-serif;
-          color: white;
-          pointer-events: none;
-        `;
-        
-        overlay.innerHTML = `
-          <div style="text-align: center; padding: 40px; background: rgba(0, 0, 0, 0.9); border-radius: 20px; border: 2px solid #25D366;">
-            <div style="font-size: 60px; margin-bottom: 20px;">🤖</div>
-            <h1 style="margin: 0 0 10px 0; font-size: 32px; color: #25D366;">Automatización en Proceso</h1>
-            <p style="margin: 0; font-size: 18px; opacity: 0.9;">No interactúes con esta ventana</p>
-            <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.7;">El proceso se está ejecutando automáticamente</p>
-          </div>
-        `;
-        
-        document.body.appendChild(overlay);
-      };
-      
-      // Crear overlay inicial
-      createOverlay();
-      
-      // Observar cambios en el DOM para recrear el overlay si se elimina
-      const observer = new MutationObserver(() => {
-        if (!document.getElementById('automation-overlay')) {
-          createOverlay();
-        }
-      });
-      
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true
-      });
-    });
     console.log('✅ Overlay activado - La ventana está protegida');
   }
   
