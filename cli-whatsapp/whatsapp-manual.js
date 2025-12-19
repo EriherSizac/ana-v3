@@ -20,12 +20,78 @@ export async function initManualWhatsApp(allowedContacts = []) {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-extensions',
+      '--disable-dev-shm-usage',
+      '--disable-blink-features=AutomationControlled',
+      '--app=https://web.whatsapp.com', // Modo app (sin barra de navegación)
+      '--disable-dev-tools', // Desactivar DevTools
     ],
     viewport: { width: 1280, height: 720 },
     devtools: false,
   });
 
   manualPage = manualBrowser.pages()[0] || await manualBrowser.newPage();
+  
+  // Inyectar protecciones ANTES de cargar WhatsApp (EXACTO como en whatsapp.js)
+  await manualPage.addInitScript(() => {
+    // Bloquear atajos de teclado para DevTools
+    document.addEventListener('keydown', (e) => {
+      // F12
+      if (e.key === 'F12') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      
+      // Ctrl+Shift+I (Windows/Linux)
+      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      
+      // Ctrl+Shift+J (Console)
+      if (e.ctrlKey && e.shiftKey && e.key === 'J') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      
+      // Ctrl+Shift+C (Inspect)
+      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      
+      // Cmd+Option+I (Mac)
+      if (e.metaKey && e.altKey && e.key === 'I') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      
+      // Cmd+Option+J (Mac Console)
+      if (e.metaKey && e.altKey && e.key === 'J') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      
+      // Cmd+Option+C (Mac Inspect)
+      if (e.metaKey && e.altKey && e.key === 'C') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    }, true);
+    
+    // Bloquear menú contextual (clic derecho)
+    document.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }, true);
+  });
   
   // Inyectar restricciones ANTES de cargar WhatsApp
   await applyUIRestrictions(allowedContacts);
@@ -37,8 +103,7 @@ export async function initManualWhatsApp(allowedContacts = []) {
     console.error('⚠️  Error al preparar botón de historial:', error.message);
   }
   
-  await manualPage.goto('https://web.whatsapp.com', { waitUntil: 'networkidle' });
-
+  // El modo --app ya carga la URL automáticamente
   console.log('⏳ Esperando a que WhatsApp Web (Manual) cargue...');
   console.log('📱 Escanea el código QR con OTRO teléfono/cuenta');
   
@@ -47,36 +112,8 @@ export async function initManualWhatsApp(allowedContacts = []) {
   
   console.log('✅ WhatsApp Web (Manual) conectado!');
   
-  // Aplicar restricciones inmediatamente
+  // Aplicar bloqueos INMEDIATAMENTE en la primera carga
   await manualPage.evaluate(() => {
-    if (window.applyManualUIRestrictions) {
-      window.applyManualUIRestrictions();
-    }
-  });
-  
-  await manualPage.waitForTimeout(2000);
-  
-  console.log('🔒 Restricciones aplicadas a la ventana manual');
-  
-  // Iniciar monitor de backup (agrega botón "Respaldar Chats")
-  backupMonitorInterval = await startBackupMonitor(manualPage);
-  console.log('☁️  Botón de respaldo de chats activado');
-  console.log('📜 Botón de historial activado (se mostrará cuando WhatsApp cargue)');
-}
-
-/**
- * Aplica restricciones de UI a la ventana manual
- * @param {Array} allowedContacts - Lista de contactos permitidos
- */
-async function applyUIRestrictions(allowedContacts) {
-  if (!manualPage) return;
-  
-  // Convertir números a formato limpio para comparación
-  const allowedNumbers = allowedContacts.map(contact => 
-    contact.phone ? contact.phone.replace(/\D/g, '') : ''
-  ).filter(n => n);
-  
-  await manualPage.addInitScript((numbers) => {
     // Bloquear atajos de teclado para DevTools
     document.addEventListener('keydown', (e) => {
       // F12
@@ -136,8 +173,74 @@ async function applyUIRestrictions(allowedContacts) {
       return false;
     }, true);
     
+    // Aplicar restricciones de UI
+    if (window.applyManualUIRestrictions) {
+      window.applyManualUIRestrictions();
+    }
+  });
+  
+  await manualPage.waitForTimeout(2000);
+  
+  console.log('🔒 Restricciones aplicadas a la ventana manual');
+  
+  // Iniciar monitor de backup (agrega botón "Respaldar Chats")
+  backupMonitorInterval = await startBackupMonitor(manualPage);
+  console.log('☁️  Botón de respaldo de chats activado');
+  console.log('📜 Botón de historial activado (se mostrará cuando WhatsApp cargue)');
+}
+
+/**
+ * Aplica restricciones de UI a la ventana manual
+ * @param {Array} allowedContacts - Lista de contactos permitidos
+ */
+async function applyUIRestrictions(allowedContacts) {
+  if (!manualPage) return;
+  
+  // Convertir números a formato limpio para comparación
+  const allowedNumbers = allowedContacts.map(contact => 
+    contact.phone ? contact.phone.replace(/\D/g, '') : ''
+  ).filter(n => n);
+  
+  await manualPage.addInitScript((numbers) => {
     // Función global para aplicar restricciones
     window.applyManualUIRestrictions = () => {
+      // Inyectar CSS global para bloquear elementos del navegador
+      if (!document.getElementById('manual-restrictions-style')) {
+        const style = document.createElement('style');
+        style.id = 'manual-restrictions-style';
+        style.textContent = `
+          /* Bloquear cualquier elemento de DevTools que pueda aparecer */
+          [class*="devtools"],
+          [id*="devtools"],
+          [class*="inspector"],
+          [id*="inspector"] {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+          }
+          
+          /* Bloquear selección de texto para evitar copiar/pegar */
+          * {
+            user-select: none !important;
+            -webkit-user-select: none !important;
+            -moz-user-select: none !important;
+            -ms-user-select: none !important;
+          }
+          
+          /* Permitir selección solo en el input de mensajes */
+          [contenteditable="true"],
+          input,
+          textarea {
+            user-select: text !important;
+            -webkit-user-select: text !important;
+            -moz-user-select: text !important;
+            -ms-user-select: text !important;
+          }
+        `;
+        document.head.appendChild(style);
+      }
+      
       // Función para ocultar elementos
       const hideElements = (selector) => {
         const elements = document.querySelectorAll(selector);
