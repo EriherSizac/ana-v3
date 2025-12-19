@@ -40,3 +40,4 @@ next-env.d.ts
 /whatsapp-session
 /cli-whatsapp/whatsapp-session-manual
 /ana-backend/.build
+/cli-whatsapp/dist

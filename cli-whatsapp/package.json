@@ -4,13 +4,31 @@
   "description": "CLI para envío masivo de WhatsApp",
   "main": "index.js",
   "type": "module",
+  "bin": "index.js",
   "scripts": {
     "start": "node index.js",
-    "start-image": "node index.js --clipboard-media"
+    "start-image": "node index.js --clipboard-media",
+    "build": "pkg . --targets node18-win-x64 --output dist/whatsapp-sender.exe",
+    "build:full": "powershell -ExecutionPolicy Bypass -File build.ps1"
   },
   "dependencies": {
-    "playwright": "^1.48.2",
     "csv-parser": "^3.0.0",
-    "csv-writer": "^1.6.0"
+    "csv-writer": "^1.6.0",
+    "playwright": "^1.48.2"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/playwright-core/**/*",
+      "message-template.txt",
+      "config.js",
+      "*.js"
+    ],
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "dist"
   }
 }
