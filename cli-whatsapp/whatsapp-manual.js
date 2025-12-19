@@ -353,18 +353,25 @@ export function getManualPage() {
 async function fetchHistoryFromBackend(agentId, campaign) {
   try {
     const url = `${API_BASE_URL}/backups/latest/${agentId}/${campaign}`;
+    console.log('📡 [Node.js] Obteniendo historial desde:', url);
+    
     const response = await fetch(url);
+    console.log('📡 [Node.js] Response status:', response.status);
     
     if (!response.ok) {
       if (response.status === 404) {
+        console.log('📭 [Node.js] No hay historial disponible');
         return { success: false, message: 'No hay historial disponible (últimos 4 días)' };
       }
+      console.log('❌ [Node.js] Error en response:', response.statusText);
       return { success: false, message: 'Error al obtener historial' };
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.log('✅ [Node.js] Historial obtenido:', data);
+    return data;
   } catch (error) {
-    console.error('Error fetching history:', error);
+    console.error('❌ [Node.js] Error fetching history:', error);
     return { success: false, message: 'Error de conexión' };
   }
 }
@@ -380,9 +387,12 @@ async function injectHistoryButton(page) {
   }
 
   // Exponer función para obtener historial desde Node.js
+  console.log('📌 Exponiendo función getHistoryFromBackend para:', config.agent_id, '/', config.campaign);
   await page.exposeFunction('getHistoryFromBackend', async () => {
+    console.log('🔔 getHistoryFromBackend llamada desde el navegador');
     return await fetchHistoryFromBackend(config.agent_id, config.campaign);
   });
+  console.log('✅ Función getHistoryFromBackend expuesta correctamente');
 
   await page.addInitScript(() => {
     // Crear botón de historial
@@ -423,10 +433,14 @@ async function injectHistoryButton(page) {
       };
 
       btn.onclick = async () => {
+        console.log('[Historial] Botón clickeado');
+        
         // Obtener número del contacto actual
         const phoneNumber = getCurrentContactPhone();
+        console.log('[Historial] Número detectado:', phoneNumber);
         
         if (!phoneNumber) {
+          console.log('[Historial] No hay número, mostrando notificación');
           showNotification('⚠️ Selecciona un chat primero', 'warning');
           return;
         }
@@ -435,32 +449,47 @@ async function injectHistoryButton(page) {
         btn.innerHTML = '⏳ Cargando...';
 
         try {
+          console.log('[Historial] Llamando a window.getHistoryFromBackend...');
+          
+          // Verificar si la función existe
+          if (typeof window.getHistoryFromBackend !== 'function') {
+            console.error('[Historial] ❌ window.getHistoryFromBackend no está disponible');
+            showNotification('❌ Error: Función no disponible', 'error');
+            return;
+          }
+          
           // Obtener historial del backend usando la función expuesta de Node.js
           const result = await window.getHistoryFromBackend();
+          console.log('[Historial] Resultado recibido:', result);
           
           if (!result.success) {
+            console.log('[Historial] Sin éxito:', result.message);
             showNotification(result.message || '📭 No hay historial disponible', 'info');
             return;
           }
 
           if (!result.data) {
+            console.log('[Historial] No hay data en el resultado');
             showNotification('📭 No hay datos de historial', 'info');
             return;
           }
 
           // Buscar mensajes del contacto actual
+          console.log('[Historial] Buscando mensajes para:', phoneNumber);
           const messages = findMessagesForContact(result.data, phoneNumber);
           
           if (messages.length === 0) {
+            console.log('[Historial] No se encontraron mensajes');
             showNotification(`📭 No hay historial para este contacto`, 'info');
             return;
           }
 
+          console.log('[Historial] Mostrando burbuja con', messages.length, 'mensajes');
           // Mostrar burbuja con historial
           showHistoryBubble(messages, phoneNumber, result.date);
 
         } catch (error) {
-          console.error('Error fetching history:', error);
+          console.error('[Historial] Error:', error);
           showNotification('❌ Error al cargar historial', 'error');
         } finally {
           btn.disabled = false;
@@ -530,23 +559,90 @@ async function injectHistoryButton(page) {
 
     // Función para buscar mensajes de un contacto en el backup
     const findMessagesForContact = (backupData, phoneNumber) => {
-      if (!backupData.results || !Array.isArray(backupData.results)) {
-        return [];
-      }
-
-      const cleanPhone = phoneNumber.replace(/\D/g, '');
+      console.log('[Historial] Buscando en backup:', backupData);
       
-      return backupData.results.filter(result => {
-        const resultPhone = result.phone ? result.phone.replace(/\D/g, '') : '';
-        return resultPhone.includes(cleanPhone) || cleanPhone.includes(resultPhone);
-      });
+      const cleanPhone = phoneNumber.replace(/\D/g, '');
+      console.log('[Historial] Buscando número limpio:', cleanPhone);
+      
+      // Detectar tipo de backup
+      if (backupData.type === 'chat_backup' && backupData.chats) {
+        // Backup de chats (del botón "Respaldar Chats")
+        console.log('[Historial] Tipo: chat_backup, Total de chats:', backupData.chats.length);
+        
+        // Buscar el chat que coincida con el número
+        const matchingChat = backupData.chats.find(chat => {
+          const chatPhone = chat.phone ? chat.phone.replace(/\D/g, '') : '';
+          console.log('[Historial] Comparando chat:', chat.name, 'Phone:', chatPhone);
+          return chatPhone.includes(cleanPhone) || cleanPhone.includes(chatPhone);
+        });
+        
+        if (matchingChat) {
+          console.log('[Historial] ✅ Chat encontrado:', matchingChat.name, 'con', matchingChat.messages.length, 'mensajes');
+          // Retornar los mensajes del chat en formato compatible
+          return matchingChat.messages.map(msg => ({
+            ...msg,
+            name: matchingChat.name,
+            phone: matchingChat.phone,
+            status: 'sent', // Los mensajes del backup son enviados
+            sent_at: msg.timestamp
+          }));
+        }
+        
+        console.log('[Historial] No se encontró chat para el número');
+        return [];
+        
+      } else if (backupData.results && Array.isArray(backupData.results)) {
+        // Backup de resultados de envío (del proceso automático)
+        console.log('[Historial] Tipo: results, Total de resultados:', backupData.results.length);
+        
+        const matches = backupData.results.filter(result => {
+          const resultPhone = result.phone ? result.phone.replace(/\D/g, '') : '';
+          console.log('[Historial] Comparando con:', resultPhone);
+          
+          const match = resultPhone.includes(cleanPhone) || cleanPhone.includes(resultPhone);
+          if (match) {
+            console.log('[Historial] ✅ Match encontrado:', result);
+          }
+          return match;
+        });
+        
+        console.log('[Historial] Total de matches encontrados:', matches.length);
+        return matches;
+      }
+      
+      console.log('[Historial] Formato de backup no reconocido');
+      return [];
     };
 
     // Función para mostrar la burbuja con el historial
     const showHistoryBubble = (messages, phoneNumber, date) => {
-      // Remover burbuja existente
-      const existing = document.getElementById('history-bubble');
-      if (existing) existing.remove();
+      // Remover burbuja y overlay existentes
+      const existingBubble = document.getElementById('history-bubble');
+      if (existingBubble) existingBubble.remove();
+      
+      const existingOverlay = document.getElementById('history-overlay');
+      if (existingOverlay) existingOverlay.remove();
+
+      // Crear overlay oscuro
+      const overlay = document.createElement('div');
+      overlay.id = 'history-overlay';
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 99999998;
+        backdrop-filter: blur(2px);
+      `;
+
+      // Cerrar al hacer clic en el overlay
+      overlay.onclick = () => {
+        overlay.remove();
+        const bubble = document.getElementById('history-bubble');
+        if (bubble) bubble.remove();
+      };
 
       const bubble = document.createElement('div');
       bubble.id = 'history-bubble';
@@ -558,13 +654,18 @@ async function injectHistoryButton(page) {
         background: white;
         border-radius: 20px;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-        z-index: 9999999;
+        z-index: 99999999;
         width: 600px;
         max-height: 80vh;
         overflow: hidden;
         display: flex;
         flex-direction: column;
       `;
+
+      // Prevenir que el clic en la burbuja cierre el overlay
+      bubble.onclick = (e) => {
+        e.stopPropagation();
+      };
 
       const header = document.createElement('div');
       header.style.cssText = `
@@ -615,18 +716,22 @@ async function injectHistoryButton(page) {
 
         msgDiv.innerHTML = `
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-            <strong style="color: #333;">${msg.name || phoneNumber}</strong>
-            <span style="color: #666; font-size: 12px;">${msg.timestamp || 'Sin fecha'}</span>
+            <strong style="color: #333;">${msg.name || msg.contact_name || phoneNumber}</strong>
+            <span style="color: #666; font-size: 12px;">${msg.sent_at ? new Date(msg.sent_at).toLocaleString('es-MX') : 'Sin fecha'}</span>
           </div>
-          <div style="color: #555; white-space: pre-wrap;">${msg.message || msg.text || 'Sin mensaje'}</div>
+          <div style="color: #555; white-space: pre-wrap; margin-bottom: 8px;">
+            <strong style="font-size: 11px; color: #999;">MENSAJE ENVIADO:</strong><br>
+            ${msg.message_sent || msg.message || msg.text || 'Sin mensaje'}
+          </div>
           ${msg.response ? `
             <div style="margin-top: 10px; padding: 10px; background: #fff; border-radius: 5px; border-left: 3px solid #25D366;">
-              <strong style="color: #25D366; font-size: 12px;">RESPUESTA:</strong>
+              <strong style="color: #25D366; font-size: 12px;">RESPUESTA RECIBIDA:</strong>
               <div style="color: #555; margin-top: 5px;">${msg.response}</div>
             </div>
-          ` : ''}
+          ` : '<div style="color: #999; font-size: 12px; font-style: italic;">Sin respuesta</div>'}
           <div style="margin-top: 8px; font-size: 12px; color: #999;">
             Estado: <span style="color: ${msg.status === 'sent' ? '#25D366' : '#ff6b6b'};">${msg.status === 'sent' ? '✅ Enviado' : '❌ Error'}</span>
+            ${msg.error ? `<br><span style="color: #ff6b6b;">Error: ${msg.error}</span>` : ''}
           </div>
         `;
 
@@ -635,17 +740,22 @@ async function injectHistoryButton(page) {
 
       bubble.appendChild(header);
       bubble.appendChild(content);
+      
+      // Agregar overlay primero, luego la burbuja
+      document.body.appendChild(overlay);
       document.body.appendChild(bubble);
 
-      // Cerrar burbuja
+      // Cerrar burbuja y overlay
       document.getElementById('close-history-bubble').onclick = () => {
         bubble.remove();
+        overlay.remove();
       };
 
       // Cerrar con ESC
       const handleEsc = (e) => {
         if (e.key === 'Escape') {
           bubble.remove();
+          overlay.remove();
           document.removeEventListener('keydown', handleEsc);
         }
       };

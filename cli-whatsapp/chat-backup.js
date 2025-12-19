@@ -179,14 +179,56 @@ async function processAndUploadMedia(page, messages) {
  */
 async function getChatInfo(page) {
   return await page.evaluate(() => {
-    // Buscar el nombre del contacto en el header
-    const headerTitle = document.querySelector('header span[dir="auto"][title]');
-    const name = headerTitle ? headerTitle.getAttribute('title') : 'Unknown';
+    const header = document.querySelector('header');
+    if (!header) {
+      return { name: 'Unknown', phone: '' };
+    }
+
+    // Método 1: Obtener del título del header
+    const titleElement = header.querySelector('span[dir="auto"][title]');
+    let name = 'Unknown';
+    let phone = '';
     
-    // Intentar obtener el número de teléfono
-    const phoneElement = document.querySelector('header span[title*="+"]');
-    const phone = phoneElement ? phoneElement.getAttribute('title') : '';
-    
+    if (titleElement) {
+      const title = titleElement.getAttribute('title');
+      
+      // Si el título es un número de teléfono, usarlo como phone
+      if (title && title.match(/^\+?\d+/)) {
+        phone = title.replace(/\D/g, '');
+        name = title; // Usar el número como nombre también
+      } else {
+        name = title || 'Unknown';
+      }
+    }
+
+    // Método 2: Si no tenemos phone, buscar span con número de teléfono
+    if (!phone) {
+      const phoneSpan = header.querySelector('span[title*="+"]');
+      if (phoneSpan) {
+        const phoneTitle = phoneSpan.getAttribute('title');
+        if (phoneTitle) {
+          phone = phoneTitle.replace(/\D/g, '');
+        }
+      }
+    }
+
+    // Método 3: Buscar en el contenedor principal del chat usando data-id
+    if (!phone) {
+      const mainContainer = document.querySelector('#main');
+      if (mainContainer) {
+        const chatHeader = mainContainer.querySelector('[data-id]');
+        if (chatHeader) {
+          const dataId = chatHeader.getAttribute('data-id');
+          // Extraer número del data-id (formato: true_521234567890@c.us)
+          const match = dataId.match(/(\d{10,15})@/);
+          if (match) {
+            phone = match[1];
+          }
+        }
+      }
+    }
+
+    console.log('[Backup] Chat info:', { name, phone });
     return { name, phone };
   });
 }
