@@ -37,6 +37,7 @@ next-env.d.ts
 
 # playwright
 /playwright/.auth
-/whatsapp-session
-/cli-whatsapp/whatsapp-session-manual
+
 /ana-backend/.build
+/cli-whatsapp/whatsapp-session-manual
+/whatsapp-session
