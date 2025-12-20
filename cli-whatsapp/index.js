@@ -49,19 +49,6 @@ async function main() {
     
     // Si hay contactos, abrir ventana de automatización
     if (hasContacts) {
-      // Leer plantilla de mensaje
-      const templatePath = path.join(__dirname, 'mensaje.txt');
-      if (!fs.existsSync(templatePath)) {
-        console.error('❌ No se encontró el archivo mensaje.txt');
-        console.log('📝 Crea un archivo "mensaje.txt" con tu plantilla de mensaje');
-        process.exit(1);
-      }
-
-      const messageTemplate = fs.readFileSync(templatePath, 'utf-8');
-      console.log('📝 Plantilla de mensaje cargada:');
-      console.log('─────────────────────────────────────');
-      console.log(messageTemplate);
-      console.log('─────────────────────────────────────\n');
 
       // Activar modo media por portapapeles si se pasa el flag en la línea de comandos
       if (process.argv.includes('--clipboard-media')) {
@@ -118,7 +105,7 @@ async function main() {
           const globalIndex = messagesSent + i + 1;
           console.log(`\n[${globalIndex}/${contacts.length}] Procesando: ${contact.name}`);
           
-          const result = await sendMessage(contact, messageTemplate);
+          const result = await sendMessage(contact, contact.message);
           results.push(result);
 
           // Esperar entre mensajes (excepto el último del lote)
