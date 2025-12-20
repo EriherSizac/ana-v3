@@ -4,6 +4,21 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 
+/**
+ * Handler para OPTIONS - solo retorna 200 para CORS preflight
+ */
+export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
+  return {
+    statusCode: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+    body: ''
+  };
+};
+
 export const uploadMedia = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   try {
     if (!event.body) {
