@@ -114,13 +114,30 @@ export const uploadAgentContacts = async (
     const processedLines = [newHeader];
     let contactCount = 0;
 
+    // Función para escapar campos CSV (envolver en comillas si contiene comas, comillas o saltos de línea)
+    const escapeCSVField = (field: string): string => {
+      if (!field) return '';
+      
+      // Si el campo contiene comas, comillas dobles o saltos de línea, debe ir entre comillas
+      if (field.includes(',') || field.includes('"') || field.includes('\n') || field.includes('\r')) {
+        // Escapar comillas dobles duplicándolas
+        const escaped = field.replace(/"/g, '""');
+        return `"${escaped}"`;
+      }
+      
+      return field;
+    };
+
     // Agregar mensaje a cada fila
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
 
+      // Escapar el mensaje para que las comas no rompan el CSV
+      const escapedMessage = escapeCSVField(message);
+      
       // Si la línea ya tiene el mensaje, no agregarlo de nuevo
-      const newLine = line.includes(message) ? line : `${line},${message}`;
+      const newLine = line.includes(message) ? line : `${line},${escapedMessage}`;
       processedLines.push(newLine);
       contactCount++;
     }

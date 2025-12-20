@@ -114,7 +114,7 @@ export async function sendBackup(data) {
 }
 
 /**
- * Parsea CSV a array de objetos
+ * Parsea CSV a array de objetos (maneja campos con comillas dobles y comas)
  * @param {string} csvText - Texto CSV
  * @returns {Array} Array de objetos con los datos del CSV
  */
@@ -122,7 +122,41 @@ function parseCSV(csvText) {
   const lines = csvText.trim().split('\n');
   if (lines.length < 2) return [];
   
-  const headers = lines[0].split(',').map(h => h.trim());
+  // Función para parsear una línea CSV respetando comillas dobles
+  const parseCSVLine = (line) => {
+    const values = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      const nextChar = line[i + 1];
+      
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          // Comilla doble escapada ""
+          current += '"';
+          i++; // Saltar la siguiente comilla
+        } else {
+          // Toggle estado de comillas
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        // Coma fuera de comillas = separador de campo
+        values.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    
+    // Agregar el último campo
+    values.push(current.trim());
+    
+    return values;
+  };
+  
+  const headers = parseCSVLine(lines[0]);
   const contacts = [];
   
   // Mapeo de nombres de columnas del servidor a nombres esperados por el cliente
@@ -135,7 +169,7 @@ function parseCSV(csvText) {
   };
   
   for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(',').map(v => v.trim());
+    const values = parseCSVLine(lines[i]);
     if (values.length >= headers.length) {
       const contact = {};
       headers.forEach((header, idx) => {
