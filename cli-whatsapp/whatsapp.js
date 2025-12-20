@@ -531,6 +531,14 @@ async function applyAutomationUIRestrictions() {
       hideElements('button[aria-label*="Menu"]');
       hideElements('button[aria-label*="Menú"]');
       
+      // Ocultar menú desplegable de cada chat (flechita)
+      hideElements('[data-icon="down"]');
+      hideElements('[data-icon="chevron-down"]');
+      hideElements('span[data-icon="down"]');
+      hideElements('button[aria-label*="Menú de chat"]');
+      hideElements('button[aria-label*="Chat menu"]');
+      hideElements('div[role="button"] span[data-icon="down"]');
+      
       // Ocultar botones de navegación inferior
       hideElements('[data-icon="status-refreshed"]');
       hideElements('[data-icon="newsletter-outline"]');
