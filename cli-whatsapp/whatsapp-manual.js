@@ -546,14 +546,6 @@ async function applyUIRestrictions(allowedContacts) {
       hideElements('button[aria-label*="Menu"]');
       hideElements('button[aria-label*="Menú"]');
       
-      // Ocultar menú desplegable de cada chat (flechita)
-      hideElements('[data-icon="down"]');
-      hideElements('[data-icon="chevron-down"]');
-      hideElements('span[data-icon="down"]');
-      hideElements('button[aria-label*="Menú de chat"]');
-      hideElements('button[aria-label*="Chat menu"]');
-      hideElements('div[role="button"] span[data-icon="down"]');
-      
       // Ocultar botones de navegación inferior (Estado, Canales, Comunidades, Multimedia, Ajustes, Perfil)
       hideElements('[data-icon="status-refreshed"]');
       hideElements('[data-icon="newsletter-outline"]');
@@ -686,15 +678,9 @@ async function applyUIRestrictions(allowedContacts) {
 
   // Aplicar restricciones cuando el DOM esté listo
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      // Esperar un poco más para asegurar que WhatsApp Web esté completamente cargado
-      setTimeout(window.applyManualUIRestrictions, 1000);
-    });
+    document.addEventListener('DOMContentLoaded', window.applyManualUIRestrictions);
   } else {
-    // Si ya está cargado, aplicar inmediatamente y luego después de un delay
     window.applyManualUIRestrictions();
-    setTimeout(window.applyManualUIRestrictions, 1000);
-    setTimeout(window.applyManualUIRestrictions, 3000);
   }
 
   // Aplicar restricciones cada segundo
@@ -702,24 +688,12 @@ async function applyUIRestrictions(allowedContacts) {
 
   // Observar cambios en el DOM
   const observer = new MutationObserver(window.applyManualUIRestrictions);
-  if (document.documentElement) {
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['style', 'class']
-    });
-  } else {
-    // Si el DOM aún no está listo, esperar
-    document.addEventListener('DOMContentLoaded', () => {
-      observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['style', 'class']
-      });
-    });
-  }
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'class']
+  });
 }, allowedNumbers);
 }
 

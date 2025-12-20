@@ -128,10 +128,7 @@ function parseCSV(csvText) {
   // Mapeo de nombres de columnas del servidor a nombres esperados por el cliente
   const fieldMapping = {
     'contact_phone': 'phone',
-    'phone': 'phone',
     'contact_name': 'name',
-    'first_name': 'name',
-    'name': 'name',
   };
   
   for (let i = 1; i < lines.length; i++) {
@@ -162,29 +159,22 @@ export async function fetchAssignedChats() {
   }
 
   try {
-    const url = `${API_BASE_URL}/supervisors/agents/${config.agent_id}/${config.campaign}/contacts`;
-    console.log(`📡 Consultando contactos en: ${url}`);
-    
-    const response = await fetch(url);
+    const response = await fetch(`${API_BASE_URL}/get/chats/${config.agent_id}-${config.campaign}`);
 
     if (response.ok) {
       const csvText = await response.text();
-      console.log(`📥 CSV recibido (${csvText.length} caracteres)`);
       const contacts = parseCSV(csvText);
-      console.log(`✅ ${contacts.length} contactos parseados del servidor`);
+      console.log('📥 Chats asignados obtenidos del servidor');
       return contacts;
     } else if (response.status === 404) {
-      console.log('ℹ️  No hay contactos asignados aún para este agente/campaña');
+      console.log('ℹ️  No hay chats asignados aún');
       return null;
     } else {
-      console.error(`❌ Error al obtener contactos: ${response.status} ${response.statusText}`);
-      const errorText = await response.text().catch(() => 'No response body');
-      console.error(`   Respuesta: ${errorText}`);
+      console.error('❌ Error al obtener chats:', response.statusText);
       return null;
     }
   } catch (error) {
-    console.error('❌ Error al obtener contactos:', error.message);
-    console.error('   Stack:', error.stack);
+    console.error('❌ Error al obtener chats:', error.message);
     return null;
   }
 }

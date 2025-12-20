@@ -401,22 +401,41 @@ export async function initWhatsApp() {
         
         // Observar cambios para recrear si se elimina
         const observer = new MutationObserver(() => {
-          if (!document.getElementById('automation-overlay')) {
+          const overlay = document.getElementById('automation-overlay');
+          if (!overlay) {
             console.log('[Overlay] Recreando overlay...');
             createOverlay();
+          } else if (overlay.style.display === 'none') {
+            // Si alguien intenta ocultarlo, mostrarlo de nuevo
+            console.log('[Overlay] Restaurando overlay visible...');
+            overlay.style.display = 'flex';
           }
         });
         
-        if (document.body) {
-          observer.observe(document.body, { childList: true, subtree: true });
-          
-          // Verificación periódica cada segundo
-          setInterval(() => {
-            if (!document.getElementById('automation-overlay')) {
-              createOverlay();
-            }
-          }, 1000);
-        }
+        // Esperar a que el body esté disponible
+        const waitForBody = () => {
+          if (document.body) {
+            observer.observe(document.body, { 
+              childList: true, 
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['style', 'class']
+            });
+            
+            // Verificación periódica cada segundo
+            setInterval(() => {
+              const overlay = document.getElementById('automation-overlay');
+              if (!overlay) {
+                createOverlay();
+              } else if (overlay.style.display === 'none') {
+                overlay.style.display = 'flex';
+              }
+            }, 1000);
+          } else {
+            setTimeout(waitForBody, 100);
+          }
+        };
+        waitForBody();
       };
     });
   }
