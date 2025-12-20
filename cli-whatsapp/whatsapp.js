@@ -242,10 +242,15 @@ async function showLoginOverlay(requireAll = true) {
       
       // Verificar periódicamente si hay resultado
       const pollResult = setInterval(async () => {
-        const loginResult = await autoPage.evaluate(() => window.__loginResult);
-        if (loginResult) {
+        try {
+          const loginResult = await autoPage.evaluate(() => window.__loginResult);
+          if (loginResult) {
+            clearInterval(pollResult);
+            resolve(loginResult);
+          }
+        } catch (err) {
+          // Contexto destruido (navegación), limpiar intervalo
           clearInterval(pollResult);
-          resolve(loginResult);
         }
       }, 200);
     };

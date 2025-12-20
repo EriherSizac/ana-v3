@@ -232,10 +232,15 @@ async function showManualLoginOverlay(requireAll = true) {
       }, requireAll);
       
       const pollResult = setInterval(async () => {
-        const loginResult = await manualPage.evaluate(() => window.__manualLoginResult);
-        if (loginResult) {
+        try {
+          const loginResult = await manualPage.evaluate(() => window.__manualLoginResult);
+          if (loginResult) {
+            clearInterval(pollResult);
+            resolve(loginResult);
+          }
+        } catch (err) {
+          // Contexto destruido (navegación), limpiar intervalo
           clearInterval(pollResult);
-          resolve(loginResult);
         }
       }, 200);
     };
