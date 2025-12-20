@@ -5,6 +5,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const CONFIG = {
+  apiBaseUrl: 'https://ow24p7ablb.execute-api.us-east-1.amazonaws.com', // URL del backend
   inputCsv: path.join(__dirname, 'contactos.csv'),
   outputCsv: path.join(__dirname, 'resultados.csv'),
   responsesCsv: path.join(__dirname, 'respuestas.csv'),

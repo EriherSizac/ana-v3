@@ -45,6 +45,14 @@ functions:
           path: /backups
           method: post
 
+  backupsOptions:
+    handler: src/handlers/backups.optionsHandler
+    events:
+      - httpApi:
+          cors: true
+          path: /backups
+          method: options
+
   getLatestBackup:
     handler: src/handlers/backups.getLatestBackup
     events:
@@ -53,12 +61,28 @@ functions:
           path: /backups/latest/{agentId}/{campaign}
           method: get
 
+  backupsLatestOptions:
+    handler: src/handlers/backups.optionsHandler
+    events:
+      - httpApi:
+          cors: true
+          path: /backups/latest/{agentId}/{campaign}
+          method: options
+
   getChats:
     handler: src/handlers/chats.getChats
     events:
       - httpApi:
           path: /get/chats/{agentId-campaign-id}
           method: get
+          cors: true
+
+  chatsOptions:
+    handler: src/handlers/chats.optionsHandler
+    events:
+      - httpApi:
+          path: /get/chats/{agentId-campaign-id}
+          method: options
           cors: true
 
   uploadMedia:
@@ -69,12 +93,118 @@ functions:
           method: post
           cors: true
 
+  mediaOptions:
+    handler: src/handlers/media.optionsHandler
+    events:
+      - httpApi:
+          path: /media
+          method: options
+          cors: true
+
   updatePendingContacts:
     handler: src/handlers/contacts.updatePendingContacts
     events:
       - httpApi:
           path: /contacts/pending
           method: post
+          cors: true
+
+  contactsOptions:
+    handler: src/handlers/contacts.optionsHandler
+    events:
+      - httpApi:
+          path: /contacts/pending
+          method: options
+          cors: true
+
+  verifyCredentials:
+    handler: src/handlers/auth.verifyCredentials
+    events:
+      - httpApi:
+          path: /auth/verify
+          method: post
+          cors: true
+
+  authOptions:
+    handler: src/handlers/auth.optionsHandler
+    events:
+      - httpApi:
+          path: /auth/verify
+          method: options
+          cors: true
+
+  # Supervisores - Cargar datos de agentes
+  uploadAgentContacts:
+    handler: src/handlers/supervisors.uploadAgentContacts
+    events:
+      - httpApi:
+          path: /supervisors/agents/{agent}/{campaign}/contacts
+          method: post
+          cors: true
+
+  getAgentContacts:
+    handler: src/handlers/supervisors.getAgentContacts
+    events:
+      - httpApi:
+          path: /supervisors/agents/{agent}/{campaign}/contacts
+          method: get
+          cors: true
+
+  supervisorsContactsOptions:
+    handler: src/handlers/supervisors.optionsHandler
+    events:
+      - httpApi:
+          path: /supervisors/agents/{agent}/{campaign}/contacts
+          method: options
+          cors: true
+
+  # Credenciales por campaña
+  getCampaignCredentials:
+    handler: src/handlers/credentials.getCampaignCredentials
+    events:
+      - httpApi:
+          path: /credentials/{campaign}
+          method: get
+          cors: true
+
+  credentialsGetOptions:
+    handler: src/handlers/credentials.optionsHandler
+    events:
+      - httpApi:
+          path: /credentials/{campaign}
+          method: options
+          cors: true
+
+  uploadCampaignCredentials:
+    handler: src/handlers/credentials.uploadCampaignCredentials
+    events:
+      - httpApi:
+          path: /credentials/upload
+          method: post
+          cors: true
+
+  credentialsUploadOptions:
+    handler: src/handlers/credentials.optionsHandler
+    events:
+      - httpApi:
+          path: /credentials/upload
+          method: options
+          cors: true
+
+  regenerateDailyPasswords:
+    handler: src/handlers/credentials.regenerateDailyPasswords
+    events:
+      - httpApi:
+          path: /credentials/regenerate
+          method: post
+          cors: true
+
+  credentialsRegenerateOptions:
+    handler: src/handlers/credentials.optionsHandler
+    events:
+      - httpApi:
+          path: /credentials/regenerate
+          method: options
           cors: true
 
 resources:

@@ -1,11 +1,255 @@
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
-import { loadAgentConfig, API_BASE_URL } from './agent-config.js';
+import { loadAgentConfig, saveAgentConfig, API_BASE_URL } from './agent-config.js';
 
 let manualBrowser = null;
 let manualPage = null;
 let backupMonitorInterval = null;
+
+/**
+ * Muestra el overlay de login en la ventana manual
+ * @param {boolean} requireAll - Si es true, pide usuario, campaña y palabra. Si es false, solo palabra
+ * @returns {Promise<Object>} Configuración del agente
+ */
+async function showManualLoginOverlay(requireAll = true) {
+  return new Promise(async (resolve) => {
+    const savedConfig = requireAll ? null : loadAgentConfig();
+    
+    await manualPage.evaluate((args) => {
+      const { requireAll, savedUser, savedCampaign } = args;
+      
+      const existing = document.getElementById('manual-login-overlay');
+      if (existing) existing.remove();
+      
+      const overlay = document.createElement('div');
+      overlay.id = 'manual-login-overlay';
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.95);
+        z-index: 9999999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: Arial, sans-serif;
+        color: white;
+      `;
+      
+      const userField = requireAll ? `
+        <div style="margin-bottom: 20px; text-align: left;">
+          <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
+          <input type="text" id="manual-login-user" placeholder="ej: erick" style="
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #333;
+            border-radius: 10px;
+            background: #1a1a1a;
+            color: white;
+            font-size: 16px;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.3s;
+          " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+        </div>
+      ` : '';
+      
+      const campaignField = requireAll ? `
+        <div style="margin-bottom: 20px; text-align: left;">
+          <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
+          <input type="text" id="manual-login-campaign" placeholder="ej: prueba" style="
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #333;
+            border-radius: 10px;
+            background: #1a1a1a;
+            color: white;
+            font-size: 16px;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.3s;
+          " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+        </div>
+      ` : `
+        <div style="margin-bottom: 20px; text-align: left;">
+          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
+        </div>
+      `;
+      
+      overlay.innerHTML = `
+        <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid #25D366; min-width: 400px;">
+          <div style="font-size: 60px; margin-bottom: 20px;">🔐</div>
+          <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">${requireAll ? 'Iniciar Sesión (Manual)' : 'Verificación Diaria'}</h1>
+          <p style="margin: 0 0 30px 0; font-size: 14px; opacity: 0.7;">Ventana de respuestas manuales</p>
+          
+          ${userField}
+          ${campaignField}
+          
+          <div style="margin-bottom: 30px; text-align: left;">
+            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Palabra del Día</label>
+            <input type="password" id="manual-login-daily-password" placeholder="Ingresa la palabra del día" style="
+              width: 100%;
+              padding: 12px 15px;
+              border: 2px solid #333;
+              border-radius: 10px;
+              background: #1a1a1a;
+              color: white;
+              font-size: 16px;
+              box-sizing: border-box;
+              outline: none;
+              transition: border-color 0.3s;
+            " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+          </div>
+          
+          <button id="manual-login-submit-btn" style="
+            width: 100%;
+            padding: 15px;
+            background: #25D366;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+          " onmouseover="this.style.background='#1da851'" onmouseout="this.style.background='#25D366'">
+            Verificar Credenciales
+          </button>
+          
+          <p id="manual-login-error" style="margin: 15px 0 0 0; font-size: 14px; color: #ff6b6b; display: none;"></p>
+          <p id="manual-login-loading" style="margin: 15px 0 0 0; font-size: 14px; color: #25D366; display: none;">Verificando...</p>
+        </div>
+      `;
+      
+      document.body.appendChild(overlay);
+      
+      setTimeout(() => {
+        const firstInput = requireAll ? 
+          document.getElementById('manual-login-user') : 
+          document.getElementById('manual-login-daily-password');
+        if (firstInput) firstInput.focus();
+      }, 100);
+    }, { requireAll, savedUser: savedConfig?.agent_id, savedCampaign: savedConfig?.campaign });
+
+    // Exponer función para verificar credenciales
+    await manualPage.exposeFunction('verifyManualCredentialsBackend', async (user, campaign, dailyPassword) => {
+      try {
+        const response = await fetch(`${CONFIG.apiBaseUrl}/auth/verify`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ user, campaign, dailyPassword })
+        });
+        
+        const data = await response.json();
+        console.log('[Auth Manual] Respuesta del backend:', data);
+        return data;
+      } catch (error) {
+        console.error('[Auth Manual] Error al verificar credenciales:', error);
+        return { success: false, message: 'Error de conexión con el servidor' };
+      }
+    });
+
+    // Escuchar el evento de submit
+    const checkSubmit = async () => {
+      await manualPage.evaluate((requireAll) => {
+        return new Promise((innerResolve) => {
+          const btn = document.getElementById('manual-login-submit-btn');
+          const userInput = document.getElementById('manual-login-user');
+          const campaignInput = document.getElementById('manual-login-campaign');
+          const dailyPasswordInput = document.getElementById('manual-login-daily-password');
+          const errorEl = document.getElementById('manual-login-error');
+          const loadingEl = document.getElementById('manual-login-loading');
+          
+          if (!btn || btn.dataset.listenerAdded) return innerResolve(null);
+          
+          btn.dataset.listenerAdded = 'true';
+          
+          const handleSubmit = async () => {
+            const user = requireAll ? userInput.value.trim() : window.__savedUser;
+            const campaign = requireAll ? campaignInput.value.trim() : window.__savedCampaign;
+            const dailyPassword = dailyPasswordInput.value.trim();
+            
+            if (requireAll && (!user || !campaign)) {
+              errorEl.textContent = 'Por favor completa todos los campos';
+              errorEl.style.display = 'block';
+              return;
+            }
+            
+            if (!dailyPassword) {
+              errorEl.textContent = 'Por favor ingresa la palabra del día';
+              errorEl.style.display = 'block';
+              return;
+            }
+            
+            errorEl.style.display = 'none';
+            loadingEl.style.display = 'block';
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+            
+            const result = await window.verifyManualCredentialsBackend(user, campaign, dailyPassword);
+            
+            loadingEl.style.display = 'none';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            
+            if (result.success) {
+              window.__manualLoginResult = { 
+                agent_id: user, 
+                campaign: campaign 
+              };
+              
+              const overlay = document.getElementById('manual-login-overlay');
+              if (overlay) overlay.remove();
+            } else {
+              errorEl.textContent = result.message || 'Credenciales incorrectas';
+              errorEl.style.display = 'block';
+            }
+          };
+          
+          btn.addEventListener('click', handleSubmit);
+          
+          const inputs = [dailyPasswordInput];
+          if (requireAll) {
+            inputs.push(userInput, campaignInput);
+          }
+          
+          inputs.forEach(input => {
+            if (input) {
+              input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') handleSubmit();
+              });
+            }
+          });
+          
+          innerResolve(null);
+        });
+      }, requireAll);
+      
+      const pollResult = setInterval(async () => {
+        const loginResult = await manualPage.evaluate(() => window.__manualLoginResult);
+        if (loginResult) {
+          clearInterval(pollResult);
+          resolve(loginResult);
+        }
+      }, 200);
+    };
+    
+    if (!requireAll && savedConfig) {
+      await manualPage.evaluate((config) => {
+        window.__savedUser = config.agent_id;
+        window.__savedCampaign = config.campaign;
+      }, savedConfig);
+    }
+    
+    checkSubmit();
+  });
+}
 
 /**
  * Inicializa la ventana manual de WhatsApp para respuestas
@@ -104,13 +348,33 @@ export async function initManualWhatsApp(allowedContacts = []) {
   }
   
   // El modo --app ya carga la URL automáticamente
-  console.log('⏳ Esperando a que WhatsApp Web (Manual) cargue...');
+  console.log('⏳ Esperando que WhatsApp Web (Manual) cargue completamente...');
+  
+  // Esperar a que la página esté completamente cargada
+  try {
+    await manualPage.waitForLoadState('domcontentloaded', { timeout: 30000 });
+    await manualPage.waitForTimeout(2000); // Dar tiempo extra para estabilizar
+  } catch (error) {
+    console.log('⚠️  Timeout esperando carga, continuando...');
+  }
+  
   console.log('📱 Escanea el código QR con OTRO teléfono/cuenta');
   
-  // Esperar a que aparezca el panel de chats
+  // IMPORTANTE: Pedir credenciales ANTES de esperar la conexión
+  console.log('🔐 Validación de credenciales requerida (Manual)...');
+  console.log('📝 Ingresa usuario, campaña y palabra del día');
+  
+  // Siempre pedir todos los campos (usuario, campaña y palabra del día)
+  let manualConfig = await showManualLoginOverlay(true);
+  saveAgentConfig(manualConfig);
+  console.log(`✅ Credenciales verificadas (Manual): ${manualConfig.agent_id} | Campaña: ${manualConfig.campaign}`);
+  
+  console.log('⏳ Esperando conexión de WhatsApp Web (Manual)...');
+  
+  // Ahora sí, esperar a que WhatsApp se conecte
   await manualPage.waitForSelector('#side', { timeout: 300000 });
   
-  console.log('✅ WhatsApp Web (Manual) conectado!');
+  console.log('✅ WhatsApp Web (Manual) conectado - Ventana lista!');
   
   // Aplicar bloqueos INMEDIATAMENTE en la primera carga
   await manualPage.evaluate(() => {

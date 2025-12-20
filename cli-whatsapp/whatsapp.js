@@ -9,11 +9,17 @@ let agentConfig = null;
 
 /**
  * Muestra el overlay de login y espera a que el usuario ingrese los datos
+ * @param {boolean} requireAll - Si es true, pide usuario, campaña y palabra. Si es false, solo palabra
  * @returns {Promise<Object>} Configuración del agente
  */
-async function showLoginOverlay() {
+async function showLoginOverlay(requireAll = true) {
   return new Promise(async (resolve) => {
-    await autoPage.evaluate(() => {
+    // Obtener usuario y campaña guardados si existen
+    const savedConfig = requireAll ? null : loadAgentConfig();
+    
+    await autoPage.evaluate((args) => {
+      const { requireAll, savedUser, savedCampaign } = args;
+      
       // Remover overlay existente si hay
       const existing = document.getElementById('login-overlay');
       if (existing) existing.remove();
@@ -35,31 +41,59 @@ async function showLoginOverlay() {
         color: white;
       `;
       
+      const userField = requireAll ? `
+        <div style="margin-bottom: 20px; text-align: left;">
+          <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
+          <input type="text" id="login-user" placeholder="ej: erick" style="
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #333;
+            border-radius: 10px;
+            background: #1a1a1a;
+            color: white;
+            font-size: 16px;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.3s;
+          " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+        </div>
+      ` : '';
+      
+      const campaignField = requireAll ? `
+        <div style="margin-bottom: 20px; text-align: left;">
+          <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
+          <input type="text" id="login-campaign" placeholder="ej: prueba" style="
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #333;
+            border-radius: 10px;
+            background: #1a1a1a;
+            color: white;
+            font-size: 16px;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.3s;
+          " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+        </div>
+      ` : `
+        <div style="margin-bottom: 20px; text-align: left;">
+          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
+        </div>
+      `;
+      
       overlay.innerHTML = `
         <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid #25D366; min-width: 400px;">
           <div style="font-size: 60px; margin-bottom: 20px;">🔐</div>
-          <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">Configuración de Agente</h1>
-          <p style="margin: 0 0 30px 0; font-size: 14px; opacity: 0.7;">Ingresa tus datos para continuar</p>
+          <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">${requireAll ? 'Iniciar Sesión' : 'Verificación Diaria'}</h1>
+          <p style="margin: 0 0 30px 0; font-size: 14px; opacity: 0.7;">Ingresa tus credenciales para continuar</p>
           
-          <div style="margin-bottom: 20px; text-align: left;">
-            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">ID de Campaña</label>
-            <input type="text" id="login-campaign" placeholder="ej: campana-ventas-2024" style="
-              width: 100%;
-              padding: 12px 15px;
-              border: 2px solid #333;
-              border-radius: 10px;
-              background: #1a1a1a;
-              color: white;
-              font-size: 16px;
-              box-sizing: border-box;
-              outline: none;
-              transition: border-color 0.3s;
-            " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-          </div>
+          ${userField}
+          ${campaignField}
           
           <div style="margin-bottom: 30px; text-align: left;">
-            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">ID de Agente</label>
-            <input type="text" id="login-agent-id" placeholder="ej: agente-001" style="
+            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Palabra del Día</label>
+            <input type="password" id="login-daily-password" placeholder="Ingresa la palabra del día" style="
               width: 100%;
               padding: 12px 15px;
               border: 2px solid #333;
@@ -85,10 +119,11 @@ async function showLoginOverlay() {
             cursor: pointer;
             transition: background 0.3s;
           " onmouseover="this.style.background='#1da851'" onmouseout="this.style.background='#25D366'">
-            Iniciar Sesión
+            Verificar Credenciales
           </button>
           
           <p id="login-error" style="margin: 15px 0 0 0; font-size: 14px; color: #ff6b6b; display: none;"></p>
+          <p id="login-loading" style="margin: 15px 0 0 0; font-size: 14px; color: #25D366; display: none;">Verificando...</p>
         </div>
       `;
       
@@ -96,53 +131,114 @@ async function showLoginOverlay() {
       
       // Enfocar el primer input
       setTimeout(() => {
-        document.getElementById('login-campaign').focus();
+        const firstInput = requireAll ? 
+          document.getElementById('login-user') : 
+          document.getElementById('login-daily-password');
+        if (firstInput) firstInput.focus();
       }, 100);
+    }, { requireAll, savedUser: savedConfig?.agent_id, savedCampaign: savedConfig?.campaign });
+
+    // Exponer función para verificar credenciales desde Node.js
+    await autoPage.exposeFunction('verifyCredentialsBackend', async (user, campaign, dailyPassword) => {
+      try {
+        const response = await fetch(`${CONFIG.apiBaseUrl}/auth/verify`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ user, campaign, dailyPassword })
+        });
+        
+        const data = await response.json();
+        console.log('[Auth] Respuesta del backend:', data);
+        return data;
+      } catch (error) {
+        console.error('[Auth] Error al verificar credenciales:', error);
+        return { success: false, message: 'Error de conexión con el servidor' };
+      }
     });
 
     // Escuchar el evento de submit
     const checkSubmit = async () => {
-      const result = await autoPage.evaluate(() => {
+      await autoPage.evaluate((requireAll) => {
         return new Promise((innerResolve) => {
           const btn = document.getElementById('login-submit-btn');
+          const userInput = document.getElementById('login-user');
           const campaignInput = document.getElementById('login-campaign');
-          const agentInput = document.getElementById('login-agent-id');
+          const dailyPasswordInput = document.getElementById('login-daily-password');
           const errorEl = document.getElementById('login-error');
+          const loadingEl = document.getElementById('login-loading');
           
           if (!btn || btn.dataset.listenerAdded) return innerResolve(null);
           
           btn.dataset.listenerAdded = 'true';
           
-          const handleSubmit = () => {
-            const campaign = campaignInput.value.trim();
-            const agent_id = agentInput.value.trim();
+          const handleSubmit = async () => {
+            const user = requireAll ? userInput.value.trim() : window.__savedUser;
+            const campaign = requireAll ? campaignInput.value.trim() : window.__savedCampaign;
+            const dailyPassword = dailyPasswordInput.value.trim();
             
-            if (!campaign || !agent_id) {
-              errorEl.textContent = 'Por favor completa ambos campos';
+            // Validar campos
+            if (requireAll && (!user || !campaign)) {
+              errorEl.textContent = 'Por favor completa todos los campos';
               errorEl.style.display = 'block';
               return;
             }
             
-            // Guardar en window para que Playwright pueda leerlo
-            window.__loginResult = { campaign, agent_id };
+            if (!dailyPassword) {
+              errorEl.textContent = 'Por favor ingresa la palabra del día';
+              errorEl.style.display = 'block';
+              return;
+            }
             
-            // Remover overlay
-            const overlay = document.getElementById('login-overlay');
-            if (overlay) overlay.remove();
+            // Mostrar loading
+            errorEl.style.display = 'none';
+            loadingEl.style.display = 'block';
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+            
+            // Verificar con el backend
+            const result = await window.verifyCredentialsBackend(user, campaign, dailyPassword);
+            
+            loadingEl.style.display = 'none';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            
+            if (result.success) {
+              // Guardar en window para que Playwright pueda leerlo
+              window.__loginResult = { 
+                agent_id: user, 
+                campaign: campaign 
+              };
+              
+              // Remover overlay
+              const overlay = document.getElementById('login-overlay');
+              if (overlay) overlay.remove();
+            } else {
+              errorEl.textContent = result.message || 'Credenciales incorrectas';
+              errorEl.style.display = 'block';
+            }
           };
           
           btn.addEventListener('click', handleSubmit);
           
           // También permitir Enter para enviar
-          [campaignInput, agentInput].forEach(input => {
-            input.addEventListener('keypress', (e) => {
-              if (e.key === 'Enter') handleSubmit();
-            });
+          const inputs = [dailyPasswordInput];
+          if (requireAll) {
+            inputs.push(userInput, campaignInput);
+          }
+          
+          inputs.forEach(input => {
+            if (input) {
+              input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') handleSubmit();
+              });
+            }
           });
           
           innerResolve(null);
         });
-      });
+      }, requireAll);
       
       // Verificar periódicamente si hay resultado
       const pollResult = setInterval(async () => {
@@ -153,6 +249,14 @@ async function showLoginOverlay() {
         }
       }, 200);
     };
+    
+    // Pasar usuario y campaña guardados al contexto del navegador si no se requieren todos los campos
+    if (!requireAll && savedConfig) {
+      await autoPage.evaluate((config) => {
+        window.__savedUser = config.agent_id;
+        window.__savedCampaign = config.campaign;
+      }, savedConfig);
+    }
     
     checkSubmit();
   });
@@ -248,69 +352,62 @@ export async function initWhatsApp() {
     }, true);
   });
   
-  // Preparar overlay que se ejecutará en CADA navegación
+  // Preparar función de overlay que se activará DESPUÉS de conectar
   if (CONFIG.showOverlay) {
-    console.log('🛡️  Preparando overlay de protección (se activará automáticamente)...');
+    console.log('🛡️  Preparando overlay de protección (se activará después de conectar)...');
     await autoPage.addInitScript(() => {
-      // Función para crear/recrear el overlay
-      const createOverlay = () => {
-        // Si ya existe, no crear otro
-        const existing = document.getElementById('automation-overlay');
-        if (existing) return;
+      // Función global para activar el overlay SOLO cuando se llame
+      window.activateAutomationOverlay = () => {
+        // Función para crear/recrear el overlay
+        const createOverlay = () => {
+          // Si ya existe, no crear otro
+          const existing = document.getElementById('automation-overlay');
+          if (existing) return;
+          
+          // Crear overlay con pointer-events: none para que Playwright pueda hacer clics
+          const overlay = document.createElement('div');
+          overlay.id = 'automation-overlay';
+          overlay.style.cssText = `
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            background: rgba(0, 0, 0, 0.85) !important;
+            z-index: 999999999 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            font-family: Arial, sans-serif !important;
+            color: white !important;
+            pointer-events: none !important;
+          `;
+          
+          overlay.innerHTML = `
+            <div style="text-align: center; padding: 40px; background: rgba(0, 0, 0, 0.9); border-radius: 20px; border: 2px solid #25D366;">
+              <div style="font-size: 60px; margin-bottom: 20px;">🤖</div>
+              <h1 style="margin: 0 0 10px 0; font-size: 32px; color: #25D366;">Automatización en Proceso</h1>
+              <p style="margin: 0; font-size: 18px; opacity: 0.9;">No interactúes con esta ventana</p>
+              <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.7;">El proceso se está ejecutando automáticamente</p>
+            </div>
+          `;
+          
+          document.body.appendChild(overlay);
+          console.log('[Overlay] Overlay activado');
+        };
         
-        // Crear overlay con pointer-events: none para que Playwright pueda hacer clics
-        const overlay = document.createElement('div');
-        overlay.id = 'automation-overlay';
-        overlay.style.cssText = `
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          width: 100% !important;
-          height: 100% !important;
-          background: rgba(0, 0, 0, 0.85) !important;
-          z-index: 999999999 !important;
-          display: flex !important;
-          align-items: center !important;
-          justify-content: center !important;
-          font-family: Arial, sans-serif !important;
-          color: white !important;
-          pointer-events: none !important;
-        `;
+        // Crear overlay inmediatamente
+        createOverlay();
         
-        overlay.innerHTML = `
-          <div style="text-align: center; padding: 40px; background: rgba(0, 0, 0, 0.9); border-radius: 20px; border: 2px solid #25D366;">
-            <div style="font-size: 60px; margin-bottom: 20px;">🤖</div>
-            <h1 style="margin: 0 0 10px 0; font-size: 32px; color: #25D366;">Automatización en Proceso</h1>
-            <p style="margin: 0; font-size: 18px; opacity: 0.9;">No interactúes con esta ventana</p>
-            <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.7;">El proceso se está ejecutando automáticamente</p>
-          </div>
-        `;
-        
-        document.body.appendChild(overlay);
-        console.log('[Overlay] Overlay creado automáticamente');
-      };
-      
-      // Esperar a que el DOM esté listo y crear overlay
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-          setTimeout(createOverlay, 100);
+        // Observar cambios para recrear si se elimina
+        const observer = new MutationObserver(() => {
+          if (!document.getElementById('automation-overlay')) {
+            console.log('[Overlay] Recreando overlay...');
+            createOverlay();
+          }
         });
-      } else {
-        setTimeout(createOverlay, 100);
-      }
-      
-      // Observar cambios para recrear si se elimina
-      const observer = new MutationObserver(() => {
-        if (!document.getElementById('automation-overlay')) {
-          console.log('[Overlay] Recreando overlay...');
-          createOverlay();
-        }
-      });
-      
-      // Esperar a que body exista antes de observar
-      const waitForBody = setInterval(() => {
+        
         if (document.body) {
-          clearInterval(waitForBody);
           observer.observe(document.body, { childList: true, subtree: true });
           
           // Verificación periódica cada segundo
@@ -320,32 +417,48 @@ export async function initWhatsApp() {
             }
           }, 1000);
         }
-      }, 100);
+      };
     });
   }
   
   await autoPage.goto('https://web.whatsapp.com', { waitUntil: 'networkidle' });
 
-  console.log('⏳ Esperando a que WhatsApp Web (Automatización) cargue...');
-  console.log('📱 Si ves un código QR, escanéalo con tu teléfono');
+  console.log('⏳ Esperando que WhatsApp Web cargue completamente...');
   
-  // Esperar a que aparezca el panel de chats (señal de que está conectado)
-  await autoPage.waitForSelector('#side', { timeout: 300000 });
-  
-  console.log('✅ WhatsApp Web (Automatización) conectado!');
-  
-  // Si no hay configuración de agente, mostrar login overlay
-  if (!agentConfig) {
-    console.log('🔐 Primera ejecución - Mostrando pantalla de login...');
-    agentConfig = await showLoginOverlay();
-    saveAgentConfig(agentConfig);
-    console.log(`✅ Agente configurado: ${agentConfig.agent_id} | Campaña: ${agentConfig.campaign}`);
-  } else {
-    console.log(`👤 Agente: ${agentConfig.agent_id} | Campaña: ${agentConfig.campaign}`);
+  // Esperar a que la página esté completamente cargada
+  try {
+    await autoPage.waitForLoadState('domcontentloaded', { timeout: 30000 });
+    await autoPage.waitForTimeout(2000); // Dar tiempo extra para estabilizar
+  } catch (error) {
+    console.log('⚠️  Timeout esperando carga, continuando...');
   }
   
-  // El overlay ya se activó automáticamente con addInitScript
+  console.log('📱 Si ves un código QR, escanéalo con tu teléfono');
+  
+  // IMPORTANTE: Pedir credenciales ANTES de esperar la conexión
+  // Esto permite que el usuario ingrese sus datos mientras escanea el QR
+  console.log('🔐 Validación de credenciales requerida...');
+  console.log('📝 Ingresa usuario, campaña y palabra del día');
+  
+  // Siempre pedir todos los campos (usuario, campaña y palabra del día)
+  agentConfig = await showLoginOverlay(true);
+  saveAgentConfig(agentConfig);
+  console.log(`✅ Credenciales verificadas: ${agentConfig.agent_id} | Campaña: ${agentConfig.campaign}`);
+  
+  console.log('⏳ Esperando conexión de WhatsApp Web...');
+  
+  // Ahora sí, esperar a que WhatsApp se conecte
+  await autoPage.waitForSelector('#side', { timeout: 300000 });
+  
+  console.log('✅ WhatsApp Web conectado - Iniciando automatización...');
+  
+  // Activar el overlay AHORA que WhatsApp está conectado
   if (CONFIG.showOverlay) {
+    await autoPage.evaluate(() => {
+      if (window.activateAutomationOverlay) {
+        window.activateAutomationOverlay();
+      }
+    });
     console.log('✅ Overlay activado - La ventana está protegida');
   }
   
