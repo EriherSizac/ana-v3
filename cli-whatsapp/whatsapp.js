@@ -8,6 +8,68 @@ let autoPage = null;
 let agentConfig = null;
 
 /**
+ * Muestra un overlay de bloqueo simple antes de enviar cada mensaje
+ */
+async function showBlockingOverlay() {
+  // Verificar que WhatsApp esté conectado antes de mostrar el overlay
+  const isConnected = await autoPage.evaluate(() => {
+    // Verificar si existe el sidebar (indica que WhatsApp está conectado)
+    const sidebar = document.querySelector('#side');
+    return !!sidebar;
+  });
+  
+  // Si no está conectado (mostrando QR), no mostrar el overlay
+  if (!isConnected) {
+    console.log('⚠️  WhatsApp no conectado, no se muestra overlay de bloqueo');
+    return;
+  }
+  
+  await autoPage.evaluate(() => {
+    // Remover overlay existente si hay
+    const existing = document.getElementById('blocking-overlay');
+    if (existing) existing.remove();
+    
+    const overlay = document.createElement('div');
+    overlay.id = 'blocking-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.95);
+      z-index: 9999999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: Arial, sans-serif;
+      color: white;
+      pointer-events: none;
+    `;
+    
+    overlay.innerHTML = `
+      <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid #25D366; min-width: 400px;">
+        <div style="font-size: 60px; margin-bottom: 20px;">⏳</div>
+        <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">Enviando Mensaje</h1>
+        <p style="margin: 0; font-size: 14px; opacity: 0.7;">Por favor espera...</p>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+  });
+}
+
+/**
+ * Remueve el overlay de bloqueo
+ */
+async function removeBlockingOverlay() {
+  await autoPage.evaluate(() => {
+    const overlay = document.getElementById('blocking-overlay');
+    if (overlay) overlay.remove();
+  });
+}
+
+/**
  * Muestra el overlay de login y espera a que el usuario ingrese los datos
  * @param {boolean} requireAll - Si es true, pide usuario, campaña y palabra. Si es false, solo palabra
  * @returns {Promise<Object>} Configuración del agente
@@ -935,6 +997,9 @@ export async function sendMessage(contact, messageTemplate) {
     const chatUrl = `https://web.whatsapp.com/send?phone=${cleanPhone}`;
     await autoPage.goto(chatUrl, { waitUntil: 'networkidle', timeout: 30000 });
     await autoPage.waitForTimeout(3000);
+    
+    // Mostrar overlay de bloqueo DESPUÉS de que la página se haya cargado
+    await showBlockingOverlay();
 
     // Verificar si el número es válido usando el modal de error (sin WhatsApp)
     const invalidNumberTextSelector = 'text="El número de teléfono compartido a través de la dirección URL no es válido."';
@@ -1112,6 +1177,9 @@ export async function sendMessage(contact, messageTemplate) {
       console.log('⏭️  Sin espera de respuesta, continuando...');
     }
 
+    // Remover overlay de bloqueo
+    await removeBlockingOverlay();
+    
     return {
       ...contact,
       status: 'sent',
@@ -1123,6 +1191,10 @@ export async function sendMessage(contact, messageTemplate) {
 
   } catch (error) {
     console.log(`❌ Error al enviar a ${contact.name}: ${error.message}`);
+    
+    // Remover overlay de bloqueo en caso de error
+    await removeBlockingOverlay();
+    
     return {
       ...contact,
       status: 'error',
