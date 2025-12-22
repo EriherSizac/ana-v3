@@ -459,12 +459,57 @@ export async function initWhatsApp() {
   
   // Activar el overlay AHORA que WhatsApp está conectado
   if (CONFIG.showOverlay) {
-    await autoPage.evaluate(() => {
+    const overlayActivated = await autoPage.evaluate(() => {
+      console.log('[DEBUG] Intentando activar overlay...');
+      console.log('[DEBUG] window.activateAutomationOverlay existe?', typeof window.activateAutomationOverlay);
+      
       if (window.activateAutomationOverlay) {
         window.activateAutomationOverlay();
+        return true;
+      } else {
+        console.log('[DEBUG] Función no encontrada, creando overlay directamente...');
+        // Fallback: crear overlay directamente si la función no existe
+        const existing = document.getElementById('automation-overlay');
+        if (existing) return true;
+        
+        const overlay = document.createElement('div');
+        overlay.id = 'automation-overlay';
+        overlay.style.cssText = `
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          background: rgba(0, 0, 0, 0.85) !important;
+          z-index: 999999999 !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          font-family: Arial, sans-serif !important;
+          color: white !important;
+          pointer-events: none !important;
+        `;
+        
+        overlay.innerHTML = `
+          <div style="text-align: center; padding: 40px; background: rgba(0, 0, 0, 0.9); border-radius: 20px; border: 2px solid #25D366;">
+            <div style="font-size: 60px; margin-bottom: 20px;">🤖</div>
+            <h1 style="margin: 0 0 10px 0; font-size: 32px; color: #25D366;">Automatización en Proceso</h1>
+            <p style="margin: 0; font-size: 18px; opacity: 0.9;">No interactúes con esta ventana</p>
+            <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.7;">El proceso se está ejecutando automáticamente</p>
+          </div>
+        `;
+        
+        document.body.appendChild(overlay);
+        console.log('[DEBUG] Overlay creado directamente');
+        return true;
       }
     });
-    console.log('✅ Overlay activado - La ventana está protegida');
+    
+    if (overlayActivated) {
+      console.log('✅ Overlay activado - La ventana está protegida');
+    } else {
+      console.log('⚠️  Advertencia: No se pudo activar el overlay');
+    }
   }
   
   // Aplicar restricciones de UI inmediatamente
