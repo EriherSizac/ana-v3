@@ -1,5 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -55,6 +55,20 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
       return {
         statusCode: 404,
         body: JSON.stringify({ error: 'File not found or empty' }),
+      };
+    }
+
+    // Consumir el archivo: una vez leído, se elimina de S3
+    try {
+      await s3Client.send(new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+      }));
+    } catch (deleteError: any) {
+      console.error('Error deleting chats file from S3:', deleteError);
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: 'Failed to delete chat assignment after reading' }),
       };
     }
 

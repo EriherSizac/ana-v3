@@ -8,6 +8,25 @@ import { sendBackup, hasAgentConfig, fetchAssignedChats, updatePendingContacts }
 
 // Función principal
 async function main() {
+  // Cierre ordenado (Ctrl+C)
+  let shuttingDown = false;
+  process.once('SIGINT', async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log('\n🛑 Cerrando por Ctrl+C...');
+    try {
+      await closeBrowser();
+    } catch (e) {
+      // Ignorar
+    }
+    try {
+      await closeManualBrowser();
+    } catch (e) {
+      // Ignorar
+    }
+    process.exit(0);
+  });
+
   console.log('╔════════════════════════════════════════╗');
   console.log('║   WhatsApp CLI Mass Sender v2.0       ║');
   console.log('║      Sistema de Dos Ventanas          ║');
@@ -185,6 +204,65 @@ async function main() {
       await sendBackup(backupData);
       
       console.log('\n✨ Proceso de automatización completado!\n');
+
+      // Modo monitor: revisar CSV cada 30 segundos por nuevos contactos
+      const processedPhones = new Set(
+        results
+          .map(r => (r.phone ? String(r.phone).replace(/\D/g, '') : ''))
+          .filter(p => p)
+      );
+
+      console.log('🔄 Entrando en modo monitoreo de CSV (cada 30s) para nuevos contactos...');
+      console.log(`📄 Archivo monitoreado: ${CONFIG.inputCsv}`);
+
+      while (true) {
+        await new Promise(resolve => setTimeout(resolve, 30000));
+
+        let csvContacts = [];
+        try {
+          csvContacts = await readContacts();
+        } catch (e) {
+          console.error(`⚠️  No se pudo leer el CSV: ${e.message}`);
+          continue;
+        }
+
+        const newContacts = csvContacts.filter(c => {
+          const phone = c?.phone ? String(c.phone).replace(/\D/g, '') : '';
+          if (!phone) return false;
+          return !processedPhones.has(phone);
+        });
+
+        if (newContacts.length === 0) {
+          console.log('🕒 Sin contactos nuevos. Reintentando en 30s...');
+          continue;
+        }
+
+        console.log(`🆕 Detectados ${newContacts.length} contactos nuevos. Iniciando envío...`);
+
+        for (let i = 0; i < newContacts.length; i++) {
+          const contact = newContacts[i];
+          const phone = contact?.phone ? String(contact.phone).replace(/\D/g, '') : '';
+          if (!phone || processedPhones.has(phone)) continue;
+
+          console.log(`\n[NUEVO ${i + 1}/${newContacts.length}] Procesando: ${contact.name || phone}`);
+
+          const result = await sendMessage(contact, contact.message);
+          results.push(result);
+          processedPhones.add(phone);
+
+          // Esperar entre mensajes
+          if (i < newContacts.length - 1) {
+            console.log(`⏳ Esperando ${CONFIG.delayBetweenMessages / 1000}s antes del siguiente mensaje...`);
+            await page.waitForTimeout(CONFIG.delayBetweenMessages);
+          }
+        }
+
+        // Persistir incrementalmente
+        await saveResults(results);
+        await saveResponses(results);
+
+        console.log('✅ Lote de contactos nuevos procesado. Continuando monitoreo...');
+      }
     } else if (shouldOpenManual) {
       // No hay contactos pero queremos abrir ventana manual
       // Solo si ya existen credenciales
@@ -228,8 +306,11 @@ async function main() {
     console.error('❌ Error fatal:', error.message);
     console.error(error.stack);
   } finally {
-    await closeBrowser();
-    await closeManualBrowser();
+    // Si el proceso queda en modo monitoreo, el cierre se hace via Ctrl+C (SIGINT)
+    if (!shuttingDown) {
+      await closeBrowser();
+      await closeManualBrowser();
+    }
   }
 }
 

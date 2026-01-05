@@ -2,6 +2,11 @@
 org: pernexium
 # "service" is the name of this project. This will also be added to your AWS resource names.
 service: ana-backend
+params:
+  dev:
+    domain: motor-dev.pernexium.com.mx
+  prod:
+    domain: motor-prod.pernexium.com.mx
 
 build:
   esbuild: true
@@ -10,6 +15,7 @@ provider:
   name: aws
   runtime: nodejs20.x
   profile: pernexium
+  domain: ${param:domain}
   # Uncomment to easily set up a custom domain. Read the docs for more details:
   # https://www.serverless.com/framework/docs/providers/aws/guide/domains
   # domain: api.example.com
