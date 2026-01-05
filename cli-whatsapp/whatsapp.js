@@ -63,10 +63,16 @@ async function showBlockingOverlay() {
  * Remueve el overlay de bloqueo
  */
 async function removeBlockingOverlay() {
-  await autoPage.evaluate(() => {
-    const overlay = document.getElementById('blocking-overlay');
-    if (overlay) overlay.remove();
-  });
+  if (!autoPage || autoPage.isClosed()) return;
+
+  try {
+    await autoPage.evaluate(() => {
+      const overlay = document.getElementById('blocking-overlay');
+      if (overlay) overlay.remove();
+    });
+  } catch (e) {
+    // Ignorar: la página puede estar navegando/cerrada y el contexto destruido
+  }
 }
 
 /**
@@ -485,6 +491,47 @@ export async function initWhatsApp() {
           }, 1000);
         }
       };
+
+      // Si ya se marcó como conectado anteriormente, reactivar overlay tras refresh.
+      // Solo se activa cuando WhatsApp ya está conectado (cuando existe #side).
+      const maybeAutoActivateOverlay = () => {
+        try {
+          if (localStorage.getItem('automation_login_verified') !== 'true') return;
+          if (localStorage.getItem('automation_overlay_enabled') !== 'true') return;
+
+          const attemptActivate = () => {
+            if (document.getElementById('automation-overlay')) return true;
+
+            // Si aún está visible el login overlay de credenciales, no activar
+            const loginOverlay = document.getElementById('login-overlay');
+            if (loginOverlay) return false;
+
+            const side = document.querySelector('#side');
+            if (!side) return false;
+
+            if (window.activateAutomationOverlay) {
+              window.activateAutomationOverlay();
+              return true;
+            }
+            return false;
+          };
+
+          if (attemptActivate()) return;
+
+          const interval = setInterval(() => {
+            if (attemptActivate()) clearInterval(interval);
+          }, 500);
+        } catch (e) {
+          // Ignorar: si storage no está disponible por alguna razón
+        }
+      };
+
+      // Ejecutar en carga inicial y en recargas
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', maybeAutoActivateOverlay, { once: true });
+      } else {
+        maybeAutoActivateOverlay();
+      }
     });
   }
   
@@ -499,8 +546,21 @@ export async function initWhatsApp() {
   } catch (error) {
     console.log('⚠️  Timeout esperando carga, continuando...');
   }
-  
-  console.log('📱 Si ves un código QR, escanéalo con tu teléfono');
+
+  // IMPORTANTE: nunca permitir overlay de automatización antes de que se verifiquen credenciales
+  // (los datos dependen del login). Se habilita únicamente después de login + conexión.
+  try {
+    await autoPage.evaluate(() => {
+      try {
+        localStorage.setItem('automation_login_verified', 'false');
+        localStorage.setItem('automation_overlay_enabled', 'false');
+      } catch (e) {
+        // Ignorar
+      }
+    });
+  } catch (e) {
+    // Ignorar: navegación/ctx destruido
+  }
   
   // IMPORTANTE: Pedir credenciales ANTES de esperar la conexión
   // Esto permite que el usuario ingrese sus datos mientras escanea el QR
@@ -511,6 +571,21 @@ export async function initWhatsApp() {
   agentConfig = await showLoginOverlay(true);
   saveAgentConfig(agentConfig);
   console.log(`✅ Credenciales verificadas: ${agentConfig.agent_id} | Campaña: ${agentConfig.campaign}`);
+
+  // Marcar login como verificado (permite overlay en refresh, pero solo cuando también esté conectado)
+  try {
+    await autoPage.evaluate(() => {
+      try {
+        localStorage.setItem('automation_login_verified', 'true');
+      } catch (e) {
+        // Ignorar
+      }
+    });
+  } catch (e) {
+    // Ignorar
+  }
+
+  console.log('📱 Si ves un código QR, escanéalo con tu teléfono');
   
   console.log('⏳ Esperando conexión de WhatsApp Web...');
   
@@ -524,6 +599,14 @@ export async function initWhatsApp() {
     const overlayActivated = await autoPage.evaluate(() => {
       console.log('[DEBUG] Intentando activar overlay...');
       console.log('[DEBUG] window.activateAutomationOverlay existe?', typeof window.activateAutomationOverlay);
+
+      try {
+        // Solo habilitar overlay persistente cuando ya se verificó login
+        localStorage.setItem('automation_login_verified', 'true');
+        localStorage.setItem('automation_overlay_enabled', 'true');
+      } catch (e) {
+        // Ignorar
+      }
       
       if (window.activateAutomationOverlay) {
         window.activateAutomationOverlay();

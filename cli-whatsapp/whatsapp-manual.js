@@ -352,7 +352,12 @@ export async function initManualWhatsApp(allowedContacts = []) {
     console.error('⚠️  Error al preparar botón de historial:', error.message);
   }
   
-  // El modo --app ya carga la URL automáticamente
+  // IMPORTANTE:
+  // Aunque se use --app=https://web.whatsapp.com, Chromium puede haber cargado la página
+  // antes de que se inyecten los addInitScript. Forzamos navegación para que las
+  // protecciones se apliquen desde la primera carga.
+  await manualPage.goto('https://web.whatsapp.com', { waitUntil: 'networkidle' });
+
   console.log('⏳ Esperando que WhatsApp Web (Manual) cargue completamente...');
   
   // Esperar a que la página esté completamente cargada
@@ -363,8 +368,6 @@ export async function initManualWhatsApp(allowedContacts = []) {
     console.log('⚠️  Timeout esperando carga, continuando...');
   }
   
-  console.log('📱 Escanea el código QR con OTRO teléfono/cuenta');
-  
   // IMPORTANTE: Pedir credenciales ANTES de esperar la conexión
   console.log('🔐 Validación de credenciales requerida (Manual)...');
   console.log('📝 Ingresa usuario, campaña y palabra del día');
@@ -373,6 +376,8 @@ export async function initManualWhatsApp(allowedContacts = []) {
   let manualConfig = await showManualLoginOverlay(true);
   saveAgentConfig(manualConfig);
   console.log(`✅ Credenciales verificadas (Manual): ${manualConfig.agent_id} | Campaña: ${manualConfig.campaign}`);
+
+  console.log('📱 Escanea el código QR con OTRO teléfono/cuenta');
   
   console.log('⏳ Esperando conexión de WhatsApp Web (Manual)...');
   
@@ -451,6 +456,67 @@ export async function initManualWhatsApp(allowedContacts = []) {
   await manualPage.waitForTimeout(2000);
   
   console.log('🔒 Restricciones aplicadas a la ventana manual');
+  
+  // Escuchar eventos de navegación/refresh para re-aplicar protecciones
+  manualPage.on('load', async () => {
+    console.log('🔄 Página recargada, re-aplicando protecciones...');
+    
+    // Re-aplicar bloqueos de teclado y menú contextual
+    await manualPage.evaluate(() => {
+      // Bloquear atajos de teclado para DevTools
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'F12') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'J') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.metaKey && e.altKey && e.key === 'I') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.metaKey && e.altKey && e.key === 'J') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.metaKey && e.altKey && e.key === 'C') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+      }, true);
+      
+      // Bloquear menú contextual
+      document.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }, true);
+      
+      // Re-aplicar restricciones de UI
+      if (window.applyManualUIRestrictions) {
+        window.applyManualUIRestrictions();
+      }
+    });
+    
+    console.log('✅ Protecciones re-aplicadas después del refresh');
+  });
   
   // Iniciar monitor de backup (agrega botón "Respaldar Chats")
   backupMonitorInterval = await startBackupMonitor(manualPage);
