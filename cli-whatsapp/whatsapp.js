@@ -82,86 +82,35 @@ async function removeBlockingOverlay() {
  */
 async function showLoginOverlay(requireAll = true) {
   return new Promise(async (resolve) => {
-    // Obtener usuario y campaña guardados si existen
     const savedConfig = requireAll ? null : loadAgentConfig();
-    
-    await autoPage.evaluate((args) => {
-      const { requireAll, savedUser, savedCampaign } = args;
-      
-      // Remover overlay existente si hay
-      const existing = document.getElementById('login-overlay');
-      if (existing) existing.remove();
-      
-      const overlay = document.createElement('div');
-      overlay.id = 'login-overlay';
-      overlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.95);
-        z-index: 9999999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-family: Arial, sans-serif;
-        color: white;
-      `;
-      
-      const userField = requireAll ? `
-        <div style="margin-bottom: 20px; text-align: left;">
-          <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-          <input type="text" id="login-user" placeholder="ej: erick" style="
-            width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #333;
-            border-radius: 10px;
-            background: #1a1a1a;
-            color: white;
-            font-size: 16px;
-            box-sizing: border-box;
-            outline: none;
-            transition: border-color 0.3s;
-          " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-        </div>
-      ` : '';
-      
-      const campaignField = requireAll ? `
-        <div style="margin-bottom: 20px; text-align: left;">
-          <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-          <input type="text" id="login-campaign" placeholder="ej: prueba" style="
-            width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #333;
-            border-radius: 10px;
-            background: #1a1a1a;
-            color: white;
-            font-size: 16px;
-            box-sizing: border-box;
-            outline: none;
-            transition: border-color 0.3s;
-          " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-        </div>
-      ` : `
-        <div style="margin-bottom: 20px; text-align: left;">
-          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
-          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
-        </div>
-      `;
-      
-      overlay.innerHTML = `
-        <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid #25D366; min-width: 400px;">
-          <div style="font-size: 60px; margin-bottom: 20px;">🔐</div>
-          <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">${requireAll ? 'Iniciar Sesión' : 'Verificación Diaria'}</h1>
-          <p style="margin: 0 0 30px 0; font-size: 14px; opacity: 0.7;">Ingresa tus credenciales para continuar</p>
-          
-          ${userField}
-          ${campaignField}
-          
-          <div style="margin-bottom: 30px; text-align: left;">
-            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Palabra del Día</label>
-            <input type="password" id="login-daily-password" placeholder="Ingresa la palabra del día" style="
+
+    const renderOverlay = async () => {
+      await autoPage.evaluate((args) => {
+        const { requireAll, savedUser, savedCampaign } = args;
+        const existing = document.getElementById('login-overlay');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'login-overlay';
+        overlay.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.95);
+          z-index: 9999999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: Arial, sans-serif;
+          color: white;
+        `;
+
+        const userField = requireAll ? `
+          <div style="margin-bottom: 20px; text-align: left;">
+            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
+            <input type="text" id="login-user" placeholder="ej: erick" style="
               width: 100%;
               padding: 12px 15px;
               border: 2px solid #333;
@@ -174,164 +123,223 @@ async function showLoginOverlay(requireAll = true) {
               transition: border-color 0.3s;
             " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
           </div>
-          
-          <button id="login-submit-btn" style="
-            width: 100%;
-            padding: 15px;
-            background: #25D366;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 18px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background 0.3s;
-          " onmouseover="this.style.background='#1da851'" onmouseout="this.style.background='#25D366'">
-            Verificar Credenciales
-          </button>
-          
-          <p id="login-error" style="margin: 15px 0 0 0; font-size: 14px; color: #ff6b6b; display: none;"></p>
-          <p id="login-loading" style="margin: 15px 0 0 0; font-size: 14px; color: #25D366; display: none;">Verificando...</p>
-        </div>
-      `;
-      
-      document.body.appendChild(overlay);
-      
-      // Enfocar el primer input
-      setTimeout(() => {
-        const firstInput = requireAll ? 
-          document.getElementById('login-user') : 
-          document.getElementById('login-daily-password');
-        if (firstInput) firstInput.focus();
-      }, 100);
-    }, { requireAll, savedUser: savedConfig?.agent_id, savedCampaign: savedConfig?.campaign });
+        ` : '';
 
-    // Exponer función para verificar credenciales desde Node.js
-    await autoPage.exposeFunction('verifyCredentialsBackend', async (user, campaign, dailyPassword) => {
-      try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/auth/verify`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ user, campaign, dailyPassword })
-        });
-        
-        const data = await response.json();
-        console.log('[Auth] Respuesta del backend:', data);
-        return data;
-      } catch (error) {
-        console.error('[Auth] Error al verificar credenciales:', error);
-        return { success: false, message: 'Error de conexión con el servidor' };
-      }
-    });
+        const campaignField = requireAll ? `
+          <div style="margin-bottom: 20px; text-align: left;">
+            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
+            <input type="text" id="login-campaign" placeholder="ej: prueba" style="
+              width: 100%;
+              padding: 12px 15px;
+              border: 2px solid #333;
+              border-radius: 10px;
+              background: #1a1a1a;
+              color: white;
+              font-size: 16px;
+              box-sizing: border-box;
+              outline: none;
+              transition: border-color 0.3s;
+            " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+          </div>
+        ` : `
+          <div style="margin-bottom: 20px; text-align: left;">
+            <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
+            <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
+          </div>
+        `;
 
-    // Escuchar el evento de submit
-    const checkSubmit = async () => {
-      await autoPage.evaluate((requireAll) => {
-        return new Promise((innerResolve) => {
-          const btn = document.getElementById('login-submit-btn');
-          const userInput = document.getElementById('login-user');
-          const campaignInput = document.getElementById('login-campaign');
-          const dailyPasswordInput = document.getElementById('login-daily-password');
-          const errorEl = document.getElementById('login-error');
-          const loadingEl = document.getElementById('login-loading');
-          
-          if (!btn || btn.dataset.listenerAdded) return innerResolve(null);
-          
-          btn.dataset.listenerAdded = 'true';
-          
-          const handleSubmit = async () => {
-            const user = requireAll ? userInput.value.trim() : window.__savedUser;
-            const campaign = requireAll ? campaignInput.value.trim() : window.__savedCampaign;
-            const dailyPassword = dailyPasswordInput.value.trim();
+        overlay.innerHTML = `
+          <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid #25D366; min-width: 400px;">
+            <div style="font-size: 60px; margin-bottom: 20px;">🔐</div>
+            <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">${requireAll ? 'Iniciar Sesión' : 'Verificación Diaria'}</h1>
+            <p style="margin: 0 0 30px 0; font-size: 14px; opacity: 0.7;">Ingresa tus credenciales para continuar</p>
             
-            // Validar campos
-            if (requireAll && (!user || !campaign)) {
-              errorEl.textContent = 'Por favor completa todos los campos';
-              errorEl.style.display = 'block';
-              return;
-            }
+            ${userField}
+            ${campaignField}
             
-            if (!dailyPassword) {
-              errorEl.textContent = 'Por favor ingresa la palabra del día';
-              errorEl.style.display = 'block';
-              return;
-            }
+            <div style="margin-bottom: 30px; text-align: left;">
+              <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Palabra del Día</label>
+              <input type="password" id="login-daily-password" placeholder="Ingresa la palabra del día" style="
+                width: 100%;
+                padding: 12px 15px;
+                border: 2px solid #333;
+                border-radius: 10px;
+                background: #1a1a1a;
+                color: white;
+                font-size: 16px;
+                box-sizing: border-box;
+                outline: none;
+                transition: border-color 0.3s;
+              " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+            </div>
             
-            // Mostrar loading
-            errorEl.style.display = 'none';
-            loadingEl.style.display = 'block';
-            btn.disabled = true;
-            btn.style.opacity = '0.5';
+            <button id="login-submit-btn" style="
+              width: 100%;
+              padding: 15px;
+              background: #25D366;
+              color: white;
+              border: none;
+              border-radius: 10px;
+              font-size: 18px;
+              font-weight: bold;
+              cursor: pointer;
+              transition: background 0.3s;
+            " onmouseover="this.style.background='#1da851'" onmouseout="this.style.background='#25D366'">
+              Verificar Credenciales
+            </button>
             
-            // Verificar con el backend
-            const result = await window.verifyCredentialsBackend(user, campaign, dailyPassword);
-            
-            loadingEl.style.display = 'none';
-            btn.disabled = false;
-            btn.style.opacity = '1';
-            
-            if (result.success) {
-              // Guardar en window para que Playwright pueda leerlo
-              window.__loginResult = { 
-                agent_id: user, 
-                campaign: campaign 
-              };
-              
-              // Remover overlay
-              const overlay = document.getElementById('login-overlay');
-              if (overlay) overlay.remove();
-            } else {
-              errorEl.textContent = result.message || 'Credenciales incorrectas';
-              errorEl.style.display = 'block';
-            }
-          };
-          
-          btn.addEventListener('click', handleSubmit);
-          
-          // También permitir Enter para enviar
-          const inputs = [dailyPasswordInput];
-          if (requireAll) {
-            inputs.push(userInput, campaignInput);
-          }
-          
-          inputs.forEach(input => {
-            if (input) {
-              input.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') handleSubmit();
-              });
-            }
+            <p id="login-error" style="margin: 15px 0 0 0; font-size: 14px; color: #ff6b6b; display: none;"></p>
+            <p id="login-loading" style="margin: 15px 0 0 0; font-size: 14px; color: #25D366; display: none;">Verificando...</p>
+          </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        setTimeout(() => {
+          const firstInput = requireAll ?
+            document.getElementById('login-user') :
+            document.getElementById('login-daily-password');
+          if (firstInput) firstInput.focus();
+        }, 100);
+      }, { requireAll, savedUser: savedConfig?.agent_id, savedCampaign: savedConfig?.campaign });
+    };
+
+    // Exponer función (solo si no existe ya)
+    try {
+      await autoPage.exposeFunction('verifyCredentialsBackend', async (user, campaign, dailyPassword) => {
+        try {
+          const response = await fetch(`${CONFIG.apiBaseUrl}/auth/verify`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ user, campaign, dailyPassword })
           });
           
-          innerResolve(null);
+          const data = await response.json();
+          console.log('[Auth] Respuesta del backend:', data);
+          return data;
+        } catch (error) {
+          console.error('[Auth] Error al verificar credenciales:', error);
+          return { success: false, message: 'Error de conexión con el servidor' };
+        }
+      });
+    } catch (e) {
+      // Ignorar: ya expuesta
+    }
+
+    const attachHandlers = async () => {
+      await autoPage.evaluate((requireAll) => {
+        const btn = document.getElementById('login-submit-btn');
+        const userInput = document.getElementById('login-user');
+        const campaignInput = document.getElementById('login-campaign');
+        const dailyPasswordInput = document.getElementById('login-daily-password');
+        const errorEl = document.getElementById('login-error');
+        const loadingEl = document.getElementById('login-loading');
+
+        if (!btn || btn.dataset.listenerAdded) return;
+        btn.dataset.listenerAdded = 'true';
+
+        const handleSubmit = async () => {
+          const user = requireAll ? userInput.value.trim() : window.__savedUser;
+          const campaign = requireAll ? campaignInput.value.trim() : window.__savedCampaign;
+          const dailyPassword = dailyPasswordInput.value.trim();
+
+          if (requireAll && (!user || !campaign)) {
+            errorEl.textContent = 'Por favor completa todos los campos';
+            errorEl.style.display = 'block';
+            return;
+          }
+
+          if (!dailyPassword) {
+            errorEl.textContent = 'Por favor ingresa la palabra del día';
+            errorEl.style.display = 'block';
+            return;
+          }
+
+          errorEl.style.display = 'none';
+          loadingEl.style.display = 'block';
+          btn.disabled = true;
+          btn.style.opacity = '0.5';
+
+          const result = await window.verifyCredentialsBackend(user, campaign, dailyPassword);
+
+          loadingEl.style.display = 'none';
+          btn.disabled = false;
+          btn.style.opacity = '1';
+
+          if (result.success) {
+            window.__loginResult = { agent_id: user, campaign: campaign };
+            const overlay = document.getElementById('login-overlay');
+            if (overlay) overlay.remove();
+          } else {
+            errorEl.textContent = result.message || 'Credenciales incorrectas';
+            errorEl.style.display = 'block';
+          }
+        };
+
+        btn.addEventListener('click', handleSubmit);
+
+        const inputs = [dailyPasswordInput];
+        if (requireAll) inputs.push(userInput, campaignInput);
+
+        inputs.forEach(input => {
+          if (input) {
+            input.addEventListener('keypress', (e) => {
+              if (e.key === 'Enter') handleSubmit();
+            });
+          }
         });
       }, requireAll);
-      
-      // Verificar periódicamente si hay resultado
-      const pollResult = setInterval(async () => {
-        try {
-          const loginResult = await autoPage.evaluate(() => window.__loginResult);
-          if (loginResult) {
-            clearInterval(pollResult);
-            resolve(loginResult);
-          }
-        } catch (err) {
-          // Contexto destruido (navegación), limpiar intervalo
-          clearInterval(pollResult);
-        }
-      }, 200);
     };
-    
-    // Pasar usuario y campaña guardados al contexto del navegador si no se requieren todos los campos
+
+    // Pasar usuario/campaña guardados si aplica
     if (!requireAll && savedConfig) {
       await autoPage.evaluate((config) => {
         window.__savedUser = config.agent_id;
         window.__savedCampaign = config.campaign;
       }, savedConfig);
     }
-    
-    checkSubmit();
+
+    await renderOverlay();
+    await attachHandlers();
+
+    // Si hay navegación/refresh durante el login, re-renderizar el overlay
+    const onLoad = async () => {
+      try {
+        const verified = await autoPage.evaluate(() => {
+          try {
+            return localStorage.getItem('automation_login_verified') === 'true';
+          } catch (e) {
+            return false;
+          }
+        });
+        if (verified) return;
+
+        const hasOverlay = await autoPage.evaluate(() => !!document.getElementById('login-overlay'));
+        if (!hasOverlay) {
+          await renderOverlay();
+          await attachHandlers();
+        }
+      } catch (e) {
+        // Ignorar
+      }
+    };
+
+    autoPage.on('load', onLoad);
+
+    const pollResult = setInterval(async () => {
+      try {
+        const loginResult = await autoPage.evaluate(() => window.__loginResult);
+        if (loginResult) {
+          clearInterval(pollResult);
+          autoPage.off('load', onLoad);
+          resolve(loginResult);
+        }
+      } catch (err) {
+        // Contexto destruido (navegación), seguir intentando
+      }
+    }, 200);
   });
 }
 
@@ -694,6 +702,31 @@ async function applyAutomationUIRestrictions() {
           el.style.pointerEvents = 'none';
         });
       };
+
+      const removeElements = (selector) => {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(el => {
+          try {
+            el.style.pointerEvents = 'none';
+            el.remove();
+          } catch (e) {
+            // Ignorar
+          }
+        });
+      };
+
+      const disableElements = (selector) => {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(el => {
+          try {
+            el.style.pointerEvents = 'none';
+            el.style.opacity = '0';
+            el.style.visibility = 'hidden';
+          } catch (e) {
+            // Ignorar
+          }
+        });
+      };
       // Ocultar botones de llamada y videollamada en el header del chat
       hideElements('[data-icon="voice-call"]');
       hideElements('[data-icon="video-call"]');
@@ -733,6 +766,12 @@ async function applyAutomationUIRestrictions() {
       hideElements('button[aria-label*="Menú de chat"]');
       hideElements('button[aria-label*="Chat menu"]');
       hideElements('div[role="button"] span[data-icon="down"]');
+
+      // Ocultar/eliminar contador de no leídos y menú desplegable en la lista de chats
+      // (selector exacto proporcionado + selectores más robustos por si cambia el DOM)
+      disableElements('#pane-side > div:nth-child(2) > div > div > div:nth-child(6) > div > div > div > div._ak8l._ap1_ > div._ak8j > div._ak8i');
+      disableElements('[aria-label*="mensajes no leídos"]');
+      disableElements('button span[data-icon="ic-chevron-down-menu"]');
       
       // Ocultar botones de navegación inferior
       hideElements('[data-icon="status-refreshed"]');

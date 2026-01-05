@@ -585,6 +585,31 @@ async function applyUIRestrictions(allowedContacts) {
           el.style.pointerEvents = 'none';
         });
       };
+
+      const removeElements = (selector) => {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(el => {
+          try {
+            el.style.pointerEvents = 'none';
+            el.remove();
+          } catch (e) {
+            // Ignorar
+          }
+        });
+      };
+
+      const disableElements = (selector) => {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(el => {
+          try {
+            el.style.pointerEvents = 'none';
+            el.style.opacity = '0';
+            el.style.visibility = 'hidden';
+          } catch (e) {
+            // Ignorar
+          }
+        });
+      };
       // Ocultar botones de llamada y videollamada en el header del chat
       hideElements('[data-icon="voice-call"]');
       hideElements('[data-icon="video-call"]');
@@ -624,6 +649,12 @@ async function applyUIRestrictions(allowedContacts) {
       hideElements('button[aria-label*="Menú de chat"]');
       hideElements('button[aria-label*="Chat menu"]');
       hideElements('div[role="button"] span[data-icon="down"]');
+
+      // Ocultar/eliminar contador de no leídos y menú desplegable en la lista de chats
+      // (selector exacto proporcionado + selectores más robustos por si cambia el DOM)
+      disableElements('#pane-side > div:nth-child(2) > div > div > div:nth-child(6) > div > div > div > div._ak8l._ap1_ > div._ak8j > div._ak8i');
+      disableElements('[aria-label*="mensajes no leídos"]');
+      disableElements('button span[data-icon="ic-chevron-down-menu"]');
       
       // Ocultar botones de navegación inferior (Estado, Canales, Comunidades, Multimedia, Ajustes, Perfil)
       hideElements('[data-icon="status-refreshed"]');
