@@ -1,11 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const CONFIG_FILE = path.join(__dirname, '.agent-config.json');
+const baseDir = process.env.ANA_DATA_DIR || process.cwd();
+const CONFIG_FILE = path.join(baseDir, '.agent-config.json');
 
 /**
  * Carga la configuración del agente desde el archivo
@@ -21,6 +18,41 @@ export function loadAgentConfig() {
     console.error('Error al cargar configuración del agente:', error.message);
   }
   return null;
+}
+
+export async function insertInteractions(interactions) {
+  const url = `${INTERACTIONS_API_BASE_URL}/interactions`;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ interactions }),
+    });
+
+    const text = await response.text().catch(() => '');
+    let parsed = {};
+    if (text) {
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        parsed = { raw: text };
+      }
+    }
+
+    if (!response.ok) {
+      console.error(`❌ insertInteractions failed: ${response.status} ${response.statusText}`);
+      if (text) console.error(`   Body: ${text}`);
+      return { ok: false, status: response.status, body: parsed };
+    }
+
+    return { ok: true, status: response.status, body: parsed };
+  } catch (error) {
+    console.error('❌ Error al insertar interacción:', error.message);
+    console.error('   URL:', url);
+    return { ok: false, status: 0, body: null, error: error.message };
+  }
 }
 
 /**
@@ -62,6 +94,7 @@ export function clearAgentConfig() {
  * URL base del API backend
  */
 export const API_BASE_URL = process.env.ANA_API_URL || 'https://ow24p7ablb.execute-api.us-east-1.amazonaws.com';
+export const INTERACTIONS_API_BASE_URL = process.env.ANA_INTERACTIONS_API_URL || 'https://7uj0qjoby9.execute-api.us-east-2.amazonaws.com';
 
 /**
  * Envía backup al servidor
@@ -164,8 +197,14 @@ function parseCSV(csvText) {
     'contact_phone': 'phone',
     'phone': 'phone',
     'contact_name': 'name',
-    'first_name': 'name',
+    'first_name': 'first_name',
+    'last_name': 'last_name',
     'name': 'name',
+    'credit': 'credit',
+    'credit_id': 'credit',
+    'discount': 'discount',
+    'total_balance': 'total_balance',
+    'product': 'product',
   };
   
   for (let i = 1; i < lines.length; i++) {

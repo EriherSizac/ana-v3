@@ -1,10 +1,41 @@
 import fs from 'fs';
 import path from 'path';
-import { CONFIG, __dirname_export as __dirname } from './config.js';
-import { readContacts, saveResults, saveResponses } from './csv-utils.js';
-import { initWhatsApp, sendMessage, closeBrowser, getPage, getAgentConfig } from './whatsapp.js';
+import readline from 'readline';
+
+const isPkg = typeof process.pkg !== 'undefined';
+if (isPkg) {
+  const exeDir = path.dirname(process.execPath);
+  process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(exeDir, 'browsers');
+
+  const appData = process.env.APPDATA;
+  if (appData) {
+    const dataDir = path.join(appData, 'ANA');
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+    } catch (e) {
+      // ignore
+    }
+    process.env.ANA_DATA_DIR = dataDir;
+  }
+}
+
+function waitForEnterIfPkg(message) {
+  if (!isPkg) return Promise.resolve();
+  return new Promise((resolve) => {
+    if (message) console.log(message);
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question('Presiona ENTER para salir...', () => {
+      rl.close();
+      resolve();
+    });
+  });
+}
+
+import { CONFIG } from './config.js';
+import { saveResults, saveResponses } from './csv-utils.js';
+import { initWhatsApp, sendMessage, closeBrowser, getPage } from './whatsapp.js';
 import { initManualWhatsApp, closeManualBrowser } from './whatsapp-manual.js';
-import { sendBackup, hasAgentConfig, fetchAssignedChats, updatePendingContacts } from './agent-config.js';
+import { sendBackup, hasAgentConfig, fetchAssignedChats, updatePendingContacts, loadAgentConfig, insertInteractions } from './agent-config.js';
 
 // Función principal
 async function main() {
@@ -33,29 +64,37 @@ async function main() {
   console.log('╚════════════════════════════════════════╝\n');
 
   try {
-    // Obtener contactos del servidor (si hay credenciales) o del archivo local
-    let contacts = [];
-    const credentialsExist = hasAgentConfig();
-    
-    if (credentialsExist) {
-      // Intentar obtener contactos del servidor
-      console.log('📡 Obteniendo contactos del servidor...');
-      const serverContacts = await fetchAssignedChats();
-      if (serverContacts && serverContacts.length > 0) {
-        contacts = serverContacts;
-        console.log(`✅ ${contacts.length} contactos obtenidos del servidor`);
-      } else {
-        console.log('ℹ️  No hay contactos asignados en el servidor, usando archivo local...');
-        contacts = await readContacts().catch(() => []);
+    // Solo backend: requiere credenciales y asignaciones del servidor
+    let credentialsExist = hasAgentConfig();
+    if (!credentialsExist) {
+      console.log('⚠️  No hay credenciales configuradas.');
+      console.log('   Se abrirá la ventana para configurar credenciales (backend).\n');
+
+      await initWhatsApp();
+      credentialsExist = hasAgentConfig();
+      if (!credentialsExist) {
+        console.log('⚠️  No se detectó configuración de agente todavía.');
+        await waitForEnterIfPkg('\nConfigura credenciales y vuelve a ejecutar.');
+        return;
       }
-    } else {
-      // Sin credenciales, usar archivo local
-      contacts = await readContacts().catch(() => []);
+    }
+
+    console.log('📡 Obteniendo contactos del servidor...');
+    const contacts = (await fetchAssignedChats()) || [];
+    if (contacts.length === 0) {
+      console.log('ℹ️  No hay contactos asignados en el servidor.\n');
+      await waitForEnterIfPkg();
+      return;
     }
     
     // Decidir qué ventanas abrir
     const hasContacts = contacts.length > 0;
     const shouldOpenManual = CONFIG.enableManualWindow;
+
+    const agentConfig = loadAgentConfig();
+    const rawCampaign = agentConfig?.campaign || '';
+    const campaignName = rawCampaign.includes('-') ? rawCampaign.split('-').slice(1).join('-') : rawCampaign;
+    const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
     
     console.log(`📊 Contactos para automatización: ${contacts.length}`);
     console.log(`🔓 Ventana manual: ${shouldOpenManual ? 'ACTIVADA' : 'DESACTIVADA'}`);
@@ -126,6 +165,53 @@ async function main() {
           
           const result = await sendMessage(contact, contact.message);
           results.push(result);
+
+          try {
+            const now = new Date();
+            const contact_date = now.toISOString().slice(0, 10);
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
+            const phoneDigits = String(contact.phone || '').replace(/\D/g, '');
+            const phone10 = phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
+            // TODO: Generar bien la interaccion 
+            const subdictamen = result?.status === 'no_whatsapp' ? 'No tiene Whatsapp' : 'Se envía WhatsApp';
+
+            const interactionRes = await insertInteractions([
+              {
+                credit_id: String(contact.credit || ''),
+                campaign_name: String(campaignName || ''),
+                user_id: INTERACTIONS_USER_ID,
+                subdictamen,
+                contact_date,
+                contact_time: `${hh}:${mm}`,
+                range_time: `${hh}:00 - ${nextH}:00`,
+                action_channel: 'whatsapp',
+                action: 'whatsapp',
+                contactable: result?.status === 'sent',
+                phone_number: phone10,
+                email_address: null,
+                template_used: null,
+                comments: `product=${contact.product || ''}; discount=${contact.discount || ''}; total_balance=${contact.total_balance || ''}`,
+                promise_date: null,
+                promise_amount: null,
+                promise_payment_plan: null,
+                inoutbound: 'outbound',
+                payment_made_date: null,
+              },
+            ]);
+
+            if (interactionRes?.ok) {
+              console.log(`✅ Interacción enviada (${contact.phone}) subdictamen='${subdictamen}'`);
+            } else {
+              console.error(`❌ Interacción NO enviada (${contact.phone}) subdictamen='${subdictamen}'`);
+              if (interactionRes?.status) console.error(`   Status: ${interactionRes.status}`);
+              if (interactionRes?.body) console.error(`   Body: ${JSON.stringify(interactionRes.body)}`);
+              if (interactionRes?.error) console.error(`   Error: ${interactionRes.error}`);
+            }
+          } catch (e) {
+            console.error('⚠️  No se pudo registrar la interacción:', e.message);
+          }
 
           // Esperar entre mensajes (excepto el último del lote)
           if (i < batchContacts.length - 1) {
@@ -204,65 +290,6 @@ async function main() {
       await sendBackup(backupData);
       
       console.log('\n✨ Proceso de automatización completado!\n');
-
-      // Modo monitor: revisar CSV cada 30 segundos por nuevos contactos
-      const processedPhones = new Set(
-        results
-          .map(r => (r.phone ? String(r.phone).replace(/\D/g, '') : ''))
-          .filter(p => p)
-      );
-
-      console.log('🔄 Entrando en modo monitoreo de CSV (cada 30s) para nuevos contactos...');
-      console.log(`📄 Archivo monitoreado: ${CONFIG.inputCsv}`);
-
-      while (true) {
-        await new Promise(resolve => setTimeout(resolve, 30000));
-
-        let csvContacts = [];
-        try {
-          csvContacts = await readContacts();
-        } catch (e) {
-          console.error(`⚠️  No se pudo leer el CSV: ${e.message}`);
-          continue;
-        }
-
-        const newContacts = csvContacts.filter(c => {
-          const phone = c?.phone ? String(c.phone).replace(/\D/g, '') : '';
-          if (!phone) return false;
-          return !processedPhones.has(phone);
-        });
-
-        if (newContacts.length === 0) {
-          console.log('🕒 Sin contactos nuevos. Reintentando en 30s...');
-          continue;
-        }
-
-        console.log(`🆕 Detectados ${newContacts.length} contactos nuevos. Iniciando envío...`);
-
-        for (let i = 0; i < newContacts.length; i++) {
-          const contact = newContacts[i];
-          const phone = contact?.phone ? String(contact.phone).replace(/\D/g, '') : '';
-          if (!phone || processedPhones.has(phone)) continue;
-
-          console.log(`\n[NUEVO ${i + 1}/${newContacts.length}] Procesando: ${contact.name || phone}`);
-
-          const result = await sendMessage(contact, contact.message);
-          results.push(result);
-          processedPhones.add(phone);
-
-          // Esperar entre mensajes
-          if (i < newContacts.length - 1) {
-            console.log(`⏳ Esperando ${CONFIG.delayBetweenMessages / 1000}s antes del siguiente mensaje...`);
-            await page.waitForTimeout(CONFIG.delayBetweenMessages);
-          }
-        }
-
-        // Persistir incrementalmente
-        await saveResults(results);
-        await saveResponses(results);
-
-        console.log('✅ Lote de contactos nuevos procesado. Continuando monitoreo...');
-      }
     } else if (shouldOpenManual) {
       // No hay contactos pero queremos abrir ventana manual
       // Solo si ya existen credenciales
@@ -286,7 +313,7 @@ async function main() {
         });
       } else {
         console.log('⚠️  No hay credenciales configuradas.');
-        console.log('   Agrega contactos en contactos.csv para configurar credenciales primero.\n');
+        console.log('   Configura las credenciales del agente (backend) y vuelve a ejecutar.\n');
       }
     }
     
@@ -306,7 +333,7 @@ async function main() {
     console.error('❌ Error fatal:', error.message);
     console.error(error.stack);
   } finally {
-    // Si el proceso queda en modo monitoreo, el cierre se hace via Ctrl+C (SIGINT)
+    // Si la ventana manual queda abierta, el cierre se hace via Ctrl+C (SIGINT)
     if (!shuttingDown) {
       await closeBrowser();
       await closeManualBrowser();

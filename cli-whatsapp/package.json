@@ -6,11 +6,18 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "start-image": "node index.js --clipboard-media"
+    "start-image": "node index.js --clipboard-media",
+    "build:bundle": "esbuild index.js --bundle --platform=node --format=cjs --outfile=dist\\app.cjs --external:playwright",
+    "build:exe": "pkg dist\\app.cjs --targets node18-win-x64 --output dist\\ANA.exe",
+    "build": "powershell -ExecutionPolicy Bypass -File build.ps1"
   },
   "dependencies": {
     "playwright": "^1.48.2",
     "csv-parser": "^3.0.0",
     "csv-writer": "^1.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2",
+    "pkg": "^5.8.1"
   }
 }
