@@ -18,11 +18,11 @@ Source: "..\dist\ANA.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\browsers\*"; DestDir: "{app}\browsers"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Asistente de Negociacion Avanzada (ANA)"; Filename: "{app}\ANA.exe"
-Name: "{commondesktop}\Asistente de Negociacion Avanzada (ANA)"; Filename: "{app}\ANA.exe"; Tasks: desktopicon
+Name: "{group}\Asistente de Negociacion Avanzada (ANA)"; Filename: "{app}\ANA.exe"; WorkingDir: "{app}"
+Name: "{commondesktop}\Asistente de Negociacion Avanzada (ANA)"; Filename: "{app}\ANA.exe"; Tasks: desktopicon; WorkingDir: "{app}"
 
 [Tasks]
 Name: "desktopicon"; Description: "Crear icono en el escritorio"; GroupDescription: "Tareas adicionales:"; Flags: unchecked
 
 [Run]
-Filename: "{app}\ANA.exe"; Description: "Ejecutar Asistente de Negociacion Avanzada (ANA)"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\ANA.exe"; Description: "Ejecutar Asistente de Negociacion Avanzada (ANA)"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent

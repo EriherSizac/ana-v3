@@ -332,6 +332,7 @@ async function main() {
   } catch (error) {
     console.error('❌ Error fatal:', error.message);
     console.error(error.stack);
+    await waitForEnterIfPkg();
   } finally {
     // Si la ventana manual queda abierta, el cierre se hace via Ctrl+C (SIGINT)
     if (!shuttingDown) {
