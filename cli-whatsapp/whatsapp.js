@@ -23,7 +23,7 @@ async function showBlockingOverlay() {
     console.log('⚠️  WhatsApp no conectado, no se muestra overlay de bloqueo');
     return;
   }
-  
+
   await autoPage.evaluate(() => {
     // Remover overlay existente si hay
     const existing = document.getElementById('blocking-overlay');
@@ -57,6 +57,68 @@ async function showBlockingOverlay() {
     
     document.body.appendChild(overlay);
   });
+}
+
+async function setAutomationOverlayPointerEvents(enabled) {
+  if (!autoPage || autoPage.isClosed()) return;
+  try {
+    await autoPage.evaluate((enabled) => {
+      const overlay = document.getElementById('automation-overlay');
+      if (overlay) {
+        // El overlay de automatización siempre debe permitir interacción del bot,
+        // por lo tanto se mantiene con pointer-events: none.
+        overlay.style.setProperty('pointer-events', 'none', 'important');
+      }
+    }, enabled);
+  } catch (e) {
+    // Ignorar: la página puede estar navegando/cerrada y el contexto destruido
+  }
+}
+
+async function setAutomationDomLock(enabled) {
+  if (!autoPage || autoPage.isClosed()) return;
+  try {
+    await autoPage.evaluate((enabled) => {
+      const styleId = 'automation-dom-lock-style';
+      const existing = document.getElementById(styleId);
+
+      if (!enabled) {
+        if (existing) existing.remove();
+        return;
+      }
+
+      if (existing) return;
+
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        /* Bloquear interacción del usuario en todo el DOM */
+        body * { pointer-events: none !important; }
+
+        /* Permitir interacción únicamente en la barra inferior del chat */
+        #main footer,
+        #main footer * { pointer-events: auto !important; }
+
+        /* Permitir específicamente el cuadro de mensaje */
+        div[contenteditable="true"][data-tab][aria-placeholder="Escribe un mensaje"],
+        div[contenteditable="true"][data-tab][aria-placeholder="Type a message"],
+        div[contenteditable="true"][data-tab][aria-placeholder="Escribe un mensaje"] *,
+        div[contenteditable="true"][data-tab][aria-placeholder="Type a message"] * { pointer-events: auto !important; }
+
+        /* Permitir el botón de enviar */
+        button[aria-label="Enviar"],
+        button[aria-label="Send"],
+        button[aria-label="Enviar"] *,
+        button[aria-label="Send"] *,
+        span[data-icon="send"],
+        span[data-icon="send"] * { pointer-events: auto !important; }
+      `;
+
+      document.head.appendChild(style);
+    }, enabled);
+  } catch (e) {
+    // Ignorar: la página puede estar navegando/cerrada y el contexto destruido
+  }
 }
 
 /**
@@ -445,7 +507,7 @@ export async function initWhatsApp() {
           const existing = document.getElementById('automation-overlay');
           if (existing) return;
           
-          // Crear overlay con pointer-events: none para que Playwright pueda hacer clics
+          // Crear overlay
           const overlay = document.createElement('div');
           overlay.id = 'automation-overlay';
           overlay.style.cssText = `
@@ -664,6 +726,9 @@ export async function initWhatsApp() {
       console.log('⚠️  Advertencia: No se pudo activar el overlay');
     }
   }
+
+  // Bloquear interacción del usuario en todo el DOM (excepto barra de chat)
+  await setAutomationDomLock(true);
   
   // Aplicar restricciones de UI inmediatamente
   await autoPage.evaluate(() => {
@@ -1123,19 +1188,27 @@ export async function sendMessage(contact, messageTemplate) {
     // Mostrar overlay de bloqueo DESPUÉS de que la página se haya cargado
     await showBlockingOverlay();
 
+    // Asegurar bloqueo del DOM (idempotente)
+    await setAutomationDomLock(true);
+
+    const finalizeReturn = async (result) => {
+      await removeBlockingOverlay();
+      return result;
+    };
+
     // Verificar si el número es válido usando el modal de error (sin WhatsApp)
     const invalidNumberTextSelector = 'text="El número de teléfono compartido a través de la dirección URL no es válido."';
     
     const isInvalid = await checkInvalidNumber(invalidNumberTextSelector);
     if (isInvalid) {
       console.log(`❌ Número inválido (no tiene WhatsApp): ${contact.phone}`);
-      return {
+      return await finalizeReturn({
         ...contact,
         status: 'no_whatsapp',
         error: 'No tiene WhatsApp',
         sent_at: new Date().toISOString(),
         response: '',
-      };
+      });
     }
 
     // Si está activado el modo de media por portapapeles, pegar y enviar antes del texto
@@ -1144,12 +1217,12 @@ export async function sendMessage(contact, messageTemplate) {
       const mediaError = await pasteAndSendMedia(messageBoxSelector, invalidNumberTextSelector, contact.phone);
       
       if (mediaError) {
-        return {
+        return await finalizeReturn({
           ...contact,
           ...mediaError,
           sent_at: new Date().toISOString(),
           response: '',
-        };
+        });
       }
     }
 
@@ -1162,24 +1235,24 @@ export async function sendMessage(contact, messageTemplate) {
       const maybeInvalid = await autoPage.$(invalidNumberTextSelector);
       if (maybeInvalid) {
         console.log(`❌ Número inválido (no tiene WhatsApp) detectado tarde: ${contact.phone}`);
-        return {
+        return await finalizeReturn({
           ...contact,
           status: 'no_whatsapp',
           error: 'No tiene WhatsApp',
           sent_at: new Date().toISOString(),
           response: '',
-        };
+        });
       }
 
       // Si no hay modal, es un error real de UI
       console.log(`❌ No se encontró el cuadro de mensaje para ${contact.phone}: ${e.message}`);
-      return {
+      return await finalizeReturn({
         ...contact,
         status: 'error',
         error: 'No se encontró el cuadro de mensaje en WhatsApp',
         sent_at: new Date().toISOString(),
         response: '',
-      };
+      });
     }
 
     // Hacer clic en el campo para enfocarlo (el overlay con pointer-events:none no interfiere)
@@ -1190,24 +1263,24 @@ export async function sendMessage(contact, messageTemplate) {
       const maybeInvalid = await autoPage.$(invalidNumberTextSelector);
       if (maybeInvalid) {
         console.log(`❌ Número inválido (no tiene WhatsApp) al intentar enfocar el cuadro: ${contact.phone}`);
-        return {
+        return await finalizeReturn({
           ...contact,
           status: 'no_whatsapp',
           error: 'No tiene WhatsApp',
           sent_at: new Date().toISOString(),
           response: '',
-        };
+        });
       }
 
       // Otro tipo de error de click
       console.log(`❌ Error al hacer clic en el cuadro de mensaje para ${contact.phone}: ${e.message}`);
-      return {
+      return await finalizeReturn({
         ...contact,
         status: 'error',
         error: 'No se pudo enfocar el cuadro de mensaje en WhatsApp',
         sent_at: new Date().toISOString(),
         response: '',
-      };
+      });
     }
     await autoPage.waitForTimeout(1000);
 
@@ -1299,23 +1372,23 @@ export async function sendMessage(contact, messageTemplate) {
       console.log('⏭️  Sin espera de respuesta, continuando...');
     }
 
-    // Remover overlay de bloqueo
-    await removeBlockingOverlay();
-    
-    return {
+    return await finalizeReturn({
       ...contact,
       status: 'sent',
       error: '',
       sent_at: new Date().toISOString(),
       response: response,
       message_sent: personalizedMessage,
-    };
+    });
 
   } catch (error) {
     console.log(`❌ Error al enviar a ${contact.name}: ${error.message}`);
     
     // Remover overlay de bloqueo en caso de error
     await removeBlockingOverlay();
+
+    // Volver a bloquear interacción del usuario
+    await setAutomationOverlayPointerEvents(true);
     
     return {
       ...contact,

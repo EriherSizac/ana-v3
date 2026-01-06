@@ -4,9 +4,9 @@ org: pernexium
 service: ana-backend
 params:
   dev:
-    domain: motor-dev.pernexium.com.mx
+    domain: ana-dev.pernexium.com.mx
   prod:
-    domain: motor-prod.pernexium.com.mx
+    domain: ana-prod.pernexium.com.mx
 
 build:
   esbuild: true
