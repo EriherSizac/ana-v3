@@ -269,12 +269,12 @@ export async function initManualWhatsApp(allowedContacts = []) {
     headless: false,
     args: [
       '--no-sandbox',
-      //'--disable-setuid-sandbox',
+      '--disable-setuid-sandbox',
       '--disable-extensions',
       '--disable-dev-shm-usage',
       '--disable-blink-features=AutomationControlled',
-      //'--app=https://web.whatsapp.com', // Modo app (sin barra de navegación)
-      //'--disable-dev-tools', // Desactivar DevTools
+      '--app=https://web.whatsapp.com', // Modo app (sin barra de navegación)
+      '--disable-dev-tools', // Desactivar DevTools
     ],
     viewport: { width: 1280, height: 720 },
     devtools: false,
