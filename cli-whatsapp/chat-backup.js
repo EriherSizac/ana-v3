@@ -20,23 +20,22 @@ async function extractMessagesFromChat(page) {
     const allDataIds = mainContainer.querySelectorAll('[data-id]');
     console.log(`[Backup] Total elementos con data-id: ${allDataIds.length}`);
     
-    // Buscar todos los contenedores de mensajes con data-id que empiecen con "true_" o "false_"
-    // (WhatsApp suele marcar mensajes reales así)
+    // Buscar contenedores reales de mensajes (más robusto que data-id)
+    // WhatsApp suele usar data-testid msg-container-(in|out)
     let messageContainers = Array.from(
-      mainContainer.querySelectorAll('div[data-id^="true_"], div[data-id^="false_"]')
+      mainContainer.querySelectorAll('[data-testid="msg-container-in"], [data-testid="msg-container-out"], [data-testid="msg-container"]')
     );
 
-    // Fallback: algunas versiones ya no ponen el data-id directamente en el contenedor esperado.
-    // En ese caso, usar los nodos con data-pre-plain-text y subir al contenedor con data-id.
+    // Fallback: algunas versiones no exponen esos testids, entonces usar data-pre-plain-text
     if (messageContainers.length === 0) {
       const prePlainNodes = Array.from(mainContainer.querySelectorAll('[data-pre-plain-text]'));
       console.log(`[Backup] Fallback data-pre-plain-text nodes: ${prePlainNodes.length}`);
 
       const uniqueContainers = new Map();
       for (const node of prePlainNodes) {
-        const c = node.closest('[data-id]') || node.closest('div');
+        const c = node.closest('[data-testid="msg-container-in"], [data-testid="msg-container-out"], [data-id]') || node.closest('div');
         if (!c) continue;
-        const key = c.getAttribute('data-id') || `${c.tagName}:${c.className}:${c.textContent?.slice(0, 20)}`;
+        const key = c.getAttribute('data-id') || c.getAttribute('data-testid') || `${c.tagName}:${c.className}:${c.textContent?.slice(0, 20)}`;
         if (!uniqueContainers.has(key)) uniqueContainers.set(key, c);
       }
       messageContainers = Array.from(uniqueContainers.values());
@@ -52,23 +51,28 @@ async function extractMessagesFromChat(page) {
     messageContainers.forEach(container => {
       try {
         const dataId = container.getAttribute('data-id');
-        if (!dataId) {
-          // No todos los contenedores fallback tienen data-id, pero aun así podemos intentar extraer.
-        }
+        const dataIdSafe = dataId || '';
+        const testId = container.getAttribute('data-testid') || '';
         
         // Determinar si es mensaje entrante o saliente
-        const isOutgoing = dataId.includes('true_') ||
-                          container.querySelector('.message-out') ||
-                          container.querySelector('[data-icon="msg-dblcheck"]') ||
-                          container.querySelector('[data-icon="msg-check"]');
+        const isOutgoing = testId === 'msg-container-out' ||
+                          dataIdSafe.includes('true_') ||
+                          !!container.closest('.message-out') ||
+                          !!container.closest('[data-testid="msg-container-out"]') ||
+                          !!container.querySelector('.message-out') ||
+                          !!container.querySelector('[data-testid="msg-container-out"]') ||
+                          !!container.querySelector('[data-icon="msg-dblcheck"]') ||
+                          !!container.querySelector('[data-icon="msg-check"]');
         
         // Obtener el texto del mensaje
         const textElement = container.querySelector('span.selectable-text.copyable-text span') ||
-                           container.querySelector('span._ao3e.copyable-text');
+                           container.querySelector('span._ao3e.copyable-text') ||
+                           container.querySelector('[data-testid="conversation-text"]') ||
+                           container.querySelector('div.copyable-text');
         const text = textElement ? textElement.textContent : '';
         
         // Obtener timestamp del atributo data-pre-plain-text
-        const timeElement = container.querySelector('[data-pre-plain-text]');
+        const timeElement = container.querySelector('[data-pre-plain-text]') || container.closest('[data-pre-plain-text]');
         let timestamp = '';
         if (timeElement) {
           const prePlainText = timeElement.getAttribute('data-pre-plain-text');
@@ -206,6 +210,24 @@ async function getChatInfo(page) {
       return { name: 'Unknown', phone: '' };
     }
 
+    const normalizeHeaderPhone = (raw) => {
+      if (!raw) return '';
+      const trimmed = String(raw).trim();
+      // Mantener el + si viene, solo quitar espacios (incl. NBSP)
+      const noSpaces = trimmed.replace(/[\s\u00A0]+/g, '');
+      // Eliminar caracteres extraños, pero conservar dígitos y un + inicial
+      const hasLeadingPlus = noSpaces.startsWith('+');
+      const digitsOnly = noSpaces.replace(/\D/g, '');
+      return hasLeadingPlus ? `+${digitsOnly}` : digitsOnly;
+    };
+
+    const looksLikePhone = (s) => {
+      if (!s) return false;
+      const str = String(s);
+      const digits = (str.match(/\d/g) || []).length;
+      return digits >= 10;
+    };
+
     // Método 1: Obtener del título del header
     const titleElement = header.querySelector('span[dir="auto"][title]');
     let name = 'Unknown';
@@ -215,11 +237,26 @@ async function getChatInfo(page) {
       const title = titleElement.getAttribute('title');
       
       // Si el título es un número de teléfono, usarlo como phone
-      if (title && title.match(/^\+?\d+/)) {
-        phone = title.replace(/\D/g, '');
+      if (title && looksLikePhone(title)) {
+        phone = normalizeHeaderPhone(title);
         name = title; // Usar el número como nombre también
       } else {
         name = title || 'Unknown';
+      }
+    }
+
+    // Método 1b: Tomar el teléfono visible del header (WhatsApp suele ponerlo como textContent)
+    // Ejemplo: "+52 1 55 2892 1944" (sin title)
+    if (!phone) {
+      const spans = Array.from(header.querySelectorAll('span[dir="auto"]'));
+      const candidate = spans
+        .map((s) => s.textContent)
+        .find((txt) => looksLikePhone(txt) && String(txt).includes('+')) ||
+        spans.map((s) => s.textContent).find((txt) => looksLikePhone(txt));
+
+      if (candidate) {
+        phone = normalizeHeaderPhone(candidate);
+        if (candidate.trim()) name = candidate.trim();
       }
     }
 
@@ -229,26 +266,13 @@ async function getChatInfo(page) {
       if (phoneSpan) {
         const phoneTitle = phoneSpan.getAttribute('title');
         if (phoneTitle) {
-          phone = phoneTitle.replace(/\D/g, '');
+          phone = normalizeHeaderPhone(phoneTitle);
         }
       }
     }
 
-    // Método 3: Buscar en el contenedor principal del chat usando data-id
-    if (!phone) {
-      const mainContainer = document.querySelector('#main');
-      if (mainContainer) {
-        const chatHeader = mainContainer.querySelector('[data-id]');
-        if (chatHeader) {
-          const dataId = chatHeader.getAttribute('data-id');
-          // Extraer número del data-id (formato: true_521234567890@c.us)
-          const match = dataId.match(/(\d{10,15})@/);
-          if (match) {
-            phone = match[1];
-          }
-        }
-      }
-    }
+    // Nota: No hacer fallback a data-id/jid para phone.
+    // Si el header no muestra número, preferimos guardar phone vacío para evitar ids internos.
 
     console.log('[Backup] Chat info:', { name, phone });
     return { name, phone };
@@ -460,11 +484,12 @@ async function scrollUpChat(page, times = 10) {
     const currentCount = await page.evaluate(() => {
       const mainContainer = document.querySelector('#main');
       if (!mainContainer) return 0;
-      const allDataIds = mainContainer.querySelectorAll('[data-id]');
-      return Array.from(allDataIds).filter(el => {
-        const dataId = el.getAttribute('data-id');
-        return dataId && (dataId.startsWith('true_') || dataId.startsWith('false_'));
-      }).length;
+
+      const msgContainers = mainContainer.querySelectorAll('[data-testid="msg-container-in"], [data-testid="msg-container-out"], [data-testid="msg-container"]');
+      if (msgContainers && msgContainers.length) return msgContainers.length;
+
+      const prePlainNodes = mainContainer.querySelectorAll('[data-pre-plain-text]');
+      return prePlainNodes ? prePlainNodes.length : 0;
     });
     
     // Si no hay cambios en 3 intentos consecutivos, detener
@@ -483,13 +508,14 @@ async function scrollUpChat(page, times = 10) {
     await page.evaluate(() => {
       // Buscar el contenedor de mensajes con varios selectores
       const messageList = document.querySelector('[data-testid="conversation-panel-messages"]') ||
+                         document.querySelector('[data-testid="conversation-panel-body"]') ||
                          document.querySelector('#main [role="application"]') ||
-                         document.querySelector('#main .copyable-area > div:nth-child(2)');
+                         document.querySelector('#main .copyable-area') ||
+                         document.querySelector('#main');
       if (messageList) {
         // Scroll hacia arriba de forma más agresiva
+        messageList.scrollBy(0, -3000);
         messageList.scrollTop = 0;
-        // También intentar con scrollBy para simular scroll de usuario
-        messageList.scrollBy(0, -1500);
       }
     });
     // Esperar más tiempo a que se carguen los mensajes (aumentado de 500ms a 800ms)
@@ -576,6 +602,35 @@ export async function runChatBackup(page, onProgress = () => {}) {
       
       // Obtener info del chat
       const chatInfo = await getChatInfo(page);
+      const looksLikePhone = (raw) => {
+        if (raw == null) return false;
+        const s = String(raw);
+        const digits = (s.match(/\d/g) || []).length;
+        return digits >= 10;
+      };
+      const normalizePhoneNoSpaces = (raw) => {
+        if (!raw) return '';
+        const trimmed = String(raw).trim();
+        const noSpaces = trimmed.replace(/[\s\u00A0]+/g, '');
+        const hasLeadingPlus = noSpaces.startsWith('+');
+        const digitsOnly = noSpaces.replace(/\D/g, '');
+        return hasLeadingPlus ? `+${digitsOnly}` : digitsOnly;
+      };
+
+      let normalizedChatPhone = chatInfo?.phone != null ? String(chatInfo.phone) : '';
+      normalizedChatPhone = normalizePhoneNoSpaces(normalizedChatPhone);
+
+      // Si el header no devuelve phone (muy común cuando el header muestra "en línea" o el nombre),
+      // usar el título del chat cuando es un número visible.
+      if (!normalizedChatPhone && looksLikePhone(chat?.title)) {
+        normalizedChatPhone = normalizePhoneNoSpaces(chat.title);
+      }
+
+      // Último fallback: a veces el name queda siendo el número
+      if (!normalizedChatPhone && looksLikePhone(chatInfo?.name)) {
+        normalizedChatPhone = normalizePhoneNoSpaces(chatInfo.name);
+      }
+      console.log(`[Backup] Chat phone final (JSON): ${chat.title} -> ${normalizedChatPhone}`);
       
       // Extraer mensajes
       const rawMessages = await extractMessagesFromChat(page);
@@ -594,7 +649,7 @@ export async function runChatBackup(page, onProgress = () => {}) {
       allChats.push({
         chatIndex: i,
         name: chatInfo.name || chat.title,
-        phone: chatInfo.phone,
+        phone: normalizedChatPhone,
         messageCount: messages.length,
         messages: messages,
         extractedAt: new Date().toISOString(),

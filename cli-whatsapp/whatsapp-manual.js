@@ -1396,6 +1396,12 @@ async function injectHistoryButton(page) {
 
       btn.onclick = async () => {
         console.log('[Historial] Botón clickeado');
+
+        // Siempre limpiar UI previa para evitar que se quede visible el historial del chat anterior
+        const prevBubble = document.getElementById('history-bubble');
+        if (prevBubble) prevBubble.remove();
+        const prevOverlay = document.getElementById('history-overlay');
+        if (prevOverlay) prevOverlay.remove();
         
         // Obtener número del contacto actual
         const phoneNumber = getCurrentContactPhone();
@@ -1442,6 +1448,11 @@ async function injectHistoryButton(page) {
           
           if (messages.length === 0) {
             console.log('[Historial] No se encontraron mensajes');
+            // Asegurar que no quede el historial anterior visible
+            const b = document.getElementById('history-bubble');
+            if (b) b.remove();
+            const o = document.getElementById('history-overlay');
+            if (o) o.remove();
             showNotification(`📭 No hay historial para este contacto`, 'info');
             return;
           }
