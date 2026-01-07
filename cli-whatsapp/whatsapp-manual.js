@@ -1,11 +1,13 @@
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
-import { loadAgentConfig, saveAgentConfig, API_BASE_URL } from './agent-config.js';
+import { loadAgentConfig, saveAgentConfig, API_BASE_URL, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
 
 let manualBrowser = null;
 let manualPage = null;
 let backupMonitorInterval = null;
+
+let cachedResultCodesByCampaign = new Map();
 
 /**
  * Muestra el overlay de login en la ventana manual
@@ -261,18 +263,18 @@ async function showManualLoginOverlay(requireAll = true) {
  * @param {Array} allowedContacts - Lista de contactos permitidos (números de teléfono)
  */
 export async function initManualWhatsApp(allowedContacts = []) {
-  console.log('🔓 Iniciando ventana manual de WhatsApp...');
+  console.log(' Iniciando ventana manual de WhatsApp...');
   
   manualBrowser = await chromium.launchPersistentContext(CONFIG.manualSessionPath, {
     headless: false,
     args: [
       '--no-sandbox',
-      '--disable-setuid-sandbox',
+      //'--disable-setuid-sandbox',
       '--disable-extensions',
       '--disable-dev-shm-usage',
       '--disable-blink-features=AutomationControlled',
-      '--app=https://web.whatsapp.com', // Modo app (sin barra de navegación)
-      '--disable-dev-tools', // Desactivar DevTools
+      //'--app=https://web.whatsapp.com', // Modo app (sin barra de navegación)
+      //'--disable-dev-tools', // Desactivar DevTools
     ],
     viewport: { width: 1280, height: 720 },
     devtools: false,
@@ -350,6 +352,12 @@ export async function initManualWhatsApp(allowedContacts = []) {
     await injectHistoryButton(manualPage);
   } catch (error) {
     console.error('⚠️  Error al preparar botón de historial:', error.message);
+  }
+
+  try {
+    await injectGestionButton(manualPage);
+  } catch (error) {
+    console.error('⚠️  Error al preparar botón de gestión:', error.message);
   }
   
   // IMPORTANTE:
@@ -842,6 +850,465 @@ export function getManualPage() {
   return manualPage;
 }
 
+function normalizePhoneForBackend(rawPhone) {
+  const digits = String(rawPhone || '').replace(/\D/g, '');
+  if (!digits) return '';
+
+  let normalized = digits;
+
+  // México: WhatsApp a veces usa 521 + 10 dígitos. Backend requiere 52 + 10 dígitos.
+  if (normalized.startsWith('521') && normalized.length >= 13) {
+    normalized = `52${normalized.slice(3)}`;
+  }
+
+  // Si viene sin lada (10 dígitos), asumir México
+  if (!normalized.startsWith('52') && normalized.length === 10) {
+    normalized = `52${normalized}`;
+  }
+
+  if (!normalized.startsWith('52')) return '';
+  if (normalized.length < 12) return '';
+
+  return `+${normalized}`;
+}
+
+async function fetchResultCodesFromBackend(campaignName) {
+  if (cachedResultCodesByCampaign.has(campaignName)) {
+    return cachedResultCodesByCampaign.get(campaignName);
+  }
+
+  const url = `${INTERACTIONS_API_BASE_URL}/result-codes/${encodeURIComponent(campaignName)}`;
+  try {
+    const response = await fetch(url);
+    const rawText = await response.text().catch(() => '');
+    const data = rawText ? JSON.parse(rawText) : {};
+    const resultCodes = Array.isArray(data.result_codes) ? data.result_codes : [];
+    if (!response.ok || resultCodes.length === 0) {
+      console.log('[Gestion][result-codes] url=', url);
+      console.log('[Gestion][result-codes] status=', response.status);
+      console.log('[Gestion][result-codes] body=', rawText);
+    }
+    cachedResultCodesByCampaign.set(campaignName, resultCodes);
+    return resultCodes;
+  } catch (error) {
+    console.error('❌ Error al obtener result codes:', error.message);
+    return [];
+  }
+}
+
+async function searchClientInfoByPhone(campaignName, phone) {
+  const url = `${INTERACTIONS_API_BASE_URL}/client-info`;
+  try {
+    const payload = {
+      campaign_name: campaignName,
+      search_type: 'Telefono',
+      search_value: phone,
+    };
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const rawText = await response.text().catch(() => '');
+    const data = rawText ? JSON.parse(rawText) : {};
+    const result = Array.isArray(data.result) ? data.result : [];
+    if (!response.ok || result.length === 0) {
+      console.log('[Gestion][client-info] url=', url);
+      console.log('[Gestion][client-info] payload=', payload);
+      console.log('[Gestion][client-info] status=', response.status);
+      console.log('[Gestion][client-info] body=', rawText);
+    }
+    return result;
+  } catch (error) {
+    console.error('❌ Error al buscar client-info:', error.message);
+    return [];
+  }
+}
+
+async function injectGestionButton(page) {
+  const config = loadAgentConfig();
+  if (!config) {
+    console.log('⚠️  No hay configuración de agente, botón de gestión no disponible');
+    return;
+  }
+
+  const rawCampaign = config.campaign || '';
+  const campaignName = rawCampaign.includes('-') ? rawCampaign.split('-').slice(1).join('-') : rawCampaign;
+  const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
+
+  await page.exposeFunction('getGestionDataFromBackend', async (phoneDigits) => {
+    const phoneE164 = normalizePhoneForBackend(phoneDigits);
+    console.log('[Gestion] getGestionDataFromBackend campaign=', campaignName, 'phoneDigits=', phoneDigits, 'phoneE164=', phoneE164);
+    const [resultCodes, clientInfo] = await Promise.all([
+      fetchResultCodesFromBackend(campaignName),
+      searchClientInfoByPhone(campaignName, phoneE164),
+    ]);
+    console.log('[Gestion] fetched resultCodes=', Array.isArray(resultCodes) ? resultCodes.length : 'n/a', 'clientInfo=', Array.isArray(clientInfo) ? clientInfo.length : 'n/a');
+    return { campaignName, phoneE164, resultCodes, clientInfo };
+  });
+
+  await page.exposeFunction('submitGestionInteraction', async (payload) => {
+    const now = new Date();
+    const contact_date = now.toISOString().slice(0, 10);
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
+
+    const interaction = {
+      credit_id: String(payload.credit_id || ''),
+      campaign_name: String(campaignName || ''),
+      user_id: INTERACTIONS_USER_ID,
+      subdictamen: String(payload.subdictamen || ''),
+      contact_date,
+      contact_time: `${hh}:${mm}`,
+      range_time: `${hh}:00 - ${nextH}:00`,
+      action_channel: 'whatsapp',
+      action: 'whatsapp',
+      contactable: payload.contactable === true,
+      phone_number: String(payload.phone_number || ''),
+      email_address: null,
+      template_used: null,
+      comments: String(payload.comments || ''),
+      promise_date: payload.promise_date || null,
+      promise_amount: payload.promise_amount || null,
+      promise_payment_plan: payload.promise_payment_plan || null,
+      inoutbound: 'inbound',
+      payment_made_date: payload.payment_made_date || null,
+    };
+
+    return await insertInteractions([interaction]);
+  });
+
+  await page.addInitScript(() => {
+    const ensureStyles = () => {
+      if (document.getElementById('gestion-styles')) return;
+      const style = document.createElement('style');
+      style.id = 'gestion-styles';
+      style.textContent = `
+        #gestion-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 99999998; backdrop-filter: blur(2px); }
+        #gestion-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: #fff; border-radius: 16px; width: 720px; max-width: calc(100vw - 40px); max-height: 85vh; overflow: hidden; z-index: 99999999; font-family: Arial, sans-serif; }
+        #gestion-modal header { background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); color: #fff; padding: 16px 18px; display:flex; align-items:center; justify-content: space-between; }
+        #gestion-modal header h2 { margin:0; font-size: 18px; }
+        #gestion-modal header button { background: rgba(255,255,255,.2); border:none; color:#fff; width: 32px; height: 32px; border-radius: 50%; font-size: 20px; cursor:pointer; }
+        #gestion-body { padding: 16px 18px; overflow:auto; max-height: calc(85vh - 64px); }
+        .gestion-card { border: 1px solid #eee; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+        .gestion-label { font-size: 12px; color: #666; margin-bottom: 6px; }
+        .gestion-input, .gestion-select { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; }
+        .gestion-actions { display:flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
+        .gestion-btn { padding: 10px 14px; border-radius: 10px; border: none; cursor: pointer; font-weight: bold; }
+        .gestion-btn-primary { background: #25D366; color: #fff; }
+        .gestion-btn-secondary { background: #f0f0f0; color: #333; }
+        .gestion-small { font-size: 12px; color: #777; }
+        .gestion-error { color: #c0392b; font-size: 12px; white-space: pre-wrap; }
+      `;
+      document.head.appendChild(style);
+    };
+
+    const getCurrentContactPhone = () => {
+      const debug = {
+        headerTitle: null,
+        headerPhoneSpan: null,
+        mainDataId: null,
+        sidebarSelectedDataId: null,
+        sidebarSelectedText: null,
+      };
+
+      const extractPhone = (raw) => {
+        if (!raw) return null;
+        const str = String(raw);
+        const digits = str.replace(/\D/g, '');
+        if (digits.length < 10) return null;
+
+        // Solo aceptar candidatos que claramente parecen teléfono
+        const looksLikePhone = str.includes('+') || digits.startsWith('52');
+        if (!looksLikePhone) return null;
+
+        // Mantener lada si viene (52 o 521). La normalización final se hace en Node.
+        return digits;
+      };
+
+      const mainContainer = document.querySelector('#main');
+      const header = (mainContainer && mainContainer.querySelector('header')) || document.querySelector('#main header') || document.querySelector('header');
+      if (header) {
+        const titleElement = header.querySelector('span[dir="auto"][title]');
+        if (titleElement) {
+          const title = titleElement.getAttribute('title');
+          debug.headerTitle = title;
+          const phone = extractPhone(title);
+          if (phone) return phone;
+        }
+
+        // En muchas versiones el número viene como texto (sin title)
+        const dirAutoSpans = Array.from(header.querySelectorAll('span[dir="auto"]')).slice(0, 20);
+        for (const s of dirAutoSpans) {
+          const txt = (s.textContent || '').trim();
+          if (!txt) continue;
+          if (!debug.headerTitle) debug.headerTitle = txt;
+          const phone = extractPhone(txt);
+          if (phone) return phone;
+        }
+
+        const phoneSpan = header.querySelector('span[title*="+"]');
+        if (phoneSpan) {
+          const phoneRaw = phoneSpan.getAttribute('title');
+          debug.headerPhoneSpan = phoneRaw;
+          const phone = extractPhone(phoneRaw);
+          if (phone) return phone;
+        }
+      }
+
+      if (mainContainer) {
+        const nodes = Array.from(mainContainer.querySelectorAll('[data-id]')).slice(0, 25);
+        for (const n of nodes) {
+          const dataId = n.getAttribute('data-id');
+          if (!debug.mainDataId && dataId) debug.mainDataId = dataId;
+          // ignorar grupos
+          if (dataId && String(dataId).includes('@g.us')) continue;
+          const phone = extractPhone(dataId);
+          if (phone) return phone;
+        }
+      }
+
+      const selectedChat =
+        document.querySelector('#pane-side [aria-selected="true"]') ||
+        document.querySelector('#pane-side [aria-current="true"]') ||
+        document.querySelector('#pane-side [role="row"][aria-selected="true"]') ||
+        document.querySelector('#pane-side [role="gridcell"][aria-selected="true"]');
+
+      if (selectedChat) {
+        debug.sidebarSelectedText = (selectedChat.textContent || '').slice(0, 80);
+        const dataIdCandidates = [];
+        const direct = selectedChat.getAttribute('data-id');
+        if (direct) dataIdCandidates.push(direct);
+        const inner = selectedChat.querySelector('[data-id]');
+        if (inner) {
+          const innerId = inner.getAttribute('data-id');
+          if (innerId) dataIdCandidates.push(innerId);
+        }
+
+        for (const candidate of dataIdCandidates) {
+          if (!debug.sidebarSelectedDataId) debug.sidebarSelectedDataId = candidate;
+          if (String(candidate).includes('@g.us')) continue;
+          const phone = extractPhone(candidate);
+          if (phone) return phone;
+        }
+      }
+
+      if (typeof window.__anaLastChatDetectDebug === 'undefined') {
+        window.__anaLastChatDetectDebug = null;
+      }
+      window.__anaLastChatDetectDebug = debug;
+
+      return null;
+    };
+
+    const showNotification = (message, type = 'info') => {
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${type === 'error' ? '#ff6b6b' : type === 'success' ? '#25D366' : type === 'warning' ? '#f39c12' : '#3498db'};
+        color: white;
+        padding: 12px 18px;
+        border-radius: 10px;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        font-weight: bold;
+        z-index: 999999999;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      `;
+      notification.textContent = message;
+      document.body.appendChild(notification);
+      setTimeout(() => notification.remove(), 3000);
+    };
+
+    const closeGestionModal = () => {
+      const overlay = document.getElementById('gestion-overlay');
+      const modal = document.getElementById('gestion-modal');
+      if (overlay) overlay.remove();
+      if (modal) modal.remove();
+    };
+
+    const openGestionModal = async () => {
+      const phoneDigits = getCurrentContactPhone();
+      if (!phoneDigits) {
+        const dbg = window.__anaLastChatDetectDebug;
+        showNotification('⚠️ No pude detectar el chat. Abre un chat y vuelve a intentar.', 'warning');
+        try {
+          console.log('[ANA Gestion] Debug detección chat:', dbg);
+        } catch (_) {}
+        return;
+      }
+
+      ensureStyles();
+      closeGestionModal();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'gestion-overlay';
+      overlay.onclick = () => closeGestionModal();
+
+      const modal = document.createElement('div');
+      modal.id = 'gestion-modal';
+      modal.onclick = (e) => e.stopPropagation();
+      modal.innerHTML = `
+        <header>
+          <div>
+            <h2>⬆️ Subir gestión</h2>
+            <div class="gestion-small" id="gestion-subtitle">Cargando...</div>
+          </div>
+          <button id="gestion-close">×</button>
+        </header>
+        <div id="gestion-body">
+          <div class="gestion-card">⏳ Cargando catálogo y cliente...</div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+      document.body.appendChild(modal);
+      document.getElementById('gestion-close').onclick = () => closeGestionModal();
+
+      const body = document.getElementById('gestion-body');
+      const subtitle = document.getElementById('gestion-subtitle');
+
+      try {
+        const data = await window.getGestionDataFromBackend(phoneDigits);
+        const resultCodes = Array.isArray(data.resultCodes) ? data.resultCodes : [];
+        const visibleCodes = resultCodes.filter(rc => rc && rc.is_visible);
+        const clientInfo = Array.isArray(data.clientInfo) ? data.clientInfo : [];
+
+        subtitle.textContent = `Campaña: ${data.campaignName} | Tel: ${data.phoneE164}`;
+
+        if (clientInfo.length === 0) {
+          body.innerHTML = `<div class="gestion-card"><div class="gestion-error">No se encontró información de cliente para este teléfono.</div></div>`;
+          return;
+        }
+
+        const creditOptions = clientInfo.map((item, idx) => {
+          const clientName = item?.client_info?.full_name || 'Sin nombre';
+          const creditId = item?.credit_info?.credit_id || '';
+          const productName = item?.credit_info?.product_name || item?.credit_info?.product || '';
+          return `
+            <label style="display:block; padding:10px; border:1px solid #eee; border-radius:10px; margin-bottom:8px; cursor:pointer;">
+              <input type="radio" name="gestion-credit" value="${creditId}" ${idx === 0 ? 'checked' : ''} />
+              <strong style="margin-left:8px;">${clientName}</strong>
+              <div class="gestion-small" style="margin-left:26px;">Crédito: ${creditId} | ${productName}</div>
+            </label>
+          `;
+        }).join('');
+
+        const subdictamenOptions = visibleCodes
+          .map(rc => `<option value="${String(rc.subdictamen || '')}">${String(rc.dictamen || '').toUpperCase()} - ${String(rc.subdictamen || '')}</option>`)
+          .join('');
+
+        body.innerHTML = `
+          <div class="gestion-card">
+            <div class="gestion-label">Selecciona el crédito</div>
+            ${creditOptions}
+          </div>
+
+          <div class="gestion-card">
+            <div class="gestion-label">Selecciona el subdictamen</div>
+            <select class="gestion-select" id="gestion-subdictamen">${subdictamenOptions}</select>
+            <div style="margin-top:10px;">
+              <div class="gestion-label">Comentarios</div>
+              <input class="gestion-input" id="gestion-comments" placeholder="Ej: Cliente solicita información" />
+            </div>
+            <div style="margin-top:10px;">
+              <div class="gestion-label">Contactable</div>
+              <select class="gestion-select" id="gestion-contactable">
+                <option value="true">Sí</option>
+                <option value="false">No</option>
+              </select>
+            </div>
+            <div class="gestion-actions">
+              <button class="gestion-btn gestion-btn-secondary" id="gestion-cancel">Cancelar</button>
+              <button class="gestion-btn gestion-btn-primary" id="gestion-submit">Subir</button>
+            </div>
+            <div id="gestion-status" class="gestion-small" style="margin-top:10px;"></div>
+          </div>
+        `;
+
+        document.getElementById('gestion-cancel').onclick = () => closeGestionModal();
+        document.getElementById('gestion-submit').onclick = async () => {
+          const statusEl = document.getElementById('gestion-status');
+          statusEl.textContent = '⏳ Subiendo...';
+
+          const creditId = (document.querySelector('input[name="gestion-credit"]:checked') || {}).value || '';
+          const subdictamen = (document.getElementById('gestion-subdictamen') || {}).value || '';
+          const comments = (document.getElementById('gestion-comments') || {}).value || '';
+          const contactable = ((document.getElementById('gestion-contactable') || {}).value || 'true') === 'true';
+
+          const payload = {
+            credit_id: creditId,
+            subdictamen,
+            phone_number: data.phoneE164,
+            contactable,
+            comments,
+          };
+
+          const res = await window.submitGestionInteraction(payload);
+          if (res && res.ok) {
+            showNotification('✅ Gestión subida', 'success');
+            statusEl.textContent = '✅ Gestión subida';
+            setTimeout(() => closeGestionModal(), 800);
+          } else {
+            showNotification('❌ No se pudo subir gestión', 'error');
+            statusEl.textContent = `❌ Error: ${res?.status || ''} ${res?.error || ''}`;
+          }
+        };
+      } catch (e) {
+        body.innerHTML = `<div class="gestion-card"><div class="gestion-error">${String(e?.message || e)}</div></div>`;
+      }
+    };
+
+    const createGestionButton = () => {
+      const existing = document.getElementById('gestion-btn');
+      if (existing) return;
+
+      const btn = document.createElement('button');
+      btn.id = 'gestion-btn';
+      btn.innerHTML = '⬆️ Subir gestión';
+      btn.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        left: 180px;
+        background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
+        color: white;
+        padding: 12px 24px;
+        border: none;
+        border-radius: 25px;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+        z-index: 999998;
+        box-shadow: 0 4px 15px rgba(18, 140, 126, 0.35);
+        transition: all 0.3s ease;
+      `;
+      btn.onmouseover = () => {
+        btn.style.transform = 'scale(1.05)';
+        btn.style.boxShadow = '0 6px 20px rgba(18, 140, 126, 0.55)';
+      };
+      btn.onmouseout = () => {
+        btn.style.transform = 'scale(1)';
+        btn.style.boxShadow = '0 4px 15px rgba(18, 140, 126, 0.35)';
+      };
+      btn.onclick = () => openGestionModal();
+      document.body.appendChild(btn);
+    };
+
+    window.addEventListener('load', () => {
+      setTimeout(() => createGestionButton(), 2000);
+    });
+
+    setInterval(() => {
+      createGestionButton();
+    }, 5000);
+  });
+}
+
 /**
  * Obtiene el historial desde el backend (desde Node.js, no desde el navegador)
  */
@@ -998,7 +1465,8 @@ async function injectHistoryButton(page) {
     // Función para obtener el número del contacto actual
     const getCurrentContactPhone = () => {
       // Buscar el header del chat activo
-      const header = document.querySelector('header');
+      const mainContainer = document.querySelector('#main');
+      const header = (mainContainer && mainContainer.querySelector('header')) || document.querySelector('#main header') || document.querySelector('header');
       if (!header) {
         console.log('[Historial] No se encontró header');
         return null;
@@ -1018,6 +1486,20 @@ async function injectHistoryButton(page) {
         }
       }
 
+      // Método 1b: En muchas versiones el número viene como texto (sin title)
+      const dirAutoSpans = Array.from(header.querySelectorAll('span[dir="auto"]')).slice(0, 10);
+      for (const s of dirAutoSpans) {
+        const txt = (s.textContent || '').trim();
+        if (!txt) continue;
+        const digits = txt.replace(/\D/g, '');
+        if (digits.length < 10) continue;
+        const looksLikePhone = txt.includes('+') || digits.startsWith('52');
+        if (!looksLikePhone) continue;
+        const phone10 = digits.length > 10 ? digits.slice(-10) : digits;
+        console.log('[Historial] Número detectado de texto:', phone10);
+        return phone10;
+      }
+
       // Método 2: Buscar span con número de teléfono
       const phoneSpan = header.querySelector('span[title*="+"]');
       if (phoneSpan) {
@@ -1030,7 +1512,6 @@ async function injectHistoryButton(page) {
       }
 
       // Método 3: Buscar en el contenedor principal del chat
-      const mainContainer = document.querySelector('#main');
       if (mainContainer) {
         // Buscar data-id que contenga el número
         const chatHeader = mainContainer.querySelector('[data-id]');

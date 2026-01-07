@@ -637,8 +637,7 @@ export async function injectBackupButton(page) {
     btn.style.cssText = `
       position: fixed;
       top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
+      left: 20px;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white;
       padding: 12px 24px;
