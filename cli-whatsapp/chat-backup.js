@@ -21,18 +21,40 @@ async function extractMessagesFromChat(page) {
     console.log(`[Backup] Total elementos con data-id: ${allDataIds.length}`);
     
     // Buscar todos los contenedores de mensajes con data-id que empiecen con "true_" o "false_"
-    // Estos son los IDs de mensajes reales de WhatsApp
-    const messageContainers = Array.from(allDataIds).filter(el => {
-      const dataId = el.getAttribute('data-id');
-      return dataId && (dataId.startsWith('true_') || dataId.startsWith('false_'));
-    });
-    
-    console.log(`[Backup] Mensajes filtrados (true_/false_): ${messageContainers.length}`);
+    // (WhatsApp suele marcar mensajes reales así)
+    let messageContainers = Array.from(
+      mainContainer.querySelectorAll('div[data-id^="true_"], div[data-id^="false_"]')
+    );
+
+    // Fallback: algunas versiones ya no ponen el data-id directamente en el contenedor esperado.
+    // En ese caso, usar los nodos con data-pre-plain-text y subir al contenedor con data-id.
+    if (messageContainers.length === 0) {
+      const prePlainNodes = Array.from(mainContainer.querySelectorAll('[data-pre-plain-text]'));
+      console.log(`[Backup] Fallback data-pre-plain-text nodes: ${prePlainNodes.length}`);
+
+      const uniqueContainers = new Map();
+      for (const node of prePlainNodes) {
+        const c = node.closest('[data-id]') || node.closest('div');
+        if (!c) continue;
+        const key = c.getAttribute('data-id') || `${c.tagName}:${c.className}:${c.textContent?.slice(0, 20)}`;
+        if (!uniqueContainers.has(key)) uniqueContainers.set(key, c);
+      }
+      messageContainers = Array.from(uniqueContainers.values());
+    }
+
+    console.log(`[Backup] Contenedores candidatos a mensaje: ${messageContainers.length}`);
+    const debugIds = messageContainers
+      .slice(0, 5)
+      .map(el => el.getAttribute('data-id'))
+      .filter(Boolean);
+    if (debugIds.length) console.log('[Backup] Ejemplo data-id:', debugIds);
     
     messageContainers.forEach(container => {
       try {
         const dataId = container.getAttribute('data-id');
-        if (!dataId) return;
+        if (!dataId) {
+          // No todos los contenedores fallback tienen data-id, pero aun así podemos intentar extraer.
+        }
         
         // Determinar si es mensaje entrante o saliente
         const isOutgoing = dataId.includes('true_') ||
@@ -81,7 +103,7 @@ async function extractMessagesFromChat(page) {
         
         if (text || hasImage || hasVideo || hasAudio || hasDocument) {
           messages.push({
-            id: dataId,
+            id: dataId || `no_data_id_${messages.length}`,
             type: isOutgoing ? 'outgoing' : 'incoming',
             text: text || '',
             timestamp: timestamp,
