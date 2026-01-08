@@ -19,6 +19,129 @@ const ensureDir = (dir) => {
   }
 };
 
+const formatMsAsHms = (ms) => {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hh = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const ss = String(totalSeconds % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+};
+
+const ensureStatusWidget = async (page) => {
+  if (!page) return;
+  try {
+    await page.evaluate(() => {
+      const ID = 'ana-status-widget';
+      if (document.getElementById(ID)) return;
+
+      const el = document.createElement('div');
+      el.id = ID;
+      el.style.cssText = [
+        'position:fixed',
+        'right:18px',
+        'bottom:18px',
+        'z-index:2147483647',
+        'background:rgba(0,0,0,0.75)',
+        'color:#fff',
+        'padding:10px 12px',
+        'border-radius:12px',
+        'font-family:Arial, sans-serif',
+        'font-size:13px',
+        'line-height:1.25',
+        'box-shadow:0 8px 24px rgba(0,0,0,0.35)',
+        'backdrop-filter:blur(2px)',
+        'max-width:280px',
+        'white-space:pre-line',
+      ].join(';');
+      el.textContent = 'ANA';
+      document.body.appendChild(el);
+    });
+  } catch (_) {
+    // ignore
+  }
+};
+
+const setStatusWidgetText = async (page, text) => {
+  if (!page) return;
+  try {
+    await ensureStatusWidget(page);
+    await page.evaluate((payload) => {
+      const el = document.getElementById('ana-status-widget');
+      if (!el) return;
+      el.textContent = String(payload?.text || '');
+    }, { text: String(text || '') });
+  } catch (_) {
+    // ignore
+  }
+};
+
+const setPauseBlocker = async (page, enabled) => {
+  if (!page) return;
+  try {
+    await page.evaluate((payload) => {
+      const ID = 'ana-pause-blocker';
+      const existing = document.getElementById(ID);
+
+      if (!payload?.enabled) {
+        if (existing) existing.remove();
+        return;
+      }
+
+      if (existing) return;
+
+      const el = document.createElement('div');
+      el.id = ID;
+      el.style.cssText = [
+        'position:fixed',
+        'inset:0',
+        'background:rgba(0,0,0,0.25)',
+        'z-index:2147483646',
+        'pointer-events:auto',
+      ].join(';');
+      document.body.appendChild(el);
+    }, { enabled: enabled === true });
+  } catch (_) {
+    // ignore
+  }
+};
+
+const sleepWithCountdown = async (totalMs, label, pages = []) => {
+  const endAt = Date.now() + totalMs;
+
+  // En ambientes no-interactivos, evitar spam: log cada minuto
+  const isInteractive = Boolean(process.stdout && process.stdout.isTTY);
+  let lastLoggedMinute = null;
+
+  while (true) {
+    const remaining = endAt - Date.now();
+    if (remaining <= 0) break;
+
+    const uiText = `${label}: ${formatMsAsHms(remaining)}`;
+    const pagesToUpdate = Array.isArray(pages) ? pages.filter(Boolean) : [];
+    if (pagesToUpdate.length) {
+      await Promise.all(pagesToUpdate.map((p) => setStatusWidgetText(p, uiText)));
+    }
+
+    if (isInteractive) {
+      process.stdout.write(`\r⏳ ${label}: ${formatMsAsHms(remaining)}   `);
+    } else {
+      const m = Math.floor(remaining / 60000);
+      if (m !== lastLoggedMinute) {
+        lastLoggedMinute = m;
+        console.log(`⏳ ${label}: ${formatMsAsHms(remaining)}`);
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  if (isInteractive) process.stdout.write('\n');
+  const pagesToClear = Array.isArray(pages) ? pages.filter(Boolean) : [];
+  if (pagesToClear.length) {
+    await Promise.all(pagesToClear.map((p) => setStatusWidgetText(p, '')));
+  }
+};
+
 const writeCrashLog = (title, err) => {
   try {
     const dir = resolveAppDataDir();
@@ -101,7 +224,7 @@ function waitForEnterIfPkg(message) {
 import { CONFIG } from './config.js';
 import { saveResults, saveResponses } from './csv-utils.js';
 import { initWhatsApp, sendMessage, closeBrowser, getPage } from './whatsapp.js';
-import { initManualWhatsApp, closeManualBrowser } from './whatsapp-manual.js';
+import { initManualWhatsApp, closeManualBrowser, getManualPage } from './whatsapp-manual.js';
 import { sendBackup, hasAgentConfig, fetchAssignedChats, updatePendingContacts, loadAgentConfig, insertInteractions } from './agent-config.js';
 
 // Función principal
@@ -146,16 +269,7 @@ async function main() {
       }
     }
 
-    console.log('📡 Obteniendo contactos del servidor...');
-    const contacts = (await fetchAssignedChats()) || [];
-    if (contacts.length === 0) {
-      console.log('ℹ️  No hay contactos asignados en el servidor.\n');
-      await waitForEnterIfPkg();
-      return;
-    }
-    
     // Decidir qué ventanas abrir
-    const hasContacts = contacts.length > 0;
     const shouldOpenManual = CONFIG.enableManualWindow;
 
     const agentConfig = loadAgentConfig();
@@ -163,7 +277,6 @@ async function main() {
     const campaignName = rawCampaign.includes('-') ? rawCampaign.split('-').slice(1).join('-') : rawCampaign;
     const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
     
-    console.log(`📊 Contactos para automatización: ${contacts.length}`);
     console.log(`🔓 Ventana manual: ${shouldOpenManual ? 'ACTIVADA' : 'DESACTIVADA'}`);
     console.log(`🔐 Credenciales: ${credentialsExist ? 'CONFIGURADAS' : 'PENDIENTES'}\n`);
     
@@ -172,8 +285,8 @@ async function main() {
     let manualWindowPromise = null;
     let manualWindowStarted = false;
     
-    // Si hay contactos, abrir ventana de automatización
-    if (hasContacts) {
+    // Iniciar WhatsApp para automatización (necesario para polling y envíos)
+    {
 
       // Activar modo media por portapapeles si se pasa el flag en la línea de comandos
       if (process.argv.includes('--clipboard-media')) {
@@ -183,7 +296,6 @@ async function main() {
         console.log('─────────────────────────────────────\n');
       }
 
-      // Inicializar WhatsApp para automatización (esto mostrará login si no hay credenciales)
       await initWhatsApp();
       
       // Después de initWhatsApp, las credenciales ya están configuradas
@@ -194,7 +306,7 @@ async function main() {
         console.log('═══════════════════════════════════════\n');
         
         manualWindowStarted = true;
-        manualWindowPromise = initManualWhatsApp(contacts)
+        manualWindowPromise = initManualWhatsApp([])
           .then(() => {
             console.log('\n💬 Ventana manual lista para responder');
             console.log('⚠️  Esta ventana permanecerá abierta\n');
@@ -205,33 +317,54 @@ async function main() {
           });
       }
 
-      // Enviar mensajes con límite de 45
-      const MESSAGE_LIMIT = 45;
-      const PAUSE_DURATION = 2 * 60 * 60 * 1000; // 2 horas en milisegundos
+      const POLL_INTERVAL_MS = 30 * 1000;
+      const PAUSE_AFTER_MESSAGES = 40;
+      const PAUSE_DURATION_MS = 20 * 60 * 1000;
+
       const results = [];
       const page = getPage();
-      
-      let messagesSent = 0;
-      let currentBatch = 0;
-      
-      while (messagesSent < contacts.length) {
-        const remainingContacts = contacts.slice(messagesSent);
-        const batchSize = Math.min(MESSAGE_LIMIT, remainingContacts.length);
-        const batchContacts = remainingContacts.slice(0, batchSize);
-        
-        currentBatch++;
+      let sentSinceLastPause = 0;
+      let cycle = 0;
+
+      while (true) {
+        cycle++;
+        const manualPage = getManualPage();
+        await Promise.all([
+          setStatusWidgetText(page, 'Poll: consultando servidor...'),
+          setStatusWidgetText(manualPage, 'Poll: consultando servidor...'),
+        ]);
+
+        console.log('📡 Obteniendo contactos del servidor...');
+        const contacts = (await fetchAssignedChats()) || [];
+        console.log(`📊 Contactos para automatización: ${contacts.length}`);
+
+        if (contacts.length === 0) {
+          console.log('ℹ️  No hay contactos asignados.');
+          await sleepWithCountdown(POLL_INTERVAL_MS, 'Próximo poll', [page, manualPage]);
+          continue;
+        }
+
         console.log(`\n╔════════════════════════════════════════╗`);
-        console.log(`║     LOTE ${currentBatch}: ${batchSize} mensajes          ║`);
+        console.log(`║        CICLO ${cycle}: ${contacts.length} contactos        ║`);
         console.log(`╚════════════════════════════════════════╝\n`);
-        
-        // Enviar mensajes del lote actual
-        for (let i = 0; i < batchContacts.length; i++) {
-          const contact = batchContacts[i];
-          const globalIndex = messagesSent + i + 1;
-          console.log(`\n[${globalIndex}/${contacts.length}] Procesando: ${contact.name}`);
-          
+
+        for (let i = 0; i < contacts.length; i++) {
+          const contact = contacts[i];
+          const idx = i + 1;
+          console.log(`\n[${idx}/${contacts.length}] Procesando: ${contact.name}`);
+
           const result = await sendMessage(contact, contact.message);
           results.push(result);
+          sentSinceLastPause += 1;
+          const remainingToPause = Math.max(0, PAUSE_AFTER_MESSAGES - sentSinceLastPause);
+          const counterLine = `📨 Contador pausa: ${sentSinceLastPause}/${PAUSE_AFTER_MESSAGES} (faltan ${remainingToPause})`;
+          console.log(counterLine);
+
+          const statusText = `Ciclo ${cycle} | ${idx}/${contacts.length}\n${counterLine}`;
+          await Promise.all([
+            setStatusWidgetText(page, statusText),
+            setStatusWidgetText(manualPage, statusText),
+          ]);
 
           try {
             const now = new Date();
@@ -241,7 +374,6 @@ async function main() {
             const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
             const phoneDigits = String(contact.phone || '').replace(/\D/g, '');
             const phone10 = phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
-            // TODO: Generar bien la interaccion 
             const subdictamen = result?.status === 'no_whatsapp' ? 'No tiene Whatsapp' : 'Se envía WhatsApp';
 
             const interactionRes = await insertInteractions([
@@ -280,120 +412,44 @@ async function main() {
             console.error('⚠️  No se pudo registrar la interacción:', e.message);
           }
 
-          // Esperar entre mensajes (excepto el último del lote)
-          if (i < batchContacts.length - 1) {
+          if (i < contacts.length - 1) {
             console.log(`⏳ Esperando ${CONFIG.delayBetweenMessages / 1000}s antes del siguiente mensaje...`);
             await page.waitForTimeout(CONFIG.delayBetweenMessages);
           }
-        }
-        
-        messagesSent += batchSize;
-        
-        // Si quedan más contactos, actualizar el CSV y pausar
-        if (messagesSent < contacts.length) {
-          const pendingContacts = contacts.slice(messagesSent);
-          
-          console.log(`\n╔════════════════════════════════════════╗`);
-          console.log(`║   LÍMITE ALCANZADO: ${MESSAGE_LIMIT} mensajes     ║`);
-          console.log(`╚════════════════════════════════════════╝`);
-          console.log(`📊 Mensajes enviados: ${messagesSent}`);
-          console.log(`📋 Contactos restantes: ${pendingContacts.length}`);
-          console.log(`\n☁️  Actualizando contactos pendientes en el servidor...`);
-          
-          // Actualizar contactos pendientes en el servidor
-          const updated = await updatePendingContacts(pendingContacts);
-          
-          if (updated) {
-            console.log(`✅ Contactos pendientes guardados correctamente`);
-            
-            // Calcular tiempo de pausa
-            const pauseHours = PAUSE_DURATION / (60 * 60 * 1000);
-            const resumeTime = new Date(Date.now() + PAUSE_DURATION);
-            
-            console.log(`\n╔════════════════════════════════════════╗`);
-            console.log(`║        PAUSA DE ${pauseHours} HORAS           ║`);
-            console.log(`╚════════════════════════════════════════╝`);
-            console.log(`⏰ Se reanudar\u00e1 a las: ${resumeTime.toLocaleString('es-MX')}`);
-            console.log(`⏳ Esperando...\n`);
-            
-            // Esperar 2 horas
-            await new Promise(resolve => setTimeout(resolve, PAUSE_DURATION));
-            
-            console.log(`\n╔════════════════════════════════════════╗`);
-            console.log(`║      REANUDANDO ENVÍO...           ║`);
-            console.log(`╚════════════════════════════════════════╝\n`);
-          } else {
-            console.error(`❌ Error al actualizar contactos pendientes`);
-            console.log(`⚠️  Deteniendo proceso por seguridad`);
-            break;
+
+          if (sentSinceLastPause >= PAUSE_AFTER_MESSAGES) {
+            console.log(`\n⏸️  Límite alcanzado (${PAUSE_AFTER_MESSAGES} mensajes). Pausando 20 minutos...`);
+            await Promise.all([
+              setPauseBlocker(page, true),
+              setPauseBlocker(manualPage, true),
+            ]);
+            await sleepWithCountdown(PAUSE_DURATION_MS, 'Fin de pausa', [page, manualPage]);
+            await Promise.all([
+              setPauseBlocker(page, false),
+              setPauseBlocker(manualPage, false),
+            ]);
+            sentSinceLastPause = 0;
           }
         }
+
+        console.log(`\n☁️  Marcando contactos como procesados en el servidor...`);
+        const updated = await updatePendingContacts([]);
+        if (!updated) {
+          console.error('❌ Error al actualizar contactos pendientes (limpiar lista).');
+        }
+
+        await saveResults(results);
+        await saveResponses(results);
+
+        const sent = results.filter(r => r.status === 'sent').length;
+        const errors = results.filter(r => r.status === 'error').length;
+        const withResponse = results.filter(r => r.response && r.response.trim() !== '').length;
+
+        console.log('\nℹ️  Backup automático desactivado (solo manual).');
+
+        console.log(`\n✅ Ciclo ${cycle} completado. Volviendo a hacer poll en ${POLL_INTERVAL_MS / 1000}s...`);
+        await sleepWithCountdown(POLL_INTERVAL_MS, 'Próximo poll', [page, manualPage]);
       }
-
-      // Guardar resultados
-      await saveResults(results);
-      await saveResponses(results);
-
-      // Resumen
-      const sent = results.filter(r => r.status === 'sent').length;
-      const errors = results.filter(r => r.status === 'error').length;
-      const withResponse = results.filter(r => r.response && r.response.trim() !== '').length;
-
-      console.log('\n╔════════════════════════════════════════╗');
-      console.log('║           RESUMEN FINAL                ║');
-      console.log('╚════════════════════════════════════════╝');
-      console.log(`✅ Enviados exitosamente: ${sent}`);
-      console.log(`❌ Errores: ${errors}`);
-      console.log(`💬 Respuestas recibidas: ${withResponse}`);
-      console.log(`📊 Total procesados: ${results.length}`);
-      
-      // Enviar backup al servidor
-      console.log('\n☁️  Enviando backup al servidor...');
-      const backupData = {
-        results,
-        summary: { sent, errors, withResponse, total: results.length },
-        timestamp: new Date().toISOString(),
-      };
-      await sendBackup(backupData);
-      
-      console.log('\n✨ Proceso de automatización completado!\n');
-    } else if (shouldOpenManual) {
-      // No hay contactos pero queremos abrir ventana manual
-      // Solo si ya existen credenciales
-      if (credentialsExist) {
-        // Primero inicializar la ventana de automatización (para backups y funcionalidad completa)
-        console.log('═══════════════════════════════════════');
-        console.log('🤖 Iniciando ventana de automatización...');
-        console.log('═══════════════════════════════════════\n');
-        
-        await initWhatsApp();
-        
-        // Luego abrir la ventana manual
-        console.log('\n═══════════════════════════════════════');
-        console.log('🔓 Iniciando ventana manual...');
-        console.log('═══════════════════════════════════════\n');
-        
-        manualWindowStarted = true;
-        manualWindowPromise = initManualWhatsApp([]).then(() => {
-          console.log('\n💬 Ventana manual lista para responder');
-          console.log('⚠️  Esta ventana permanecerá abierta\n');
-        });
-      } else {
-        console.log('⚠️  No hay credenciales configuradas.');
-        console.log('   Configura las credenciales del agente (backend) y vuelve a ejecutar.\n');
-      }
-    }
-    
-    // Si la ventana manual está abierta, esperar a que se complete su inicialización
-    if (manualWindowPromise) {
-      await manualWindowPromise;
-      
-      console.log('═══════════════════════════════════════');
-      console.log('   Presiona Ctrl+C para cerrar el programa');
-      console.log('═══════════════════════════════════════\n');
-      
-      // Mantener el programa corriendo para la ventana manual
-      await new Promise(() => {}); // Espera infinita
     }
 
   } catch (error) {

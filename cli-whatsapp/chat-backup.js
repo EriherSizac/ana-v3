@@ -730,12 +730,12 @@ export async function injectBackupButton(page) {
     `;
     
     btn.onmouseover = () => {
-      btn.style.transform = 'translateX(-50%) scale(1.05)';
+      btn.style.transform = 'scale(1.05)';
       btn.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.6)';
     };
     
     btn.onmouseout = () => {
-      btn.style.transform = 'translateX(-50%) scale(1)';
+      btn.style.transform = 'scale(1)';
       btn.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
     };
     

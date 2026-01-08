@@ -1610,6 +1610,31 @@ async function injectHistoryButton(page) {
       const existingOverlay = document.getElementById('history-overlay');
       if (existingOverlay) existingOverlay.remove();
 
+      const formatSentAt = (sentAt) => {
+        if (sentAt === null || typeof sentAt === 'undefined') return 'Sin fecha';
+        try {
+          const raw = typeof sentAt === 'string' ? sentAt.trim() : sentAt;
+          let d;
+          if (typeof raw === 'number') {
+            d = new Date(raw < 1e12 ? raw * 1000 : raw);
+          } else if (typeof raw === 'string') {
+            const asNumber = Number(raw);
+            if (!Number.isNaN(asNumber) && raw !== '') {
+              d = new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber);
+            } else {
+              d = new Date(raw);
+            }
+          } else {
+            d = new Date(raw);
+          }
+
+          if (!d || Number.isNaN(d.getTime())) return 'Sin fecha';
+          return d.toLocaleString('es-MX');
+        } catch (_) {
+          return 'Sin fecha';
+        }
+      };
+
       // Crear overlay oscuro
       const overlay = document.createElement('div');
       overlay.id = 'history-overlay';
@@ -1704,7 +1729,7 @@ async function injectHistoryButton(page) {
         msgDiv.innerHTML = `
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
             <strong style="color: #333;">${msg.name || msg.contact_name || phoneNumber}</strong>
-            <span style="color: #666; font-size: 12px;">${msg.sent_at ? new Date(msg.sent_at).toLocaleString('es-MX') : 'Sin fecha'}</span>
+            <span style="color: #666; font-size: 12px;">${formatSentAt(msg.sent_at || msg.sentAt || msg.timestamp)}</span>
           </div>
           <div style="color: #555; white-space: pre-wrap; margin-bottom: 8px;">
             <strong style="font-size: 11px; color: #999;">MENSAJE ENVIADO:</strong><br>
