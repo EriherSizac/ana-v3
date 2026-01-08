@@ -145,6 +145,8 @@ async function removeBlockingOverlay() {
 async function showLoginOverlay(requireAll = true) {
   return new Promise(async (resolve) => {
     const savedConfig = requireAll ? null : loadAgentConfig();
+    const savedUser = savedConfig?.agent_id ? String(savedConfig.agent_id) : '';
+    const savedCampaign = savedConfig?.campaign ? String(savedConfig.campaign) : '';
 
     const renderOverlay = async () => {
       await autoPage.evaluate((args) => {
@@ -263,7 +265,7 @@ async function showLoginOverlay(requireAll = true) {
             document.getElementById('login-daily-password');
           if (firstInput) firstInput.focus();
         }, 100);
-      }, { requireAll, savedUser: savedConfig?.agent_id, savedCampaign: savedConfig?.campaign });
+      }, { requireAll: !!requireAll, savedUser: String(savedUser || ''), savedCampaign: String(savedCampaign || '') });
     };
 
     // Exponer función (solo si no existe ya)
@@ -357,10 +359,10 @@ async function showLoginOverlay(requireAll = true) {
 
     // Pasar usuario/campaña guardados si aplica
     if (!requireAll && savedConfig) {
-      await autoPage.evaluate((config) => {
-        window.__savedUser = config.agent_id;
-        window.__savedCampaign = config.campaign;
-      }, savedConfig);
+      await autoPage.evaluate((args) => {
+        window.__savedUser = args.agentId;
+        window.__savedCampaign = args.campaign;
+      }, { agentId: String(savedUser || ''), campaign: String(savedCampaign || '') });
     }
 
     await renderOverlay();

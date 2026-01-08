@@ -17,7 +17,7 @@ Write-Host "[3/5] Bundling app (esbuild -> dist\\app.cjs)..."
 npx esbuild index.js --bundle --platform=node --format=cjs --outfile="dist\\app.cjs" --external:playwright
 
 Write-Host "[4/5] Building executable (pkg)..."
-npx pkg "dist\\app.cjs" --targets node18-win-x64 --output "dist\\ANA.exe"
+npx pkg "dist\\app.cjs" --targets node18-win-x64 --output "dist\\ANA.exe" --no-bytecode --public
 if ($LASTEXITCODE -ne 0) {
   throw "pkg falló (exit code $LASTEXITCODE)"
 }

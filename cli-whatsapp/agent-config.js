@@ -1,7 +1,25 @@
 import fs from 'fs';
 import path from 'path';
 
-const baseDir = process.env.ANA_DATA_DIR || process.cwd();
+const resolveBaseDir = () => {
+  if (process.env.ANA_DATA_DIR) return process.env.ANA_DATA_DIR;
+
+  const appData = process.env.APPDATA;
+  if (appData) return path.join(appData, 'ANA');
+
+  const localAppData = process.env.LOCALAPPDATA;
+  if (localAppData) return path.join(localAppData, 'ANA');
+
+  return process.cwd();
+};
+
+const baseDir = resolveBaseDir();
+try {
+  fs.mkdirSync(baseDir, { recursive: true });
+} catch (e) {
+  // ignore
+}
+
 const CONFIG_FILE = path.join(baseDir, '.agent-config.json');
 
 /**

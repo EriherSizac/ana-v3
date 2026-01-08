@@ -2,7 +2,74 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 
+const resolveAppDataDir = () => {
+  if (process.env.ANA_DATA_DIR) return process.env.ANA_DATA_DIR;
+  const appData = process.env.APPDATA;
+  if (appData) return path.join(appData, 'ANA');
+  const localAppData = process.env.LOCALAPPDATA;
+  if (localAppData) return path.join(localAppData, 'ANA');
+  return process.cwd();
+};
+
+const ensureDir = (dir) => {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    // ignore
+  }
+};
+
+const writeCrashLog = (title, err) => {
+  try {
+    const dir = resolveAppDataDir();
+    ensureDir(dir);
+    const logFile = path.join(dir, 'ana-crash.log');
+    const msg = String(err?.stack || err?.message || err);
+    const line = `\n[${new Date().toISOString()}] ${title}\n${msg}\n`;
+    fs.appendFileSync(logFile, line, 'utf-8');
+  } catch (e) {
+    // ignore
+  }
+};
+
 const isPkg = typeof process.pkg !== 'undefined';
+
+process.on('uncaughtException', async (err) => {
+  writeCrashLog('uncaughtException', err);
+  console.error('❌ Error fatal (uncaughtException):', err?.message || err);
+  if (isPkg) {
+    try {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl.question('Presiona ENTER para salir...', () => {
+        rl.close();
+        process.exit(1);
+      });
+      return;
+    } catch (e) {
+      // ignore
+    }
+  }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason) => {
+  writeCrashLog('unhandledRejection', reason);
+  console.error('❌ Error fatal (unhandledRejection):', reason?.message || reason);
+  if (isPkg) {
+    try {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl.question('Presiona ENTER para salir...', () => {
+        rl.close();
+        process.exit(1);
+      });
+      return;
+    } catch (e) {
+      // ignore
+    }
+  }
+  process.exit(1);
+});
+
 if (isPkg) {
   const exeDir = path.dirname(process.execPath);
   process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(exeDir, 'browsers');
