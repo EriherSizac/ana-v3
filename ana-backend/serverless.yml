@@ -30,6 +30,7 @@ provider:
             - s3:PutObject
             - s3:GetObject
             - s3:ListBucket
+            - s3:DeleteObject
           Resource:
             - arn:aws:s3:::${self:service}-storage-${sls:stage}/*
             - arn:aws:s3:::${self:service}-storage-${sls:stage}
@@ -79,7 +80,7 @@ functions:
     handler: src/handlers/chats.getChats
     events:
       - httpApi:
-          path: /get/chats/{agentId-campaign-id}
+          path: /get/chats/{agentId}/{campaignId}
           method: get
           cors: true
 
@@ -87,7 +88,7 @@ functions:
     handler: src/handlers/chats.optionsHandler
     events:
       - httpApi:
-          path: /get/chats/{agentId-campaign-id}
+          path: /get/chats/{agentId}/{campaignId}
           method: options
           cors: true
 

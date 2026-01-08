@@ -1,5 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -21,28 +21,18 @@ export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
 
 export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   try {
-    const pathParam = event.pathParameters?.['agentId-campaign-id'];
+    const agentId = event.pathParameters?.agentId;
+    const campaignId = event.pathParameters?.campaignId;
 
-    if (!pathParam) {
+    if (!agentId || !campaignId) {
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: 'agentId-campaign-id parameter is required' }),
+        body: JSON.stringify({ error: 'agentId and campaignId parameters are required' }),
       };
     }
 
-    // Parse agentId-campaign-id (format: agentId-campaignId)
-    const parts = pathParam.split('-');
-    if (parts.length < 2) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: 'Invalid format. Expected: agentId-campaignId' }),
-      };
-    }
-
-    const agentId = parts[0];
-    const campaignId = parts.slice(1).join('-'); // In case campaignId contains dashes
-
-    const key = `assignments/${campaignId}/${agentId}.csv`;
+    const key = `agents/${campaignId}/${agentId}-contacts.csv`;
+    console.log('[getChats] BUCKET=', BUCKET_NAME, 'KEY=', key);
 
     const response = await s3Client.send(new GetObjectCommand({
       Bucket: BUCKET_NAME,
@@ -60,10 +50,19 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
 
     // Consumir el archivo: una vez leído, se elimina de S3
     try {
-      await s3Client.send(new DeleteObjectCommand({
+      const delRes = await s3Client.send(new DeleteObjectCommand({
         Bucket: BUCKET_NAME,
         Key: key,
       }));
+      console.log('[getChats] DeleteObject OK:', JSON.stringify(delRes));
+
+      // Verificar si realmente desapareció (si no hay permisos o hay versioning raro, esto nos lo indica)
+      try {
+        await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+        console.warn('[getChats] WARNING: HeadObject todavía existe después de DeleteObject. Revisar IAM/Versioning/Key.');
+      } catch (headErr: any) {
+        console.log('[getChats] HeadObject after delete:', headErr?.name || headErr?.Code || headErr?.$metadata?.httpStatusCode);
+      }
     } catch (deleteError: any) {
       console.error('Error deleting chats file from S3:', deleteError);
       return {

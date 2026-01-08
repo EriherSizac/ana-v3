@@ -253,7 +253,9 @@ export async function fetchAssignedChats() {
   }
 
   try {
-    const url = `${API_BASE_URL}/supervisors/agents/${config.agent_id}/${config.campaign}/contacts`;
+    const agentId = encodeURIComponent(String(config.agent_id || ''));
+    const campaignId = encodeURIComponent(String(config.campaign || ''));
+    const url = `${API_BASE_URL}/get/chats/${agentId}/${campaignId}`;
     console.log(`📡 Consultando contactos en: ${url}`);
     
     const response = await fetch(url);
