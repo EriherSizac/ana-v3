@@ -34,7 +34,7 @@ export function replaceVariables(template, contact) {
  */
 export function normalizeContact(row) {
   const contact = {
-    phone: row.contact_phone || row.contact_pho || row.phone || row.telefono || '',
+    phone: row.phone_number || row.contact_phone || row.contact_pho || row.phone || row.telefono || '',
     name: row.name || row.nombre || '',
     first_name: row.first_name || row.nombre_pila || '',
     last_name: row.last_name || row.apellido || '',
@@ -42,6 +42,7 @@ export function normalizeContact(row) {
     discount: row.discount || row.descuento || '',
     total_balanc: row.total_balance || row.total_balanc || row.balance || row.saldo || '',
     product: row.product || row.producto || '',
+    message: row.message || row.mensaje || '',
   };
 
   // Construir nombre si no existe

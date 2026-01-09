@@ -20,6 +20,45 @@ try {
   // ignore
 }
 
+export function normalizePhoneForBackend(rawPhone) {
+  const digits = String(rawPhone || '').replace(/\D/g, '');
+  if (!digits) return '';
+
+  if (digits.length === 10) return `+52${digits}`;
+  if (digits.length === 11 && digits.startsWith('52')) return `+${digits}`;
+  if (digits.startsWith('521') && digits.length >= 13) return `+52${digits.slice(3)}`;
+  if (digits.startsWith('52')) return `+${digits}`;
+
+  return digits.startsWith('+') ? digits : `+${digits}`;
+}
+
+export async function searchClientInfoByPhone(campaignName, phoneE164) {
+  const url = `${INTERACTIONS_API_BASE_URL}/client-info`;
+  try {
+    const payload = {
+      campaign_name: String(campaignName || ''),
+      phone_number: String(phoneE164 || ''),
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const rawText = await response.text().catch(() => '');
+    const data = rawText ? JSON.parse(rawText) : {};
+    const result = Array.isArray(data.result) ? data.result : [];
+    if (!response.ok) return [];
+    return result;
+  } catch (error) {
+    console.error('❌ Error al buscar client-info:', error.message);
+    return [];
+  }
+}
+
 const CONFIG_FILE = path.join(baseDir, '.agent-config.json');
 
 /**
@@ -212,12 +251,15 @@ function parseCSV(csvText) {
   
   // Mapeo de nombres de columnas del servidor a nombres esperados por el cliente
   const fieldMapping = {
+    'phone_number': 'phone',
     'contact_phone': 'phone',
+    'contact_pho': 'phone',
     'phone': 'phone',
     'contact_name': 'name',
     'first_name': 'first_name',
     'last_name': 'last_name',
     'name': 'name',
+    'message': 'message',
     'credit': 'credit',
     'credit_id': 'credit',
     'discount': 'discount',
@@ -263,6 +305,7 @@ export async function fetchAssignedChats() {
     if (response.ok) {
       const csvText = await response.text();
       console.log(`📥 CSV recibido (${csvText.length} caracteres)`);
+      console.log(csvText);
       const contacts = parseCSV(csvText);
       console.log(`✅ ${contacts.length} contactos parseados del servidor`);
       return contacts;

@@ -27,11 +27,13 @@ export const CONFIG = {
   responsesCsv: path.join(baseDir, 'respuestas.csv'),
   sessionPath: path.join(baseDir, 'whatsapp-session'),
   manualSessionPath: path.join(baseDir, 'whatsapp-session-manual'), // Sesión para ventana manual
+  monitorSessionPath: path.join(baseDir, 'whatsapp-session-monitor'),
   delayBetweenMessages: 5000, // 5 segundos entre mensajes
   waitForResponse: 0, // 0 segundos = no esperar respuesta, ir directo al siguiente
   useClipboardMedia: false, // Si es true, intentará pegar media desde el portapapeles antes del texto
   showOverlay: true, // Si es true, muestra un overlay para evitar interacción del usuario
   enableManualWindow: true, // Si es true, abre ventana para respuestas manuales
+  enableMonitorWindow: true,
 };
 
 export const __dirname_export = baseDir;

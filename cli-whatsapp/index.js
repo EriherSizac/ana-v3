@@ -19,6 +19,21 @@ const ensureDir = (dir) => {
   }
 };
 
+const safeResetDir = (dir, label) => {
+  try {
+    if (!dir) return;
+    if (!fs.existsSync(dir)) return;
+    const parent = path.dirname(dir);
+    const base = path.basename(dir);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backup = path.join(parent, `${base}.bak-${stamp}`);
+    fs.renameSync(dir, backup);
+    console.log(`🧹 Reset ${label}: renombrado a ${backup}`);
+  } catch (e) {
+    console.error(`❌ No se pudo resetear ${label}:`, e?.message || e);
+  }
+};
+
 const formatMsAsHms = (ms) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const hh = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
@@ -225,10 +240,22 @@ import { CONFIG } from './config.js';
 import { saveResults, saveResponses } from './csv-utils.js';
 import { initWhatsApp, sendMessage, closeBrowser, getPage } from './whatsapp.js';
 import { initManualWhatsApp, closeManualBrowser, getManualPage } from './whatsapp-manual.js';
+import { initMonitorWhatsApp, closeMonitorBrowser, getMonitorPage } from './whatsapp-monitor.js';
 import { sendBackup, hasAgentConfig, fetchAssignedChats, updatePendingContacts, loadAgentConfig, insertInteractions } from './agent-config.js';
 
 // Función principal
 async function main() {
+  // Flags de utilería para recuperar perfiles corruptos (pantalla de carga infinita)
+  if (process.argv.includes('--reset-monitor-session')) {
+    safeResetDir(CONFIG.monitorSessionPath, 'Monitor Session');
+  }
+  if (process.argv.includes('--reset-manual-session')) {
+    safeResetDir(CONFIG.manualSessionPath, 'Manual Session');
+  }
+  if (process.argv.includes('--reset-auto-session')) {
+    safeResetDir(CONFIG.sessionPath, 'Auto Session');
+  }
+
   // Cierre ordenado (Ctrl+C)
   let shuttingDown = false;
   process.once('SIGINT', async () => {
@@ -242,6 +269,11 @@ async function main() {
     }
     try {
       await closeManualBrowser();
+    } catch (e) {
+      // Ignorar
+    }
+    try {
+      await closeMonitorBrowser();
     } catch (e) {
       // Ignorar
     }
@@ -271,6 +303,7 @@ async function main() {
 
     // Decidir qué ventanas abrir
     const shouldOpenManual = CONFIG.enableManualWindow;
+    const shouldOpenMonitor = CONFIG.enableMonitorWindow;
 
     const agentConfig = loadAgentConfig();
     const rawCampaign = agentConfig?.campaign || '';
@@ -278,12 +311,16 @@ async function main() {
     const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
     
     console.log(`🔓 Ventana manual: ${shouldOpenManual ? 'ACTIVADA' : 'DESACTIVADA'}`);
+    console.log(`👀 Ventana monitor: ${shouldOpenMonitor ? 'ACTIVADA' : 'DESACTIVADA'}`);
     console.log(`🔐 Credenciales: ${credentialsExist ? 'CONFIGURADAS' : 'PENDIENTES'}\n`);
     
     // La ventana manual solo se abre si ya hay credenciales configuradas
     // Si no hay credenciales, primero se debe abrir la ventana de automatización para configurarlas
     let manualWindowPromise = null;
     let manualWindowStarted = false;
+
+    let monitorWindowPromise = null;
+    let monitorWindowStarted = false;
     
     // Iniciar WhatsApp para automatización (necesario para polling y envíos)
     {
@@ -317,6 +354,24 @@ async function main() {
           });
       }
 
+      // Abrir ventana monitor (no leídos) si está habilitada
+      if (shouldOpenMonitor && !monitorWindowStarted) {
+        console.log('\n═══════════════════════════════════════');
+        console.log('👀 Iniciando ventana monitor (No leídos)...');
+        console.log('═══════════════════════════════════════\n');
+
+        monitorWindowStarted = true;
+        monitorWindowPromise = initMonitorWhatsApp()
+          .then(() => {
+            console.log('\n👀 Ventana monitor lista (No leídos)');
+            console.log('⚠️  Esta ventana permanecerá abierta\n');
+          })
+          .catch((error) => {
+            console.error('❌ Error al iniciar ventana monitor:', error.message);
+            console.error('Stack:', error.stack);
+          });
+      }
+
       const POLL_INTERVAL_MS = 30 * 1000;
       const PAUSE_AFTER_MESSAGES = 40;
       const PAUSE_DURATION_MS = 20 * 60 * 1000;
@@ -329,9 +384,11 @@ async function main() {
       while (true) {
         cycle++;
         const manualPage = getManualPage();
+        const monitorPage = getMonitorPage();
         await Promise.all([
           setStatusWidgetText(page, 'Poll: consultando servidor...'),
           setStatusWidgetText(manualPage, 'Poll: consultando servidor...'),
+          setStatusWidgetText(monitorPage, 'Poll: consultando servidor...'),
         ]);
 
         console.log('📡 Obteniendo contactos del servidor...');
@@ -340,7 +397,7 @@ async function main() {
 
         if (contacts.length === 0) {
           console.log('ℹ️  No hay contactos asignados.');
-          await sleepWithCountdown(POLL_INTERVAL_MS, 'Próximo poll', [page, manualPage]);
+          await sleepWithCountdown(POLL_INTERVAL_MS, 'Próximo poll', [page, manualPage, monitorPage]);
           continue;
         }
 
@@ -364,6 +421,7 @@ async function main() {
           await Promise.all([
             setStatusWidgetText(page, statusText),
             setStatusWidgetText(manualPage, statusText),
+            setStatusWidgetText(monitorPage, statusText),
           ]);
 
           try {
@@ -422,11 +480,13 @@ async function main() {
             await Promise.all([
               setPauseBlocker(page, true),
               setPauseBlocker(manualPage, true),
+              setPauseBlocker(monitorPage, true),
             ]);
-            await sleepWithCountdown(PAUSE_DURATION_MS, 'Fin de pausa', [page, manualPage]);
+            await sleepWithCountdown(PAUSE_DURATION_MS, 'Fin de pausa', [page, manualPage, monitorPage]);
             await Promise.all([
               setPauseBlocker(page, false),
               setPauseBlocker(manualPage, false),
+              setPauseBlocker(monitorPage, false),
             ]);
             sentSinceLastPause = 0;
           }
@@ -448,7 +508,7 @@ async function main() {
         console.log('\nℹ️  Backup automático desactivado (solo manual).');
 
         console.log(`\n✅ Ciclo ${cycle} completado. Volviendo a hacer poll en ${POLL_INTERVAL_MS / 1000}s...`);
-        await sleepWithCountdown(POLL_INTERVAL_MS, 'Próximo poll', [page, manualPage]);
+        await sleepWithCountdown(POLL_INTERVAL_MS, 'Próximo poll', [page, manualPage, monitorPage]);
       }
     }
 
@@ -461,6 +521,7 @@ async function main() {
     if (!shuttingDown) {
       await closeBrowser();
       await closeManualBrowser();
+      await closeMonitorBrowser();
     }
   }
 }

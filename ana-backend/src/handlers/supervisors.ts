@@ -19,6 +19,169 @@ export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
   };
 };
 
+export const uploadAgentContactsLogging = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  try {
+    const { agent, campaign } = event.pathParameters || {};
+
+    if (!agent || !campaign) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          success: false,
+          message: 'Agente y campaña son requeridos'
+        })
+      };
+    }
+
+    if (!event.body) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          success: false,
+          message: 'Body requerido'
+        })
+      };
+    }
+
+    let requestData;
+    try {
+      requestData = JSON.parse(event.body);
+    } catch (error) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          success: false,
+          message: 'Body debe ser JSON válido con campos: csv, message y metadata'
+        })
+      };
+    }
+
+    const { csv, message, metadata } = requestData;
+
+    if (!csv || !message || !metadata) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          success: false,
+          message: 'CSV, mensaje y metadata son requeridos'
+        })
+      };
+    }
+
+    const lines = csv.trim().split('\n');
+    if (lines.length < 1) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          success: false,
+          message: 'CSV vacío'
+        })
+      };
+    }
+
+    const header = lines[0].trim();
+    const newHeader = header.includes('message') ? header : `${header},message`;
+
+    const processedLines = [newHeader];
+    let contactCount = 0;
+
+    const escapeCSVField = (field: string): string => {
+      if (!field) return '';
+
+      if (field.includes(',') || field.includes('"') || field.includes('\n') || field.includes('\r')) {
+        const escaped = field.replace(/"/g, '""');
+        return `"${escaped}"`;
+      }
+
+      return field;
+    };
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      const escapedMessage = escapeCSVField(message);
+      const newLine = line.includes(message) ? line : `${line},${escapedMessage}`;
+      processedLines.push(newLine);
+      contactCount++;
+    }
+
+    const processedCsv = processedLines.join('\n') + '\n';
+
+    const key = `logging/${campaign}/${agent}-contacts.csv`;
+
+    await s3Client.send(new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+      Body: processedCsv,
+      ContentType: 'text/csv',
+      Metadata: {
+        metadata: String(metadata),
+      },
+    }));
+
+    console.log(`CSV subido: ${key} con ${contactCount} contactos (logging)`);
+
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({
+        success: true,
+        message: 'CSV subido correctamente con mensaje agregado',
+        data: {
+          agent,
+          campaign,
+          key,
+          contactCount,
+          messageAdded: message,
+          metadata,
+          timestamp: new Date().toISOString()
+        }
+      })
+    };
+
+  } catch (error) {
+    console.error('Error al subir CSV (logging):', error);
+    return {
+      statusCode: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({
+        success: false,
+        message: 'Error interno del servidor',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    };
+  }
+};
+
 /**
  * Sube un CSV de contactos para un agente y campaña específicos
  * Recibe el CSV y un mensaje que se agregará a cada contacto
@@ -70,12 +233,12 @@ export const uploadAgentContacts = async (
         },
         body: JSON.stringify({
           success: false,
-          message: 'Body debe ser JSON válido con campos: csv y message'
+          message: 'Body debe ser JSON válido con campos: csv y message (metadata opcional)'
         })
       };
     }
 
-    const { csv, message } = requestData;
+    const { csv, message, metadata } = requestData;
 
     if (!csv || !message) {
       return {
@@ -146,12 +309,21 @@ export const uploadAgentContacts = async (
 
     // Guardar en S3: /agents/{campaign}/{agent}-contacts.csv
     const key = `agents/${campaign}/${agent}-contacts.csv`;
+    const historic_key = `historic/agents/${campaign}/${agent}-contacts.csv`;
     
     await s3Client.send(new PutObjectCommand({
       Bucket: BUCKET_NAME,
       Key: key,
       Body: processedCsv,
       ContentType: 'text/csv',
+    }));
+
+    await s3Client.send(new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: historic_key,
+      Body: processedCsv,
+      ContentType: 'text/csv',
+      Metadata: metadata ? { metadata: String(metadata) } : undefined,
     }));
 
     console.log(`CSV subido: ${key} con ${contactCount} contactos`);
@@ -169,8 +341,10 @@ export const uploadAgentContacts = async (
           agent,
           campaign,
           key,
+          historic_key,
           contactCount,
           messageAdded: message,
+          metadata: metadata || null,
           timestamp: new Date().toISOString()
         }
       })

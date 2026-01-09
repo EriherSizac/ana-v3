@@ -144,7 +144,7 @@ async function removeBlockingOverlay() {
  */
 async function showLoginOverlay(requireAll = true) {
   return new Promise(async (resolve) => {
-    const savedConfig = requireAll ? null : loadAgentConfig();
+    const savedConfig = loadAgentConfig();
     const savedUser = savedConfig?.agent_id ? String(savedConfig.agent_id) : '';
     const savedCampaign = savedConfig?.campaign ? String(savedConfig.campaign) : '';
 
@@ -174,7 +174,7 @@ async function showLoginOverlay(requireAll = true) {
         const userField = requireAll ? `
           <div style="margin-bottom: 20px; text-align: left;">
             <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-            <input type="text" id="login-user" placeholder="ej: erick" style="
+            <input type="text" id="login-user" value="${savedUser || ''}" placeholder="ej: erick" style="
               width: 100%;
               padding: 12px 15px;
               border: 2px solid #333;
@@ -190,9 +190,9 @@ async function showLoginOverlay(requireAll = true) {
         ` : '';
 
         const campaignField = requireAll ? `
-          <div style="margin-bottom: 20px; text-align: left;">
+          <div style="margin-bottom: 20px; text-align: left; z-index: 10000000">
             <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-            <input type="text" id="login-campaign" placeholder="ej: prueba" style="
+            <input type="text" id="login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" style="
               width: 100%;
               padding: 12px 15px;
               border: 2px solid #333;
@@ -258,6 +258,9 @@ async function showLoginOverlay(requireAll = true) {
         `;
 
         document.body.appendChild(overlay);
+
+        if (savedUser) window.__savedUser = savedUser;
+        if (savedCampaign) window.__savedCampaign = savedCampaign;
 
         setTimeout(() => {
           const firstInput = requireAll ?
@@ -1177,7 +1180,17 @@ async function captureResponse() {
  */
 export async function sendMessage(contact, messageTemplate) {
   try {
-    const cleanPhone = contact.phone.replace(/\D/g, '');
+    const rawPhone = contact?.phone;
+    const cleanPhone = String(rawPhone || '').replace(/\D/g, '');
+    if (!cleanPhone) {
+      return {
+        ...contact,
+        status: 'error',
+        error: 'Contacto sin teléfono (phone vacío o no mapeado desde CSV)',
+        sent_at: new Date().toISOString(),
+        response: '',
+      };
+    }
     const personalizedMessage = replaceVariables(messageTemplate, contact);
     
     console.log(`\n📤 Enviando a ${contact.name} (${contact.phone})...`);

@@ -1,5 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -31,8 +31,36 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
       };
     }
 
-    const key = `agents/${campaignId}/${agentId}-contacts.csv`;
-    console.log('[getChats] BUCKET=', BUCKET_NAME, 'KEY=', key);
+    const prefix = `agents/${campaignId}/`;
+    const listRes = await s3Client.send(new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: prefix,
+    }));
+
+    const candidates = (listRes.Contents || [])
+      .filter((o) => !!o.Key)
+      .filter((o) => {
+        const key = o.Key as string;
+        const filename = key.split('/').pop() || '';
+
+        if (filename === 'credentials.csv') return false;
+
+        return filename.startsWith(`${agentId}-contacts`) && filename.endsWith('.csv');
+      })
+      .filter((o) => !!o.LastModified);
+
+    if (candidates.length === 0) {
+      return {
+        statusCode: 404,
+        body: JSON.stringify({ error: 'Chat assignment not found' }),
+      };
+    }
+
+    candidates.sort((a, b) => (a.LastModified as Date).getTime() - (b.LastModified as Date).getTime());
+
+    const selected = candidates[0];
+    const key = selected.Key as string;
+    console.log('[getChats] BUCKET=', BUCKET_NAME, 'KEY=', key, 'LastModified=', selected.LastModified);
 
     const response = await s3Client.send(new GetObjectCommand({
       Bucket: BUCKET_NAME,
