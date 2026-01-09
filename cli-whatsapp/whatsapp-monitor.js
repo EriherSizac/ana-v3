@@ -349,7 +349,6 @@ async function monitorUnreadLoop() {
 
     try {
       await monitorPage.evaluate(() => {
-        if (window.applyMonitorUIRestrictions) window.applyMonitorUIRestrictions();
         if (window.__anaClickUnread) window.__anaClickUnread();
       });
     } catch (e) {
@@ -444,81 +443,11 @@ async function monitorUnreadLoop() {
 }
 
 async function applyMonitorUIRestrictions() {
+  // Bloqueo UI del monitor deshabilitado temporalmente por estabilidad
+  // (primero asegurar overlay login + auto "No leídos")
   if (!monitorPage || monitorPage.isClosed()) return;
   await monitorPage.evaluate(() => {
-    window.applyMonitorUIRestrictions = () => {
-      const styleId = 'monitor-dom-lock-style';
-      if (!document.getElementById(styleId)) {
-        const style = document.createElement('style');
-        style.id = styleId;
-        style.textContent = `
-          body * { pointer-events: none !important; }
-          * { user-select: none !important; -webkit-user-select: none !important; }
-
-          /* Permitir interacción SOLO en el filtro de No leídos/Unread */
-          .ana-allow-unread,
-          .ana-allow-unread * {
-            pointer-events: auto !important;
-          }
-
-          /* Permitir interacción dentro del overlay de login */
-          #monitor-login-overlay,
-          #monitor-login-overlay * {
-            pointer-events: auto !important;
-          }
-
-          /* Permitir selección de texto en inputs del overlay */
-          #monitor-login-overlay input,
-          #monitor-login-overlay textarea {
-            user-select: text !important;
-            -webkit-user-select: text !important;
-          }
-        `;
-        document.head.appendChild(style);
-      }
-
-      const hideElements = (selector) => {
-        const elements = document.querySelectorAll(selector);
-        elements.forEach((el) => {
-          el.style.display = 'none';
-          el.style.visibility = 'hidden';
-          el.style.pointerEvents = 'none';
-        });
-      };
-
-      hideElements('[data-icon="voice-call"]');
-      hideElements('[data-icon="video-call"]');
-      hideElements('[data-icon="new-chat"]');
-      hideElements('[data-icon="new-chat-outline"]');
-      hideElements('[data-icon="more-refreshed"]');
-      hideElements('[data-icon="down"]');
-      hideElements('[data-icon="chevron-down"]');
-      hideElements('button[aria-label="Menu"]');
-      hideElements('button[aria-label="Menú"]');
-      hideElements('button[aria-label="New chat"]');
-      hideElements('button[aria-label*="nuevo chat"]');
-
-      if (!document.getElementById('monitor-mode-indicator')) {
-        const indicator = document.createElement('div');
-        indicator.id = 'monitor-mode-indicator';
-        indicator.style.cssText = `
-          position: fixed;
-          top: 10px;
-          right: 10px;
-          background: rgba(255, 165, 0, 0.95);
-          color: white;
-          padding: 10px 20px;
-          border-radius: 10px;
-          font-family: Arial, sans-serif;
-          font-size: 14px;
-          font-weight: bold;
-          z-index: 2147483647;
-          box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-        `;
-        indicator.innerHTML = '👀 Monitor - No leídos (Bloqueado)';
-        document.body.appendChild(indicator);
-      }
-    };
+    window.applyMonitorUIRestrictions = () => {};
 
     const allowUnreadOnly = () => {
       try {
@@ -554,30 +483,27 @@ async function applyMonitorUIRestrictions() {
       // Asegurar que el único elemento clickeable sea el filtro
       allowUnreadOnly();
 
-      const candidates = [];
+      try {
+        const spans = Array.from(document.querySelectorAll('span'));
+        const labelEl = spans.find((s) => {
+          const t = (s.textContent || '').trim().toLowerCase();
+          return t === 'no leídos' || t === 'no leidos' || t === 'unread';
+        });
+        if (!labelEl) return;
 
-      const byText = Array.from(document.querySelectorAll('span, div, button')).filter((el) => {
-        const t = (el.textContent || '').trim().toLowerCase();
-        return t === 'no leídos' || t === 'no leidos' || t === 'unread';
-      });
-      candidates.push(...byText);
+        // En WhatsApp web suele ser un chip/tab; el clickable suele tener role=tab o role=button
+        const clickable =
+          labelEl.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') ||
+          labelEl.parentElement;
+        if (!clickable) return;
 
-      const byAria = Array.from(document.querySelectorAll('[aria-label], [title]')).filter((el) => {
-        const a = String(el.getAttribute('aria-label') || '').toLowerCase();
-        const ti = String(el.getAttribute('title') || '').toLowerCase();
-        return a.includes('no le') || a.includes('unread') || ti.includes('no le') || ti.includes('unread');
-      });
-      candidates.push(...byAria);
+        const ariaSelected = String(clickable.getAttribute('aria-selected') || '').toLowerCase();
+        const dataSelected = String(clickable.getAttribute('data-selected') || '').toLowerCase();
+        if (ariaSelected === 'true' || dataSelected === 'true') return;
 
-      for (const el of candidates) {
-        try {
-          const r = el.getBoundingClientRect();
-          if (r.width <= 0 || r.height <= 0) continue;
-          el.click();
-          break;
-        } catch (e) {
-          // ignore
-        }
+        clickable.click();
+      } catch (e) {
+        // ignore
       }
     };
 
@@ -587,19 +513,16 @@ async function applyMonitorUIRestrictions() {
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => {
-        window.applyMonitorUIRestrictions();
         allowUnreadOnly();
         setTimeout(clickUnread, 1200);
       });
     } else {
-      window.applyMonitorUIRestrictions();
       allowUnreadOnly();
       setTimeout(clickUnread, 1200);
     }
 
     setInterval(() => {
       try {
-        window.applyMonitorUIRestrictions();
         allowUnreadOnly();
         clickUnread();
       } catch (e) {
@@ -609,7 +532,6 @@ async function applyMonitorUIRestrictions() {
 
     const observer = new MutationObserver(() => {
       try {
-        window.applyMonitorUIRestrictions();
         clickUnread();
       } catch (e) {
         // ignore
@@ -638,9 +560,9 @@ export async function initMonitorWhatsApp() {
     '--disable-dev-tools',
   ];
 
-  // Opcional: abrir el monitor en modo app (sin barra de navegador/menús)
-  // Uso: npm run start -- --monitor-app
-  if (process.argv.includes('--monitor-app')) {
+  // Por defecto abrir el monitor en modo app (sin barra de navegador/menús)
+  // Para desactivarlo: npm run start -- --monitor-no-app
+  if (!process.argv.includes('--monitor-no-app')) {
     monitorArgs.push('--app=https://web.whatsapp.com');
   }
 
@@ -702,58 +624,11 @@ export async function initMonitorWhatsApp() {
   await monitorPage.addInitScript(() => {
     const boot = () => {
       try {
-        window.applyMonitorUIRestrictions = () => {
-          const styleId = 'monitor-dom-lock-style';
-          if (!document.getElementById(styleId)) {
-            const style = document.createElement('style');
-            style.id = styleId;
-            style.textContent = `
-              /*
-                IMPORTANTE:
-                No bloquear interacción mientras WhatsApp está cargando / sin sesión.
-                El bloqueo se activa solo cuando existe #side (sesión conectada)
-                poniendo la clase body.ana-monitor-locked.
-              */
-              body.ana-monitor-locked * { pointer-events: none !important; }
-              body.ana-monitor-locked * { user-select: none !important; -webkit-user-select: none !important; }
-
-              .ana-allow-unread,
-              .ana-allow-unread * { pointer-events: auto !important; }
-
-              #monitor-login-overlay,
-              #monitor-login-overlay * { pointer-events: auto !important; }
-
-              #monitor-login-overlay input,
-              #monitor-login-overlay textarea {
-                user-select: text !important;
-                -webkit-user-select: text !important;
-              }
-            `;
-            document.head.appendChild(style);
-          }
-
-          if (!document.getElementById('monitor-mode-indicator')) {
-            const indicator = document.createElement('div');
-            indicator.id = 'monitor-mode-indicator';
-            indicator.style.cssText = [
-              'position: fixed',
-              'top: 10px',
-              'right: 10px',
-              'background: rgba(255, 165, 0, 0.95)',
-              'color: white',
-              'padding: 10px 20px',
-              'border-radius: 10px',
-              'font-family: Arial, sans-serif',
-              'font-size: 14px',
-              'font-weight: bold',
-              'z-index: 2147483647',
-              'box-shadow: 0 2px 10px rgba(0,0,0,0.3)',
-            ].join(';');
-            indicator.textContent = '👀 Monitor - No leídos (Bloqueado)';
-            document.body.appendChild(indicator);
-          }
-        };
-
+        async function applyMonitorUIRestrictions() {
+          // Bloqueo UI del monitor deshabilitado temporalmente por estabilidad
+          // (primero asegurar overlay login + auto "No leídos")
+          return;
+        }
         const allowUnreadOnly = () => {
           try {
             document.querySelectorAll('.ana-allow-unread').forEach((el) => el.classList.remove('ana-allow-unread'));
@@ -779,14 +654,22 @@ export async function initMonitorWhatsApp() {
           allowUnreadOnly();
           try {
             const spans = Array.from(document.querySelectorAll('span'));
-            const target = spans.find((s) => {
+            const labelEl = spans.find((s) => {
               const t = (s.textContent || '').trim().toLowerCase();
               return t === 'no leídos' || t === 'no leidos' || t === 'unread';
             });
-            if (!target) return;
-            const clickable = target.closest('button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement;
-            if (clickable) clickable.click();
-            else target.click();
+            if (!labelEl) return;
+
+            const clickable =
+              labelEl.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') ||
+              labelEl.parentElement;
+            if (!clickable) return;
+
+            const ariaSelected = String(clickable.getAttribute('aria-selected') || '').toLowerCase();
+            const dataSelected = String(clickable.getAttribute('data-selected') || '').toLowerCase();
+            if (ariaSelected === 'true' || dataSelected === 'true') return;
+
+            clickable.click();
           } catch (e) {
             // ignore
           }
@@ -795,13 +678,10 @@ export async function initMonitorWhatsApp() {
         window.__anaAllowUnreadOnly = allowUnreadOnly;
         window.__anaClickUnread = clickUnread;
 
-        const updateLockState = () => {
+        const isConnected = () => {
           try {
-            const connected = Boolean(document.querySelector('#side, #pane-side'));
-            document.body.classList.toggle('ana-monitor-locked', connected);
-            return connected;
-          } catch (e) {
-            // ignore
+            return Boolean(document.querySelector('#side, #pane-side'));
+          } catch (_) {
             return false;
           }
         };
@@ -809,28 +689,23 @@ export async function initMonitorWhatsApp() {
         if (document.readyState === 'loading') {
           document.addEventListener('DOMContentLoaded', () => {
             try {
-              const connected = updateLockState();
-              if (connected) {
-                window.applyMonitorUIRestrictions?.();
-                allowUnreadOnly();
-                setTimeout(clickUnread, 1200);
-              }
+              if (!isConnected()) return;
+              allowUnreadOnly();
+              setTimeout(clickUnread, 1200);
             } catch (_) {}
           });
         } else {
-          const connected = updateLockState();
-          if (connected) {
-            window.applyMonitorUIRestrictions?.();
-            allowUnreadOnly();
-            setTimeout(clickUnread, 1200);
-          }
+          try {
+            if (isConnected()) {
+              allowUnreadOnly();
+              setTimeout(clickUnread, 1200);
+            }
+          } catch (_) {}
         }
 
         setInterval(() => {
           try {
-            const connected = updateLockState();
-            if (!connected) return;
-            window.applyMonitorUIRestrictions?.();
+            if (!isConnected()) return;
             allowUnreadOnly();
             clickUnread();
           } catch (_) {
@@ -840,9 +715,7 @@ export async function initMonitorWhatsApp() {
 
         const observer = new MutationObserver(() => {
           try {
-            const connected = updateLockState();
-            if (!connected) return;
-            window.applyMonitorUIRestrictions?.();
+            if (!isConnected()) return;
             allowUnreadOnly();
           } catch (_) {
             // ignore
@@ -863,8 +736,6 @@ export async function initMonitorWhatsApp() {
       // ignore
     }
   });
-
-  await applyMonitorUIRestrictions();
 
   // WhatsApp Web mantiene conexiones abiertas; 'networkidle' puede quedarse colgado.
   // Usar 'domcontentloaded' para evitar pantallas de carga eternas.
@@ -889,9 +760,6 @@ export async function initMonitorWhatsApp() {
     }
   }
 
-  // WhatsApp suele recargar el DOM tras navegar: reinyectar restricciones
-  await applyMonitorUIRestrictions();
-
   console.log('🔐 Validación de credenciales requerida (Monitor)...');
   console.log('📝 Ingresa usuario, campaña y palabra del día');
 
@@ -914,7 +782,6 @@ export async function initMonitorWhatsApp() {
       try {
         console.log(`⚠️  [Monitor] No cargó #side (intento ${attempt + 1}/3). Recargando...`);
         await monitorPage.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await applyMonitorUIRestrictions();
       } catch (_) {
         // ignore
       }
@@ -931,34 +798,38 @@ export async function initMonitorWhatsApp() {
   // (Después del login el DOM puede reiniciarse y los intervalos iniciales pueden no bastar.)
   for (let attempt = 0; attempt < 12; attempt++) {
     try {
-      const diag = await monitorPage.evaluate(() => {
-        try {
-          if (window.applyMonitorUIRestrictions) window.applyMonitorUIRestrictions();
-          if (window.__anaAllowUnreadOnly) window.__anaAllowUnreadOnly();
-
-          const spans = Array.from(document.querySelectorAll('span'));
-          const target = spans.find((s) => {
-            const t = (s.textContent || '').trim().toLowerCase();
-            return t === 'no leídos' || t === 'no leidos' || t === 'unread';
-          });
-
-          const clickable = target ? (target.closest('button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement) : null;
-          const canClick = Boolean(clickable);
-
-          if (window.__anaClickUnread) window.__anaClickUnread();
-
-          return {
-            foundUnread: Boolean(target),
-            canClick,
-            hasStyle: Boolean(document.getElementById('monitor-dom-lock-style')),
-          };
-        } catch (e) {
-          return { foundUnread: false, canClick: false, hasStyle: false, error: String(e?.message || e) };
-        }
+      const shouldPoll = await monitorPage.evaluate(() => {
+        const side = document.querySelector('#side, #pane-side');
+        return Boolean(side);
       });
 
-      if (attempt === 0 || attempt === 11) {
-        console.log(`[Monitor] clickUnread diag: ${JSON.stringify(diag)}`);
+      if (shouldPoll) {
+        const diag = await monitorPage.evaluate(() => {
+          try {
+            if (window.__anaAllowUnreadOnly) window.__anaAllowUnreadOnly();
+
+            const spans = Array.from(document.querySelectorAll('span'));
+            const target = spans.find((s) => {
+              const t = (s.textContent || '').trim().toLowerCase();
+              return t === 'no leídos' || t === 'no leidos' || t === 'unread';
+            });
+
+            const clickable = target ? (target.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement) : null;
+            const canClick = Boolean(clickable);
+
+            if (window.__anaClickUnread) window.__anaClickUnread();
+
+            return {
+              foundUnread: Boolean(target),
+              canClick,
+              targetText: target ? (target.textContent || '').trim() : null,
+            };
+          } catch (e) {
+            return { error: String(e && e.message ? e.message : e) };
+          }
+        });
+
+        console.log(`👀 [Monitor] clickUnread diag intento ${attempt + 1}/12:`, diag);
       }
     } catch (e) {
       // ignore
@@ -1015,15 +886,7 @@ export async function initMonitorWhatsApp() {
       return false;
     }, true);
 
-    if (window.applyMonitorUIRestrictions) window.applyMonitorUIRestrictions();
-  });
-
-  monitorPage.on('load', async () => {
-    try {
-      await applyMonitorUIRestrictions();
-    } catch (e) {
-      // ignore
-    }
+    // UI restrictions intentionally disabled for now
   });
 
   await monitorPage.waitForTimeout(2000);
