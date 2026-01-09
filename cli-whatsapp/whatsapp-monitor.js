@@ -443,11 +443,105 @@ async function monitorUnreadLoop() {
 }
 
 async function applyMonitorUIRestrictions() {
-  // Bloqueo UI del monitor deshabilitado temporalmente por estabilidad
-  // (primero asegurar overlay login + auto "No leídos")
   if (!monitorPage || monitorPage.isClosed()) return;
   await monitorPage.evaluate(() => {
-    window.applyMonitorUIRestrictions = () => {};
+    // Instalador de helpers de bloqueo. No se aplica automáticamente.
+    window.__anaEnableMonitorLock = () => {
+      try {
+        const styleId = 'ana-monitor-lock-style';
+        if (!document.getElementById(styleId)) {
+          const style = document.createElement('style');
+          style.id = styleId;
+          style.textContent = `
+            body.ana-monitor-hardlock {
+              user-select: none !important;
+              -webkit-user-select: none !important;
+            }
+
+            #ana-monitor-lock-overlay {
+              position: fixed;
+              inset: 0;
+              background: rgba(0, 0, 0, 0.10);
+              z-index: 2147483000;
+              pointer-events: auto !important;
+              cursor: not-allowed;
+            }
+
+            #monitor-login-overlay,
+            #monitor-login-overlay * {
+              pointer-events: auto !important;
+              user-select: text !important;
+              -webkit-user-select: text !important;
+              z-index: 2147483647 !important;
+            }
+          `;
+          document.head.appendChild(style);
+        }
+
+        document.body.classList.add('ana-monitor-hardlock');
+
+        // Overlay real para capturar clicks (más confiable que solo CSS)
+        if (!document.getElementById('ana-monitor-lock-overlay')) {
+          const ov = document.createElement('div');
+          ov.id = 'ana-monitor-lock-overlay';
+          ov.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }, true);
+          ov.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }, true);
+          ov.addEventListener('mouseup', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }, true);
+          ov.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }, true);
+          ov.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }, true);
+          ov.addEventListener('pointerup', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          }, true);
+          document.body.appendChild(ov);
+        }
+
+        window.__anaMonitorLocked = true;
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    window.__anaDisableMonitorLock = () => {
+      try {
+        document.body.classList.remove('ana-monitor-hardlock');
+        const ov = document.getElementById('ana-monitor-lock-overlay');
+        if (ov) ov.remove();
+        window.__anaMonitorLocked = false;
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    // Back-compat: código viejo puede llamar esto
+    window.applyMonitorUIRestrictions = () => {
+      try {
+        if (window.__anaMonitorLocked && window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
+      } catch (e) {
+        // ignore
+      }
+    };
 
     const allowUnreadOnly = () => {
       try {
@@ -768,6 +862,9 @@ export async function initMonitorWhatsApp() {
     }
   });
 
+  // Instalar helpers de No-leídos y de bloqueo (pero NO bloquear todavía)
+  await applyMonitorUIRestrictions();
+
   // WhatsApp Web mantiene conexiones abiertas; 'networkidle' puede quedarse colgado.
   // Usar 'domcontentloaded' para evitar pantallas de carga eternas.
   await monitorPage.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -789,6 +886,22 @@ export async function initMonitorWhatsApp() {
         }
       }
     }
+  }
+
+  // Fallback final: si ya estamos en UI y ya intentamos seleccionar "No leídos", bloquear de todas formas.
+  // (En algunos builds no hay señal confiable de seleccionado.)
+  try {
+    await monitorPage.evaluate(() => {
+      try {
+        window.__anaMonitorLocked = true;
+        if (window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
+      } catch (e) {
+        // ignore
+      }
+    });
+    console.log('🔒 [Monitor] Bloqueo activado (fallback final)');
+  } catch (e) {
+    // ignore
   }
 
   console.log('🔐 Validación de credenciales requerida (Monitor)...');
@@ -833,6 +946,23 @@ export async function initMonitorWhatsApp() {
     await unreadTab.click({ timeout: 5000 });
     const selected = await unreadTab.getAttribute('aria-selected');
     console.log(`👀 [Monitor] Playwright click tab No leídos aria-selected=${selected}`);
+
+    // En algunos builds el tab no expone aria-selected; si el click no lanza error,
+    // asumimos que el filtro cambió y activamos bloqueo.
+    try {
+      await monitorPage.waitForTimeout(700);
+    } catch (_) {
+      // ignore
+    }
+    await monitorPage.evaluate(() => {
+      try {
+        window.__anaMonitorLocked = true;
+        if (window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
+      } catch (e) {
+        // ignore
+      }
+    });
+    console.log('🔒 [Monitor] Bloqueo activado (solo observación)');
   } catch (e) {
     // ignore
   }
@@ -860,14 +990,24 @@ export async function initMonitorWhatsApp() {
             const clickable = target ? (target.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement) : null;
             const canClick = Boolean(clickable);
 
-            const ariaSelected = clickable ? String(clickable.getAttribute('aria-selected') || '') : '';
-
             if (window.__anaClickUnread) window.__anaClickUnread();
+
+            const ariaSelectedAfter = clickable ? String(clickable.getAttribute('aria-selected') || '') : '';
+
+            // Si ya quedó seleccionado, activar bloqueo (si aún no estaba)
+            if (String(ariaSelectedAfter || '').toLowerCase() === 'true') {
+              try {
+                window.__anaMonitorLocked = true;
+                if (window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
+              } catch (e) {
+                // ignore
+              }
+            }
 
             return {
               foundUnread: Boolean(target),
               canClick,
-              ariaSelected,
+              ariaSelected: ariaSelectedAfter,
               targetText: target ? (target.textContent || '').trim() : null,
             };
           } catch (e) {
