@@ -501,7 +501,38 @@ async function applyMonitorUIRestrictions() {
         const dataSelected = String(clickable.getAttribute('data-selected') || '').toLowerCase();
         if (ariaSelected === 'true' || dataSelected === 'true') return;
 
-        clickable.click();
+        try {
+          clickable.scrollIntoView({ block: 'center', inline: 'center' });
+        } catch (_) {
+          // ignore
+        }
+
+        const fire = (type) => {
+          try {
+            clickable.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse' }));
+          } catch (_) {
+            // ignore
+          }
+          try {
+            clickable.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true }));
+          } catch (_) {
+            // ignore
+          }
+        };
+
+        // Secuencia completa: WhatsApp a veces ignora el .click() si no hubo pointer events
+        fire('pointerdown');
+        fire('mousedown');
+        fire('mouseup');
+        fire('pointerup');
+        fire('click');
+
+        // Fallback final
+        try {
+          clickable.click();
+        } catch (_) {
+          // ignore
+        }
       } catch (e) {
         // ignore
       }
@@ -794,6 +825,18 @@ export async function initMonitorWhatsApp() {
 
   console.log('✅ WhatsApp Web (Monitor) conectado - Ventana lista!');
 
+  // Fallback fuerte: click real con Playwright al tab "No leídos" si existe.
+  // (Hay builds de WhatsApp que ignoran element.click()/dispatchEvent)
+  try {
+    const unreadTab = monitorPage.getByRole('tab', { name: /no le[ií]dos|unread/i }).first();
+    await unreadTab.waitFor({ timeout: 5000 });
+    await unreadTab.click({ timeout: 5000 });
+    const selected = await unreadTab.getAttribute('aria-selected');
+    console.log(`👀 [Monitor] Playwright click tab No leídos aria-selected=${selected}`);
+  } catch (e) {
+    // ignore
+  }
+
   // Forzar navegación al filtro de "No leídos/Unread" una vez que la sesión ya está conectada.
   // (Después del login el DOM puede reiniciarse y los intervalos iniciales pueden no bastar.)
   for (let attempt = 0; attempt < 12; attempt++) {
@@ -817,11 +860,14 @@ export async function initMonitorWhatsApp() {
             const clickable = target ? (target.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement) : null;
             const canClick = Boolean(clickable);
 
+            const ariaSelected = clickable ? String(clickable.getAttribute('aria-selected') || '') : '';
+
             if (window.__anaClickUnread) window.__anaClickUnread();
 
             return {
               foundUnread: Boolean(target),
               canClick,
+              ariaSelected,
               targetText: target ? (target.textContent || '').trim() : null,
             };
           } catch (e) {
