@@ -274,6 +274,15 @@ async function getCampaignNameForInteractions() {
   return rawCampaign.includes('-') ? rawCampaign.split('-').slice(1).join('-') : rawCampaign;
 }
 
+async function getGestionDataFromBackendForMonitor(campaignName, phoneDigits) {
+  const phoneE164 = normalizePhoneForBackend(phoneDigits);
+  const [resultCodes, clientInfo] = await Promise.all([
+    fetchResultCodesFromBackend(campaignName),
+    searchClientInfoByPhone(campaignName, phoneE164),
+  ]);
+  return { resultCodes, clientInfo, campaignName, phoneE164 };
+}
+
 async function pickFirstUnreadChatCandidate() {
   if (!monitorPage || monitorPage.isClosed()) return null;
   try {
@@ -297,11 +306,34 @@ async function pickFirstUnreadChatCandidate() {
       };
 
       const rows = Array.from(document.querySelectorAll('#pane-side [role="row"], #pane-side [role="listitem"]'));
-      for (const row of rows) {
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
         if (!matchesUnread(row)) continue;
 
-        const dataId = row.getAttribute('data-id') || '';
-        if (!dataId) continue;
+        // En builds nuevos, el data-id no siempre está en el nodo role=row, sino en un descendiente.
+        const dataEl = row.matches('[data-id]') ? row : row.querySelector('[data-id]');
+        const dataId = (dataEl && dataEl.getAttribute('data-id')) ? String(dataEl.getAttribute('data-id')) : '';
+
+        // Fallback: si no hay data-id, usar un "phone hint" visible (título del chat / número)
+        // Ej: <span title="+52 1 55 1302 3544">...
+        let phoneHint = '';
+        try {
+          const phoneSpan = row.querySelector('span[title]');
+          const t = phoneSpan ? String(phoneSpan.getAttribute('title') || '') : '';
+          if (t) phoneHint = t;
+        } catch (_) {
+          // ignore
+        }
+        if (!phoneHint) {
+          try {
+            const txt = (row.textContent || '').trim();
+            phoneHint = txt;
+          } catch (_) {
+            // ignore
+          }
+        }
+
+        if (!dataId && !phoneHint) continue;
 
         try {
           row.scrollIntoView({ block: 'center' });
@@ -310,13 +342,14 @@ async function pickFirstUnreadChatCandidate() {
           // ignore
         }
 
-        return { dataId };
+        const key = dataId || phoneHint || String(idx);
+        return { dataId, phoneHint, key };
       }
 
       return null;
     });
 
-    if (!candidate?.dataId) return null;
+    if (!candidate?.key) return null;
     return candidate;
   } catch (e) {
     return null;
@@ -356,30 +389,23 @@ async function monitorUnreadLoop() {
     }
 
     const campaignName = await getCampaignNameForInteractions();
-    const candidate = await monitorPage.evaluate(() => {
+    const candidate = await pickFirstUnreadChatCandidate();
+
+    if (!candidate?.key) {
       try {
-        const rows = Array.from(document.querySelectorAll('#pane-side [role="row"], #pane-side [role="listitem"]'));
-        const first = rows[0];
-        if (!first) return null;
-        const dataId = first.getAttribute('data-id') || '';
-        if (!dataId) return null;
-        try {
-          first.scrollIntoView({ block: 'center' });
-          first.click();
-        } catch (e) {
-          // ignore
+        if (!monitorPage.isClosed()) {
+          console.log('👀 [Monitor] Sin chats no leídos detectables en este momento.');
         }
-        return { dataId };
       } catch (e) {
-        return null;
+        // ignore
       }
-    });
+      return;
+    }
 
-    if (!candidate?.dataId) return;
-    if (candidate.dataId === lastFirstChatDataId) return;
-    lastFirstChatDataId = candidate.dataId;
+    if (candidate.key === lastFirstChatDataId) return;
+    lastFirstChatDataId = candidate.key;
 
-    const phoneRaw = parsePhoneFromDataId(candidate.dataId);
+    const phoneRaw = candidate.dataId ? parsePhoneFromDataId(candidate.dataId) : String(candidate.phoneHint || '');
     const phoneE164 = normalizePhoneForBackend(phoneRaw);
     const phoneDigits = String(phoneE164 || '').replace(/\D/g, '');
     const phone10 = phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
@@ -387,8 +413,9 @@ async function monitorUnreadLoop() {
 
     if (processedPhones.has(phone10)) return;
 
-    const clientInfo = await searchClientInfoByPhone(campaignName, phoneE164);
-    const first = Array.isArray(clientInfo) ? clientInfo[0] : null;
+    const gestionData = await getGestionDataFromBackendForMonitor(campaignName, phoneDigits);
+    const clientInfo = Array.isArray(gestionData?.clientInfo) ? gestionData.clientInfo : [];
+    const first = clientInfo[0] || null;
     const creditId = first?.credit_info?.credit_id || '';
     if (!creditId) {
       processedPhones.add(phone10);
@@ -431,12 +458,34 @@ async function monitorUnreadLoop() {
     if (interactionRes?.ok) {
       processedPhones.add(phone10);
       console.log(`✅ [Monitor] Interacción enviada (${phoneE164}) subdictamen='${subdictamen}' credit_id='${creditId}'`);
+      try {
+        await monitorPage.evaluate((p, c) => {
+          try {
+            if (window.__anaMonitorToast) window.__anaMonitorToast(`✅ Interacción enviada: ${p} (credit_id ${c})`);
+          } catch (e) {
+            // ignore
+          }
+        }, phoneE164, creditId);
+      } catch (e) {
+        // ignore
+      }
     } else {
       console.error(`❌ [Monitor] Interacción NO enviada (${phoneE164}) subdictamen='${subdictamen}' credit_id='${creditId}'`);
-      if (interactionRes?.status) console.error(`   Status: ${interactionRes.status}`);
-      if (interactionRes?.body) console.error(`   Body: ${JSON.stringify(interactionRes.body)}`);
-      if (interactionRes?.error) console.error(`   Error: ${interactionRes.error}`);
+      try {
+        await monitorPage.evaluate((p) => {
+          try {
+            if (window.__anaMonitorToast) window.__anaMonitorToast(`❌ Interacción NO enviada: ${p}`);
+          } catch (e) {
+            // ignore
+          }
+        }, phoneE164);
+      } catch (e) {
+        // ignore
+      }
     }
+    if (interactionRes?.status) console.error(`   Status: ${interactionRes.status}`);
+    if (interactionRes?.body) console.error(`   Body: ${JSON.stringify(interactionRes.body)}`);
+    if (interactionRes?.error) console.error(`   Error: ${interactionRes.error}`);
   } finally {
     monitorBusy = false;
   }
@@ -448,6 +497,53 @@ async function applyMonitorUIRestrictions() {
     // Instalador de helpers de bloqueo. No se aplica automáticamente.
     window.__anaEnableMonitorLock = () => {
       try {
+        const ensureOverlay = () => {
+          try {
+            let ov = document.getElementById('ana-monitor-lock-overlay');
+            if (!ov) {
+              ov = document.createElement('div');
+              ov.id = 'ana-monitor-lock-overlay';
+              try {
+                ov.style.position = 'fixed';
+                ov.style.inset = '0';
+                ov.style.background = 'rgba(0, 0, 0, 0.20)';
+                ov.style.zIndex = '2147483646';
+                ov.style.pointerEvents = 'auto';
+                ov.style.cursor = 'not-allowed';
+                ov.style.display = 'block';
+                ov.style.visibility = 'visible';
+                ov.style.opacity = '1';
+              } catch (_) {
+                // ignore
+              }
+
+              const stop = (e) => {
+                try {
+                  e.preventDefault();
+                  e.stopPropagation();
+                } catch (_) {
+                  // ignore
+                }
+                return false;
+              };
+
+              ov.addEventListener('contextmenu', stop, true);
+              ov.addEventListener('mousedown', stop, true);
+              ov.addEventListener('mouseup', stop, true);
+              ov.addEventListener('click', stop, true);
+              ov.addEventListener('pointerdown', stop, true);
+              ov.addEventListener('pointerup', stop, true);
+
+              // Insertar dentro del body para asegurar render (algunos builds ignoran hijos directos de <html>)
+              // Fallback a <html> si body no está disponible.
+              (document.body || document.documentElement).appendChild(ov);
+            }
+            return ov;
+          } catch (e) {
+            return null;
+          }
+        };
+
         const styleId = 'ana-monitor-lock-style';
         if (!document.getElementById(styleId)) {
           const style = document.createElement('style');
@@ -461,10 +557,13 @@ async function applyMonitorUIRestrictions() {
             #ana-monitor-lock-overlay {
               position: fixed;
               inset: 0;
-              background: rgba(0, 0, 0, 0.10);
-              z-index: 2147483000;
+              background: rgba(0, 0, 0, 0.20);
+              z-index: 2147483646;
               pointer-events: auto !important;
               cursor: not-allowed;
+              display: block !important;
+              visibility: visible !important;
+              opacity: 1 !important;
             }
 
             #monitor-login-overlay,
@@ -480,44 +579,25 @@ async function applyMonitorUIRestrictions() {
 
         document.body.classList.add('ana-monitor-hardlock');
 
-        // Overlay real para capturar clicks (más confiable que solo CSS)
-        if (!document.getElementById('ana-monitor-lock-overlay')) {
-          const ov = document.createElement('div');
-          ov.id = 'ana-monitor-lock-overlay';
-          ov.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }, true);
-          ov.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }, true);
-          ov.addEventListener('mouseup', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }, true);
-          ov.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }, true);
-          ov.addEventListener('pointerdown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }, true);
-          ov.addEventListener('pointerup', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-          }, true);
-          document.body.appendChild(ov);
-        }
+        ensureOverlay();
 
         window.__anaMonitorLocked = true;
+
+        // Watchdog: si WhatsApp tumba el overlay, lo recreamos
+        try {
+          if (!window.__anaMonitorLockWatchdog) {
+            window.__anaMonitorLockWatchdog = setInterval(() => {
+              try {
+                if (!window.__anaMonitorLocked) return;
+                ensureOverlay();
+              } catch (_) {
+                // ignore
+              }
+            }, 750);
+          }
+        } catch (_) {
+          // ignore
+        }
       } catch (e) {
         // ignore
       }
@@ -528,7 +608,70 @@ async function applyMonitorUIRestrictions() {
         document.body.classList.remove('ana-monitor-hardlock');
         const ov = document.getElementById('ana-monitor-lock-overlay');
         if (ov) ov.remove();
+        try {
+          if (window.__anaMonitorLockWatchdog) {
+            clearInterval(window.__anaMonitorLockWatchdog);
+            window.__anaMonitorLockWatchdog = null;
+          }
+        } catch (_) {
+          // ignore
+        }
         window.__anaMonitorLocked = false;
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    window.__anaMonitorToast = (message) => {
+      try {
+        const id = 'ana-monitor-toast';
+        const existing = document.getElementById(id);
+        if (existing) existing.remove();
+
+        const el = document.createElement('div');
+        el.id = id;
+        el.style.cssText = [
+          'position: fixed',
+          'bottom: 18px',
+          'right: 18px',
+          'max-width: 520px',
+          'background: rgba(0, 0, 0, 0.82)',
+          'color: #fff',
+          'padding: 12px 14px',
+          'border-radius: 10px',
+          'font-family: Arial, sans-serif',
+          'font-size: 13px',
+          'line-height: 1.35',
+          'z-index: 2147483647',
+          'box-shadow: 0 6px 22px rgba(0,0,0,0.35)',
+          'border: 1px solid rgba(255,255,255,0.15)',
+          'pointer-events: none',
+          'opacity: 0',
+          'transform: translateY(6px)',
+          'transition: opacity 160ms ease, transform 160ms ease',
+        ].join(';');
+        el.textContent = String(message || '');
+        document.body.appendChild(el);
+
+        setTimeout(() => {
+          try {
+            el.style.opacity = '1';
+            el.style.transform = 'translateY(0px)';
+          } catch (_) {}
+        }, 10);
+
+        setTimeout(() => {
+          try {
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(6px)';
+          } catch (_) {}
+        }, 3500);
+
+        setTimeout(() => {
+          try {
+            el.remove();
+          } catch (_) {}
+        }, 4200);
       } catch (e) {
         // ignore
       }
@@ -700,170 +843,235 @@ export async function initMonitorWhatsApp() {
 
   monitorPage = monitorBrowser.pages()[0] || await monitorBrowser.newPage();
 
-  await monitorPage.addInitScript(() => {
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'F12') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.ctrlKey && e.shiftKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.metaKey && e.altKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.metaKey && e.altKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.metaKey && e.altKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    }, true);
-
-    document.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }, true);
-  });
-
-  await monitorPage.addInitScript(() => {
-    const boot = () => {
-      try {
-        async function applyMonitorUIRestrictions() {
-          // Bloqueo UI del monitor deshabilitado temporalmente por estabilidad
-          // (primero asegurar overlay login + auto "No leídos")
-          return;
+  const installMonitorPageScripts = async () => {
+    await monitorPage.addInitScript(() => {
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'F12') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
         }
-        const allowUnreadOnly = () => {
-          try {
-            document.querySelectorAll('.ana-allow-unread').forEach((el) => el.classList.remove('ana-allow-unread'));
-            const spans = Array.from(document.querySelectorAll('span'));
-            const target = spans.find((s) => {
-              const t = (s.textContent || '').trim().toLowerCase();
-              return t === 'no leídos' || t === 'no leidos' || t === 'unread';
-            });
-            if (!target) return;
-            target.classList.add('ana-allow-unread');
-            const clickable = target.closest('button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement;
-            if (clickable) {
-              clickable.classList.add('ana-allow-unread');
-              try { clickable.style.cursor = 'pointer'; } catch (_) {}
+        if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'J') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.metaKey && e.altKey && e.key === 'I') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.metaKey && e.altKey && e.key === 'J') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        if (e.metaKey && e.altKey && e.key === 'C') {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+      }, true);
+
+      document.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }, true);
+    });
+
+    await monitorPage.addInitScript(() => {
+      const boot = () => {
+        try {
+          const allowUnreadOnly = () => {
+            try {
+              document.querySelectorAll('.ana-allow-unread').forEach((el) => el.classList.remove('ana-allow-unread'));
+              const spans = Array.from(document.querySelectorAll('span'));
+              const target = spans.find((s) => {
+                const t = (s.textContent || '').trim().toLowerCase();
+                return t === 'no leídos' || t === 'no leidos' || t === 'unread';
+              });
+              if (!target) return;
+              target.classList.add('ana-allow-unread');
+              const clickable = target.closest('button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement;
+              if (clickable) {
+                clickable.classList.add('ana-allow-unread');
+                try { clickable.style.cursor = 'pointer'; } catch (_) {}
+              }
+            } catch (e) {
+              // ignore
             }
-          } catch (e) {
-            // ignore
-          }
-        };
+          };
 
-        const clickUnread = () => {
-          if (document.getElementById('monitor-login-overlay')) return;
-          allowUnreadOnly();
-          try {
-            const spans = Array.from(document.querySelectorAll('span'));
-            const labelEl = spans.find((s) => {
-              const t = (s.textContent || '').trim().toLowerCase();
-              return t === 'no leídos' || t === 'no leidos' || t === 'unread';
+          const clickUnread = () => {
+            if (document.getElementById('monitor-login-overlay')) return;
+            allowUnreadOnly();
+            try {
+              const spans = Array.from(document.querySelectorAll('span'));
+              const labelEl = spans.find((s) => {
+                const t = (s.textContent || '').trim().toLowerCase();
+                return t === 'no leídos' || t === 'no leidos' || t === 'unread';
+              });
+              if (!labelEl) return;
+
+              const clickable =
+                labelEl.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') ||
+                labelEl.parentElement;
+              if (!clickable) return;
+
+              const ariaSelected = String(clickable.getAttribute('aria-selected') || '').toLowerCase();
+              const dataSelected = String(clickable.getAttribute('data-selected') || '').toLowerCase();
+              if (ariaSelected === 'true' || dataSelected === 'true') return;
+
+              clickable.click();
+            } catch (e) {
+              // ignore
+            }
+          };
+
+          window.__anaAllowUnreadOnly = allowUnreadOnly;
+          window.__anaClickUnread = clickUnread;
+
+          const isConnected = () => {
+            try {
+              return Boolean(document.querySelector('#side, #pane-side'));
+            } catch (_) {
+              return false;
+            }
+          };
+
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+              try {
+                if (!isConnected()) return;
+                allowUnreadOnly();
+                setTimeout(clickUnread, 1200);
+              } catch (_) {}
             });
-            if (!labelEl) return;
-
-            const clickable =
-              labelEl.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') ||
-              labelEl.parentElement;
-            if (!clickable) return;
-
-            const ariaSelected = String(clickable.getAttribute('aria-selected') || '').toLowerCase();
-            const dataSelected = String(clickable.getAttribute('data-selected') || '').toLowerCase();
-            if (ariaSelected === 'true' || dataSelected === 'true') return;
-
-            clickable.click();
-          } catch (e) {
-            // ignore
+          } else {
+            try {
+              if (isConnected()) {
+                allowUnreadOnly();
+                setTimeout(clickUnread, 1200);
+              }
+            } catch (_) {}
           }
-        };
 
-        window.__anaAllowUnreadOnly = allowUnreadOnly;
-        window.__anaClickUnread = clickUnread;
-
-        const isConnected = () => {
-          try {
-            return Boolean(document.querySelector('#side, #pane-side'));
-          } catch (_) {
-            return false;
-          }
-        };
-
-        if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', () => {
+          setInterval(() => {
             try {
               if (!isConnected()) return;
               allowUnreadOnly();
-              setTimeout(clickUnread, 1200);
-            } catch (_) {}
-          });
-        } else {
-          try {
-            if (isConnected()) {
-              allowUnreadOnly();
-              setTimeout(clickUnread, 1200);
+              clickUnread();
+            } catch (_) {
+              // ignore
             }
-          } catch (_) {}
-        }
+          }, 1500);
 
-        setInterval(() => {
-          try {
-            if (!isConnected()) return;
-            allowUnreadOnly();
-            clickUnread();
-          } catch (_) {
-            // ignore
+          const observer = new MutationObserver(() => {
+            try {
+              if (!isConnected()) return;
+              allowUnreadOnly();
+            } catch (_) {
+              // ignore
+            }
+          });
+
+          if (document.documentElement) {
+            observer.observe(document.documentElement, { childList: true, subtree: true });
           }
-        }, 1500);
+        } catch (e) {
+          // ignore
+        }
+      };
 
-        const observer = new MutationObserver(() => {
+      try {
+        boot();
+      } catch (e) {
+        // ignore
+      }
+    });
+  };
+
+  const attachMonitorLoadHandler = () => {
+    // Si el DOM recarga/navega, re-instalar helpers (toast/lock/unread) y re-aplicar lock si ya estaba activado
+    monitorPage.on('load', async () => {
+      try {
+        await applyMonitorUIRestrictions();
+        await monitorPage.evaluate(() => {
           try {
-            if (!isConnected()) return;
-            allowUnreadOnly();
-          } catch (_) {
+            if (window.__anaMonitorLocked && window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
+          } catch (e) {
             // ignore
           }
         });
-
-        if (document.documentElement) {
-          observer.observe(document.documentElement, { childList: true, subtree: true });
-        }
       } catch (e) {
         // ignore
+      }
+    });
+  };
+
+  const hardReloadMonitor = async (label) => {
+    const runWithTimeout = async (p, ms) => {
+      return await Promise.race([
+        p,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout ${ms}ms`)), ms)),
+      ]);
+    };
+
+    const tryGoto = async (url) => {
+      try {
+        await runWithTimeout(monitorPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }), 65000);
+        return true;
+      } catch (e) {
+        return false;
       }
     };
 
     try {
-      boot();
+      console.log(`⚠️  [Monitor] Hard reload (${label})...`);
+    } catch (_) {
+      // ignore
+    }
+
+    // 1) salto a about:blank + regreso
+    const blankOk = await tryGoto('about:blank');
+    const waOk = await tryGoto('https://web.whatsapp.com');
+    if (blankOk && waOk) return;
+
+    // 2) fallback: nueva page dentro del mismo contexto
+    try {
+      const old = monitorPage;
+      monitorPage = await monitorBrowser.newPage();
+      await installMonitorPageScripts();
+      await applyMonitorUIRestrictions();
+      attachMonitorLoadHandler();
+      await tryGoto('https://web.whatsapp.com');
+      try {
+        await old.close();
+      } catch (_) {
+        // ignore
+      }
     } catch (e) {
       // ignore
     }
-  });
+  };
+
+  monitorPage = monitorBrowser.pages()[0] || await monitorBrowser.newPage();
+  await installMonitorPageScripts();
 
   // Instalar helpers de No-leídos y de bloqueo (pero NO bloquear todavía)
   await applyMonitorUIRestrictions();
+  attachMonitorLoadHandler();
 
   // WhatsApp Web mantiene conexiones abiertas; 'networkidle' puede quedarse colgado.
   // Usar 'domcontentloaded' para evitar pantallas de carga eternas.
@@ -876,15 +1084,7 @@ export async function initMonitorWhatsApp() {
       break;
     } catch (e) {
       console.log(`⚠️  [Monitor] WhatsApp quedó en carga (sin sidebar/QR). Recargando (${attempt + 1}/3)...`);
-      try {
-        await monitorPage.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
-      } catch (_) {
-        try {
-          await monitorPage.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
-        } catch (_) {
-          // ignore
-        }
-      }
+      await hardReloadMonitor(`splash ${attempt + 1}/3`);
     }
   }
 
@@ -925,7 +1125,7 @@ export async function initMonitorWhatsApp() {
     } catch (e) {
       try {
         console.log(`⚠️  [Monitor] No cargó #side (intento ${attempt + 1}/3). Recargando...`);
-        await monitorPage.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await hardReloadMonitor(`no-side ${attempt + 1}/3`);
       } catch (_) {
         // ignore
       }
@@ -963,6 +1163,32 @@ export async function initMonitorWhatsApp() {
       }
     });
     console.log('🔒 [Monitor] Bloqueo activado (solo observación)');
+
+    // Diagnóstico breve para validar overlay visible
+    try {
+      const lockDiag = await monitorPage.evaluate(() => {
+        try {
+          const ov = document.getElementById('ana-monitor-lock-overlay');
+          if (!ov) return { exists: false };
+          const cs = window.getComputedStyle(ov);
+          const r = ov.getBoundingClientRect();
+          return {
+            exists: true,
+            bg: cs.backgroundColor,
+            opacity: cs.opacity,
+            pe: cs.pointerEvents,
+            z: cs.zIndex,
+            w: r.width,
+            h: r.height,
+          };
+        } catch (e) {
+          return { exists: false, error: String(e && e.message ? e.message : e) };
+        }
+      });
+      console.log('👀 [Monitor] Lock overlay diag:', lockDiag);
+    } catch (e) {
+      // ignore
+    }
   } catch (e) {
     // ignore
   }
@@ -1086,8 +1312,17 @@ export async function initMonitorWhatsApp() {
     }
   }
   monitorLoopInterval = setInterval(() => {
+    try {
+      const ts = new Date();
+      const hh = String(ts.getHours()).padStart(2, '0');
+      const mm = String(ts.getMinutes()).padStart(2, '0');
+      const ss = String(ts.getSeconds()).padStart(2, '0');
+      console.log(`👀 [Monitor] Poll tick ${hh}:${mm}:${ss}`);
+    } catch (e) {
+      // ignore
+    }
     monitorUnreadLoop().catch(() => null);
-  }, 2500);
+  }, 5000);
 }
 
 export async function closeMonitorBrowser() {
