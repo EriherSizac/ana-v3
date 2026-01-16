@@ -249,6 +249,9 @@ async function main() {
   if (process.argv.includes('--reset-monitor-session')) {
     safeResetDir(CONFIG.monitorSessionPath, 'Monitor Session');
   }
+  if (process.argv.includes('--reset-monitor-alt-session')) {
+    safeResetDir(`${CONFIG.monitorSessionPath}-alt`, 'Monitor Alt Session');
+  }
   if (process.argv.includes('--reset-manual-session')) {
     safeResetDir(CONFIG.manualSessionPath, 'Manual Session');
   }
@@ -373,8 +376,8 @@ async function main() {
       }
 
       const POLL_INTERVAL_MS = 30 * 1000;
-      const PAUSE_AFTER_MESSAGES = 40;
-      const PAUSE_DURATION_MS = 20 * 60 * 1000;
+      const PAUSE_AFTER_MESSAGES = 15;
+      const PAUSE_DURATION_MS = 30 * 60 * 1000;
 
       const results = [];
       const page = getPage();

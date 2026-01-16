@@ -24,11 +24,16 @@ export function normalizePhoneForBackend(rawPhone) {
   const digits = String(rawPhone || '').replace(/\D/g, '');
   if (!digits) return '';
 
+  // Teléfono de 10 dígitos (México sin código de país): +52 + 10 dígitos
   if (digits.length === 10) return `+52${digits}`;
-  if (digits.length === 11 && digits.startsWith('52')) return `+${digits}`;
-  if (digits.startsWith('521') && digits.length >= 13) return `+52${digits.slice(3)}`;
-  if (digits.startsWith('52')) return `+${digits}`;
-
+  
+  // Si empieza con 521 y tiene 13 dígitos, remover el 1: +52 + 10 dígitos
+  if (digits.startsWith('521') && digits.length === 13) return `+52${digits.slice(3)}`;
+  
+  // Si empieza con 52 y tiene 12 dígitos, ya está correcto
+  if (digits.startsWith('52') && digits.length === 12) return `+${digits}`;
+  
+  // Otros casos: agregar + si no lo tiene
   return digits.startsWith('+') ? digits : `+${digits}`;
 }
 
@@ -37,8 +42,11 @@ export async function searchClientInfoByPhone(campaignName, phoneE164) {
   try {
     const payload = {
       campaign_name: String(campaignName || ''),
-      phone_number: String(phoneE164 || ''),
+      search_type: 'Telefono',
+      search_value: String(phoneE164 || ''),
     };
+
+    console.log('[searchClientInfoByPhone] Request:', { url, payload });
 
     const response = await fetch(url, {
       method: 'POST',
@@ -51,6 +59,13 @@ export async function searchClientInfoByPhone(campaignName, phoneE164) {
     const rawText = await response.text().catch(() => '');
     const data = rawText ? JSON.parse(rawText) : {};
     const result = Array.isArray(data.result) ? data.result : [];
+    
+    console.log('[searchClientInfoByPhone] Response:', { 
+      status: response.status, 
+      ok: response.ok,
+      resultLength: result.length 
+    });
+    
     if (!response.ok) return [];
     return result;
   } catch (error) {

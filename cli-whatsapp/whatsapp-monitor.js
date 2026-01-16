@@ -1,14 +1,29 @@
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
-import { loadAgentConfig, saveAgentConfig, insertInteractions, normalizePhoneForBackend, searchClientInfoByPhone } from './agent-config.js';
+import {
+  loadAgentConfig,
+  saveAgentConfig,
+  insertInteractions,
+  normalizePhoneForBackend,
+  searchClientInfoByPhone,
+  INTERACTIONS_API_BASE_URL,
+} from './agent-config.js';
+
+let cachedResultCodesByCampaign = new Map();
 
 let monitorBrowser = null;
+let monitorPwBrowser = null;
+let monitorContext = null;
 let monitorPage = null;
+
 let processedPhones = new Set();
 let monitorLoopInterval = null;
 let monitorBusy = false;
 let lastFirstChatDataId = '';
 
+/**
+ * LOGIN OVERLAY (igual que el tuyo, solo le dejo guard rails)
+ */
 async function showMonitorLoginOverlay(requireAll = true) {
   return new Promise(async (resolve) => {
     const savedConfig = loadAgentConfig();
@@ -28,7 +43,7 @@ async function showMonitorLoginOverlay(requireAll = true) {
         width: 100%;
         height: 100%;
         background: rgba(0, 0, 0, 0.95);
-        z-index: 9999999;
+        z-index: 2147483647;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -36,7 +51,8 @@ async function showMonitorLoginOverlay(requireAll = true) {
         color: white;
       `;
 
-      const userField = requireAll ? `
+      const userField = requireAll
+        ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
           <input type="text" id="monitor-login-user" value="${savedUser || ''}" placeholder="ej: erick" style="
@@ -52,9 +68,11 @@ async function showMonitorLoginOverlay(requireAll = true) {
             transition: border-color 0.3s;
           " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
         </div>
-      ` : '';
+      `
+        : '';
 
-      const campaignField = requireAll ? `
+      const campaignField = requireAll
+        ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
           <input type="text" id="monitor-login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" style="
@@ -70,7 +88,8 @@ async function showMonitorLoginOverlay(requireAll = true) {
             transition: border-color 0.3s;
           " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
         </div>
-      ` : `
+      `
+        : `
         <div style="margin-bottom: 20px; text-align: left;">
           <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
           <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
@@ -80,7 +99,9 @@ async function showMonitorLoginOverlay(requireAll = true) {
       overlay.innerHTML = `
         <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid #25D366; min-width: 400px;">
           <div style="font-size: 60px; margin-bottom: 20px;">🔐</div>
-          <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">${requireAll ? 'Iniciar Sesión (Monitor)' : 'Verificación Diaria'}</h1>
+          <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">${
+            requireAll ? 'Iniciar Sesión (Monitor)' : 'Verificación Diaria'
+          }</h1>
           <p style="margin: 0 0 30px 0; font-size: 14px; opacity: 0.7;">Ventana de monitoreo (No leídos)</p>
 
           ${userField}
@@ -125,23 +146,24 @@ async function showMonitorLoginOverlay(requireAll = true) {
       document.body.appendChild(overlay);
 
       setTimeout(() => {
-        const firstInput = requireAll ? document.getElementById('monitor-login-user') : document.getElementById('monitor-login-daily-password');
+        const firstInput = requireAll
+          ? document.getElementById('monitor-login-user')
+          : document.getElementById('monitor-login-daily-password');
         if (firstInput) firstInput.focus();
       }, 100);
+
       if (savedUser) window.__savedUser = savedUser;
       if (savedCampaign) window.__savedCampaign = savedCampaign;
     }, { requireAll, savedUser: savedConfig?.agent_id, savedCampaign: savedConfig?.campaign });
 
-    // Exponer función de verificación (idempotente: en recargas puede estar ya expuesta)
+    // Exponer función de verificación
     try {
       await monitorPage.exposeFunction('verifyMonitorCredentialsBackend', async (user, campaign, dailyPassword) => {
         const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
         const timeout = setTimeout(() => {
           try {
             ctrl?.abort();
-          } catch (_) {
-            // ignore
-          }
+          } catch (_) {}
         }, 15000);
 
         try {
@@ -159,113 +181,123 @@ async function showMonitorLoginOverlay(requireAll = true) {
           clearTimeout(timeout);
         }
       });
-    } catch (e) {
+    } catch (_) {
       // ignore
     }
 
-    const checkSubmit = async () => {
-      await monitorPage.evaluate((requireAll) => {
-        return new Promise((innerResolve) => {
-          const btn = document.getElementById('monitor-login-submit-btn');
-          const userInput = document.getElementById('monitor-login-user');
-          const campaignInput = document.getElementById('monitor-login-campaign');
-          const dailyPasswordInput = document.getElementById('monitor-login-daily-password');
-          const errorEl = document.getElementById('monitor-login-error');
-          const loadingEl = document.getElementById('monitor-login-loading');
+    // Instalar listeners dentro del overlay una sola vez
+    await monitorPage.evaluate((requireAll) => {
+      return new Promise((innerResolve) => {
+        const btn = document.getElementById('monitor-login-submit-btn');
+        const userInput = document.getElementById('monitor-login-user');
+        const campaignInput = document.getElementById('monitor-login-campaign');
+        const dailyPasswordInput = document.getElementById('monitor-login-daily-password');
+        const errorEl = document.getElementById('monitor-login-error');
+        const loadingEl = document.getElementById('monitor-login-loading');
 
-          if (!btn || btn.dataset.listenerAdded) return innerResolve(null);
+        if (!btn || btn.dataset.listenerAdded) return innerResolve(null);
+        btn.dataset.listenerAdded = 'true';
 
-          btn.dataset.listenerAdded = 'true';
+        const handleSubmit = async () => {
+          const user = requireAll ? userInput.value.trim() : window.__savedUser;
+          const campaign = requireAll ? campaignInput.value.trim() : window.__savedCampaign;
+          const dailyPassword = dailyPasswordInput.value.trim();
 
-          const handleSubmit = async () => {
-            const user = requireAll ? userInput.value.trim() : window.__savedUser;
-            const campaign = requireAll ? campaignInput.value.trim() : window.__savedCampaign;
-            const dailyPassword = dailyPasswordInput.value.trim();
-
-            if (requireAll && (!user || !campaign)) {
-              errorEl.textContent = 'Por favor completa todos los campos';
-              errorEl.style.display = 'block';
-              return;
-            }
-
-            if (!dailyPassword) {
-              errorEl.textContent = 'Por favor ingresa la palabra del día';
-              errorEl.style.display = 'block';
-              return;
-            }
-
-            errorEl.style.display = 'none';
-            loadingEl.style.display = 'block';
-            btn.disabled = true;
-            btn.style.opacity = '0.5';
-
-            let result = null;
-            try {
-              if (!window.verifyMonitorCredentialsBackend) {
-                throw new Error('verifyMonitorCredentialsBackend no disponible');
-              }
-
-              // Timeout extra del lado del browser por si la promesa se cuelga
-              result = await Promise.race([
-                window.verifyMonitorCredentialsBackend(user, campaign, dailyPassword),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout de verificación')), 20000)),
-              ]);
-            } catch (err) {
-              result = { success: false, message: err && err.message ? err.message : String(err) };
-            }
-
-            loadingEl.style.display = 'none';
-            btn.disabled = false;
-            btn.style.opacity = '1';
-
-            if (result && result.success) {
-              window.__monitorLoginResult = { agent_id: user, campaign: campaign };
-              const overlay = document.getElementById('monitor-login-overlay');
-              if (overlay) overlay.remove();
-            } else {
-              errorEl.textContent = (result && result.message) ? result.message : 'Credenciales incorrectas';
-              errorEl.style.display = 'block';
-            }
-          };
-
-          btn.addEventListener('click', handleSubmit);
-
-          const inputs = [dailyPasswordInput];
-          if (requireAll) inputs.push(userInput, campaignInput);
-
-          inputs.forEach((input) => {
-            if (!input) return;
-            input.addEventListener('keypress', (e) => {
-              if (e.key === 'Enter') handleSubmit();
-            });
-          });
-
-          innerResolve(null);
-        });
-      }, requireAll);
-
-      const pollResult = setInterval(async () => {
-        try {
-          const loginResult = await monitorPage.evaluate(() => window.__monitorLoginResult);
-          if (loginResult) {
-            clearInterval(pollResult);
-            resolve(loginResult);
+          if (requireAll && (!user || !campaign)) {
+            errorEl.textContent = 'Por favor completa todos los campos';
+            errorEl.style.display = 'block';
+            return;
           }
-        } catch (err) {
+
+          if (!dailyPassword) {
+            errorEl.textContent = 'Por favor ingresa la palabra del día';
+            errorEl.style.display = 'block';
+            return;
+          }
+
+          errorEl.style.display = 'none';
+          loadingEl.style.display = 'block';
+          btn.disabled = true;
+          btn.style.opacity = '0.5';
+
+          let result = null;
+          try {
+            if (!window.verifyMonitorCredentialsBackend) throw new Error('verifyMonitorCredentialsBackend no disponible');
+            result = await Promise.race([
+              window.verifyMonitorCredentialsBackend(user, campaign, dailyPassword),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout de verificación')), 20000)),
+            ]);
+          } catch (err) {
+            result = { success: false, message: err?.message || String(err) };
+          }
+
+          loadingEl.style.display = 'none';
+          btn.disabled = false;
+          btn.style.opacity = '1';
+
+          if (result && result.success) {
+            window.__monitorLoginResult = { agent_id: user, campaign };
+            const overlay = document.getElementById('monitor-login-overlay');
+            if (overlay) overlay.remove();
+          } else {
+            errorEl.textContent = result?.message || 'Credenciales incorrectas';
+            errorEl.style.display = 'block';
+          }
+        };
+
+        btn.addEventListener('click', handleSubmit);
+
+        const inputs = [dailyPasswordInput];
+        if (requireAll) inputs.push(userInput, campaignInput);
+
+        inputs.forEach((input) => {
+          if (!input) return;
+          input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleSubmit();
+          });
+        });
+
+        innerResolve(null);
+      });
+    }, requireAll);
+
+    // Poll hasta que el overlay escriba el resultado
+    const pollResult = setInterval(async () => {
+      try {
+        const loginResult = await monitorPage.evaluate(() => window.__monitorLoginResult);
+        if (loginResult) {
           clearInterval(pollResult);
+          resolve(loginResult);
         }
-      }, 200);
-    };
-
-    if (!requireAll && savedConfig) {
-      await monitorPage.evaluate((config) => {
-        window.__savedUser = config.agent_id;
-        window.__savedCampaign = config.campaign;
-      }, savedConfig);
-    }
-
-    checkSubmit();
+      } catch (_) {
+        clearInterval(pollResult);
+      }
+    }, 200);
   });
+}
+
+async function fetchResultCodesFromBackend(campaignName) {
+  if (cachedResultCodesByCampaign.has(campaignName)) {
+    return cachedResultCodesByCampaign.get(campaignName);
+  }
+
+  const url = `${INTERACTIONS_API_BASE_URL}/result-codes/${encodeURIComponent(campaignName)}`;
+  try {
+    const response = await fetch(url);
+    const rawText = await response.text().catch(() => '');
+    const data = rawText ? JSON.parse(rawText) : {};
+    const resultCodes = Array.isArray(data.result_codes) ? data.result_codes : [];
+    if (!response.ok || resultCodes.length === 0) {
+      console.log('[Monitor][result-codes] url=', url);
+      console.log('[Monitor][result-codes] status=', response.status);
+      console.log('[Monitor][result-codes] body=', rawText);
+    }
+    cachedResultCodesByCampaign.set(campaignName, resultCodes);
+    return resultCodes;
+  } catch (error) {
+    console.error('❌ [Monitor] Error al obtener result codes:', error.message);
+    return [];
+  }
 }
 
 async function getCampaignNameForInteractions() {
@@ -283,24 +315,38 @@ async function getGestionDataFromBackendForMonitor(campaignName, phoneDigits) {
   return { resultCodes, clientInfo, campaignName, phoneE164 };
 }
 
+function parsePhoneFromDataId(dataId) {
+  const s = String(dataId || '');
+  const m1 = s.match(/_(\d{10,15})@/);
+  if (m1?.[1]) return m1[1];
+  const m2 = s.match(/_(\d{10,15})/);
+  if (m2?.[1]) return m2[1];
+  return '';
+}
+
 async function pickFirstUnreadChatCandidate() {
   if (!monitorPage || monitorPage.isClosed()) return null;
+
   try {
     const candidate = await monitorPage.evaluate(() => {
       const matchesUnread = (row) => {
         try {
           if (!row) return false;
-          const a = row.querySelector('[aria-label*="mensajes no leídos"], [aria-label*="unread"], [aria-label*="No leídos"], [aria-label*="No leidos"], span[aria-label*="unread"], span[aria-label*="mensajes no leídos"]');
+          const a = row.querySelector(
+            '[aria-label*="mensajes no leídos"], [aria-label*="unread"], [aria-label*="No leídos"], [aria-label*="No leidos"], span[aria-label*="unread"], span[aria-label*="mensajes no leídos"]'
+          );
           if (a) return true;
+
           const badge = row.querySelector('span[aria-label][role], span[aria-label]');
           if (badge) {
             const t = String(badge.getAttribute('aria-label') || '').toLowerCase();
             if (t.includes('no le') || t.includes('unread')) return true;
           }
+
           const txt = (row.textContent || '').toLowerCase();
           if (txt.includes('no leídos') || txt.includes('no leidos') || txt.includes('unread')) return true;
           return false;
-        } catch (e) {
+        } catch (_) {
           return false;
         }
       };
@@ -310,27 +356,20 @@ async function pickFirstUnreadChatCandidate() {
         const row = rows[idx];
         if (!matchesUnread(row)) continue;
 
-        // En builds nuevos, el data-id no siempre está en el nodo role=row, sino en un descendiente.
         const dataEl = row.matches('[data-id]') ? row : row.querySelector('[data-id]');
-        const dataId = (dataEl && dataEl.getAttribute('data-id')) ? String(dataEl.getAttribute('data-id')) : '';
+        const dataId = dataEl?.getAttribute('data-id') ? String(dataEl.getAttribute('data-id')) : '';
 
-        // Fallback: si no hay data-id, usar un "phone hint" visible (título del chat / número)
-        // Ej: <span title="+52 1 55 1302 3544">...
         let phoneHint = '';
         try {
           const phoneSpan = row.querySelector('span[title]');
           const t = phoneSpan ? String(phoneSpan.getAttribute('title') || '') : '';
           if (t) phoneHint = t;
-        } catch (_) {
-          // ignore
-        }
+        } catch (_) {}
+
         if (!phoneHint) {
           try {
-            const txt = (row.textContent || '').trim();
-            phoneHint = txt;
-          } catch (_) {
-            // ignore
-          }
+            phoneHint = (row.textContent || '').trim();
+          } catch (_) {}
         }
 
         if (!dataId && !phoneHint) continue;
@@ -338,9 +377,7 @@ async function pickFirstUnreadChatCandidate() {
         try {
           row.scrollIntoView({ block: 'center' });
           row.click();
-        } catch (e) {
-          // ignore
-        }
+        } catch (_) {}
 
         const key = dataId || phoneHint || String(idx);
         return { dataId, phoneHint, key };
@@ -351,23 +388,15 @@ async function pickFirstUnreadChatCandidate() {
 
     if (!candidate?.key) return null;
     return candidate;
-  } catch (e) {
+  } catch (_) {
     return null;
   }
-}
-
-function parsePhoneFromDataId(dataId) {
-  const s = String(dataId || '');
-  const m1 = s.match(/_(\d{10,15})@/);
-  if (m1?.[1]) return m1[1];
-  const m2 = s.match(/_(\d{10,15})/);
-  if (m2?.[1]) return m2[1];
-  return '';
 }
 
 async function monitorUnreadLoop() {
   if (monitorBusy) return;
   monitorBusy = true;
+
   try {
     const agentConfig = loadAgentConfig();
     if (!agentConfig) return;
@@ -376,52 +405,126 @@ async function monitorUnreadLoop() {
     try {
       const hasLoginOverlay = await monitorPage.evaluate(() => Boolean(document.getElementById('monitor-login-overlay')));
       if (hasLoginOverlay) return;
-    } catch (e) {
-      // ignore
-    }
+    } catch (_) {}
 
+    // Asegurar que el filtro No leídos está activo (sin reventar CPU)
     try {
       await monitorPage.evaluate(() => {
-        if (window.__anaClickUnread) window.__anaClickUnread();
+        if (window.__anaClickUnreadOnce) window.__anaClickUnreadOnce();
       });
-    } catch (e) {
-      // ignore
-    }
+    } catch (_) {}
 
     const campaignName = await getCampaignNameForInteractions();
+    
+    // Diagnóstico: contar cuántos rows hay y cuántos tienen badge de no leído
+    const diag = await monitorPage.evaluate(() => {
+      try {
+        const rows = document.querySelectorAll('[role="row"]');
+        let withBadge = 0;
+        let withAriaLabel = 0;
+        
+        rows.forEach(row => {
+          const badge = row.querySelector('span[aria-label][role], span[aria-label]');
+          if (badge) {
+            const t = String(badge.getAttribute('aria-label') || '').toLowerCase();
+            if (t.includes('no leído') || t.includes('no leido') || t.includes('unread') || t.includes('mensaje')) {
+              withBadge++;
+            }
+          }
+          
+          const a = row.querySelector('[aria-label*="mensajes no leídos"], [aria-label*="unread"], [aria-label*="No leídos"]');
+          if (a) withAriaLabel++;
+        });
+        
+        return { totalRows: rows.length, withBadge, withAriaLabel };
+      } catch (e) {
+        return { error: e.message };
+      }
+    });
+    
+    console.log('👀 [Monitor] Diagnóstico chats:', diag);
+    
     const candidate = await pickFirstUnreadChatCandidate();
 
     if (!candidate?.key) {
-      try {
-        if (!monitorPage.isClosed()) {
-          console.log('👀 [Monitor] Sin chats no leídos detectables en este momento.');
-        }
-      } catch (e) {
-        // ignore
-      }
+      console.log('👀 [Monitor] Sin chats no leídos detectables en este momento.');
       return;
     }
+    
+    console.log('✅ [Monitor] Chat no leído detectado:', { dataId: candidate.dataId, phoneHint: candidate.phoneHint, key: candidate.key });
 
-    if (candidate.key === lastFirstChatDataId) return;
+    if (candidate.key === lastFirstChatDataId) {
+      console.log('⏭️  [Monitor] Chat ya procesado en este ciclo (lastFirstChatDataId)');
+      return;
+    }
     lastFirstChatDataId = candidate.key;
 
     const phoneRaw = candidate.dataId ? parsePhoneFromDataId(candidate.dataId) : String(candidate.phoneHint || '');
+    console.log('📞 [Monitor] phoneRaw extraído:', phoneRaw);
+    
     const phoneE164 = normalizePhoneForBackend(phoneRaw);
+    console.log('📞 [Monitor] phoneE164 normalizado:', phoneE164);
+    
     const phoneDigits = String(phoneE164 || '').replace(/\D/g, '');
     const phone10 = phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
-    if (!phone10) return;
+    console.log('📞 [Monitor] phone10:', phone10);
+    
+    if (!phone10) {
+      console.log('⚠️  [Monitor] No se pudo extraer teléfono válido');
+      return;
+    }
 
-    if (processedPhones.has(phone10)) return;
+    if (processedPhones.has(phone10)) {
+      console.log('⏭️  [Monitor] Teléfono ya procesado anteriormente:', phone10);
+      return;
+    }
+    
+    console.log('🔍 [Monitor] Consultando gestión para:', phone10);
 
-    const gestionData = await getGestionDataFromBackendForMonitor(campaignName, phoneDigits);
+    let gestionData = null;
+    try {
+      const gestionPromise = getGestionDataFromBackendForMonitor(campaignName, phoneDigits);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout 10s consultando gestión')), 10000)
+      );
+      gestionData = await Promise.race([gestionPromise, timeoutPromise]);
+    } catch (e) {
+      console.log('⚠️  [Monitor] Error/timeout consultando gestión:', e.message);
+      return;
+    }
+    
+    console.log('📊 [Monitor] Respuesta gestión:', { 
+      hasData: !!gestionData, 
+      clientInfoLength: Array.isArray(gestionData?.clientInfo) ? gestionData.clientInfo.length : 0,
+      resultCodesLength: Array.isArray(gestionData?.resultCodes) ? gestionData.resultCodes.length : 0
+    });
+    console.log('📊 [Monitor] Respuesta gestión:', gestionData) ;
+  
+    
     const clientInfo = Array.isArray(gestionData?.clientInfo) ? gestionData.clientInfo : [];
+    
+    if (clientInfo.length === 0) {
+      console.log('⚠️  [Monitor] Backend no devolvió clientInfo. Datos de consulta:', {
+        campaignName,
+        phoneDigits,
+        phoneE164: gestionData?.phoneE164
+      });
+    } else {
+      console.log('✅ [Monitor] clientInfo recibido:', clientInfo.length, 'registros');
+    }
+    
     const first = clientInfo[0] || null;
     const creditId = first?.credit_info?.credit_id || '';
+    
+    console.log('💳 [Monitor] creditId extraído:', creditId || '(vacío)');
+
     if (!creditId) {
       processedPhones.add(phone10);
       console.log(`⚠️  [Monitor] Sin crédito para teléfono ${phoneE164}. Marcado como procesado para no duplicar.`);
       return;
     }
+    
+    console.log('✅ [Monitor] creditId válido, preparando interacción...');
 
     const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
     const now = new Date();
@@ -431,6 +534,14 @@ async function monitorUnreadLoop() {
     const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
 
     const subdictamen = 'CLIENTE NO DEFINE';
+
+    console.log('📤 [Monitor] Enviando interacción al backend...', {
+      creditId,
+      phone10,
+      campaignName,
+      subdictamen
+    });
+
     const interactionRes = await insertInteractions([
       {
         credit_id: String(creditId),
@@ -455,34 +566,29 @@ async function monitorUnreadLoop() {
       },
     ]);
 
+    console.log('📥 [Monitor] Respuesta insertInteractions:', { 
+      ok: interactionRes?.ok, 
+      status: interactionRes?.status,
+      hasBody: !!interactionRes?.body 
+    });
+
     if (interactionRes?.ok) {
       processedPhones.add(phone10);
       console.log(`✅ [Monitor] Interacción enviada (${phoneE164}) subdictamen='${subdictamen}' credit_id='${creditId}'`);
       try {
         await monitorPage.evaluate((p, c) => {
-          try {
-            if (window.__anaMonitorToast) window.__anaMonitorToast(`✅ Interacción enviada: ${p} (credit_id ${c})`);
-          } catch (e) {
-            // ignore
-          }
+          if (window.__anaMonitorToast) window.__anaMonitorToast(`✅ Interacción enviada: ${p} (credit_id ${c})`);
         }, phoneE164, creditId);
-      } catch (e) {
-        // ignore
-      }
+      } catch (_) {}
     } else {
       console.error(`❌ [Monitor] Interacción NO enviada (${phoneE164}) subdictamen='${subdictamen}' credit_id='${creditId}'`);
       try {
         await monitorPage.evaluate((p) => {
-          try {
-            if (window.__anaMonitorToast) window.__anaMonitorToast(`❌ Interacción NO enviada: ${p}`);
-          } catch (e) {
-            // ignore
-          }
+          if (window.__anaMonitorToast) window.__anaMonitorToast(`❌ Interacción NO enviada: ${p}`);
         }, phoneE164);
-      } catch (e) {
-        // ignore
-      }
+      } catch (_) {}
     }
+
     if (interactionRes?.status) console.error(`   Status: ${interactionRes.status}`);
     if (interactionRes?.body) console.error(`   Body: ${JSON.stringify(interactionRes.body)}`);
     if (interactionRes?.error) console.error(`   Error: ${interactionRes.error}`);
@@ -491,137 +597,20 @@ async function monitorUnreadLoop() {
   }
 }
 
-async function applyMonitorUIRestrictions() {
+/**
+ * ====== UI/LOCK + CLICK HELPERS (IMPORTANTES)
+ * - Se instalan UNA sola vez (bandera global)
+ * - NO usamos observers de attributes (solo childList)
+ * - Interval más lento (cada 5s) y “one-shot” por tick
+ */
+async function installMonitorHelpersOnce() {
   if (!monitorPage || monitorPage.isClosed()) return;
+
   await monitorPage.evaluate(() => {
-    // Instalador de helpers de bloqueo. No se aplica automáticamente.
-    window.__anaEnableMonitorLock = () => {
-      try {
-        const ensureOverlay = () => {
-          try {
-            let ov = document.getElementById('ana-monitor-lock-overlay');
-            if (!ov) {
-              ov = document.createElement('div');
-              ov.id = 'ana-monitor-lock-overlay';
-              try {
-                ov.style.position = 'fixed';
-                ov.style.inset = '0';
-                ov.style.background = 'rgba(0, 0, 0, 0.20)';
-                ov.style.zIndex = '2147483646';
-                ov.style.pointerEvents = 'auto';
-                ov.style.cursor = 'not-allowed';
-                ov.style.display = 'block';
-                ov.style.visibility = 'visible';
-                ov.style.opacity = '1';
-              } catch (_) {
-                // ignore
-              }
+    if (window.__anaMonitorHelpersInstalled) return;
+    window.__anaMonitorHelpersInstalled = true;
 
-              const stop = (e) => {
-                try {
-                  e.preventDefault();
-                  e.stopPropagation();
-                } catch (_) {
-                  // ignore
-                }
-                return false;
-              };
-
-              ov.addEventListener('contextmenu', stop, true);
-              ov.addEventListener('mousedown', stop, true);
-              ov.addEventListener('mouseup', stop, true);
-              ov.addEventListener('click', stop, true);
-              ov.addEventListener('pointerdown', stop, true);
-              ov.addEventListener('pointerup', stop, true);
-
-              // Insertar dentro del body para asegurar render (algunos builds ignoran hijos directos de <html>)
-              // Fallback a <html> si body no está disponible.
-              (document.body || document.documentElement).appendChild(ov);
-            }
-            return ov;
-          } catch (e) {
-            return null;
-          }
-        };
-
-        const styleId = 'ana-monitor-lock-style';
-        if (!document.getElementById(styleId)) {
-          const style = document.createElement('style');
-          style.id = styleId;
-          style.textContent = `
-            body.ana-monitor-hardlock {
-              user-select: none !important;
-              -webkit-user-select: none !important;
-            }
-
-            #ana-monitor-lock-overlay {
-              position: fixed;
-              inset: 0;
-              background: rgba(0, 0, 0, 0.20);
-              z-index: 2147483646;
-              pointer-events: auto !important;
-              cursor: not-allowed;
-              display: block !important;
-              visibility: visible !important;
-              opacity: 1 !important;
-            }
-
-            #monitor-login-overlay,
-            #monitor-login-overlay * {
-              pointer-events: auto !important;
-              user-select: text !important;
-              -webkit-user-select: text !important;
-              z-index: 2147483647 !important;
-            }
-          `;
-          document.head.appendChild(style);
-        }
-
-        document.body.classList.add('ana-monitor-hardlock');
-
-        ensureOverlay();
-
-        window.__anaMonitorLocked = true;
-
-        // Watchdog: si WhatsApp tumba el overlay, lo recreamos
-        try {
-          if (!window.__anaMonitorLockWatchdog) {
-            window.__anaMonitorLockWatchdog = setInterval(() => {
-              try {
-                if (!window.__anaMonitorLocked) return;
-                ensureOverlay();
-              } catch (_) {
-                // ignore
-              }
-            }, 750);
-          }
-        } catch (_) {
-          // ignore
-        }
-      } catch (e) {
-        // ignore
-      }
-    };
-
-    window.__anaDisableMonitorLock = () => {
-      try {
-        document.body.classList.remove('ana-monitor-hardlock');
-        const ov = document.getElementById('ana-monitor-lock-overlay');
-        if (ov) ov.remove();
-        try {
-          if (window.__anaMonitorLockWatchdog) {
-            clearInterval(window.__anaMonitorLockWatchdog);
-            window.__anaMonitorLockWatchdog = null;
-          }
-        } catch (_) {
-          // ignore
-        }
-        window.__anaMonitorLocked = false;
-      } catch (e) {
-        // ignore
-      }
-    };
-
+    // ===== Toast =====
     window.__anaMonitorToast = (message) => {
       try {
         const id = 'ana-monitor-toast';
@@ -650,21 +639,18 @@ async function applyMonitorUIRestrictions() {
           'transform: translateY(6px)',
           'transition: opacity 160ms ease, transform 160ms ease',
         ].join(';');
+
         el.textContent = String(message || '');
-        document.body.appendChild(el);
+        (document.body || document.documentElement).appendChild(el);
 
         setTimeout(() => {
-          try {
-            el.style.opacity = '1';
-            el.style.transform = 'translateY(0px)';
-          } catch (_) {}
+          el.style.opacity = '1';
+          el.style.transform = 'translateY(0px)';
         }, 10);
 
         setTimeout(() => {
-          try {
-            el.style.opacity = '0';
-            el.style.transform = 'translateY(6px)';
-          } catch (_) {}
+          el.style.opacity = '0';
+          el.style.transform = 'translateY(6px)';
         }, 3500);
 
         setTimeout(() => {
@@ -672,436 +658,442 @@ async function applyMonitorUIRestrictions() {
             el.remove();
           } catch (_) {}
         }, 4200);
-      } catch (e) {
-        // ignore
-      }
+      } catch (_) {}
     };
 
-    // Back-compat: código viejo puede llamar esto
-    window.applyMonitorUIRestrictions = () => {
-      try {
-        if (window.__anaMonitorLocked && window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
-      } catch (e) {
-        // ignore
-      }
-    };
-
-    const allowUnreadOnly = () => {
-      try {
-        // Quitar marcas previas (si el DOM cambió)
-        document.querySelectorAll('.ana-allow-unread').forEach((el) => {
-          el.classList.remove('ana-allow-unread');
-        });
-
-        // Localizar el span exacto por texto ("No leídos" / "No leidos" / "Unread")
-        const spans = Array.from(document.querySelectorAll('span'));
-        const target = spans.find((s) => {
-          const t = (s.textContent || '').trim().toLowerCase();
-          return t === 'no leídos' || t === 'no leidos' || t === 'unread';
-        });
-        if (!target) return;
-
-        // Marcar el span y su contenedor clickeable
-        target.classList.add('ana-allow-unread');
-        const clickable = target.closest('button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement;
-        if (clickable) {
-          clickable.classList.add('ana-allow-unread');
-          try { clickable.style.cursor = 'pointer'; } catch (_) {}
+    // ===== Lock overlay =====
+    const styleId = 'ana-monitor-lock-style';
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style');
+      style.id = styleId;
+      style.textContent = `
+        body.ana-monitor-hardlock {
+          user-select: none !important;
+          -webkit-user-select: none !important;
         }
-      } catch (e) {
-        // ignore
+        #ana-monitor-lock-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.20);
+          z-index: 2147483646;
+          pointer-events: auto !important;
+          cursor: not-allowed;
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+        }
+        #monitor-login-overlay,
+        #monitor-login-overlay * {
+          pointer-events: auto !important;
+          user-select: text !important;
+          -webkit-user-select: text !important;
+          z-index: 2147483647 !important;
+        }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+    }
+
+    const ensureLockOverlay = () => {
+      try {
+        if (!window.__anaMonitorLocked) return;
+        let ov = document.getElementById('ana-monitor-lock-overlay');
+        if (ov) return;
+
+        ov = document.createElement('div');
+        ov.id = 'ana-monitor-lock-overlay';
+        ov.style.position = 'fixed';
+        ov.style.inset = '0';
+        ov.style.background = 'rgba(0, 0, 0, 0.20)';
+        ov.style.zIndex = '2147483646';
+        ov.style.pointerEvents = 'auto';
+        ov.style.cursor = 'not-allowed';
+        ov.style.display = 'block';
+
+        const stop = (e) => {
+          try {
+            e.preventDefault();
+            e.stopPropagation();
+          } catch (_) {}
+          return false;
+        };
+
+        ov.addEventListener('contextmenu', stop, true);
+        ov.addEventListener('mousedown', stop, true);
+        ov.addEventListener('mouseup', stop, true);
+        ov.addEventListener('click', stop, true);
+        ov.addEventListener('pointerdown', stop, true);
+        ov.addEventListener('pointerup', stop, true);
+
+        (document.body || document.documentElement).appendChild(ov);
+      } catch (_) {}
+    };
+
+    window.__anaEnableMonitorLock = () => {
+      try {
+        document.body.classList.add('ana-monitor-hardlock');
+        window.__anaMonitorLocked = true;
+        ensureLockOverlay();
+
+        if (!window.__anaMonitorLockWatchdog) {
+          window.__anaMonitorLockWatchdog = setInterval(() => {
+            try {
+              ensureLockOverlay();
+            } catch (_) {}
+          }, 1200);
+        }
+      } catch (_) {}
+    };
+
+    window.__anaDisableMonitorLock = () => {
+      try {
+        document.body.classList.remove('ana-monitor-hardlock');
+        const ov = document.getElementById('ana-monitor-lock-overlay');
+        if (ov) ov.remove();
+        if (window.__anaMonitorLockWatchdog) {
+          clearInterval(window.__anaMonitorLockWatchdog);
+          window.__anaMonitorLockWatchdog = null;
+        }
+        window.__anaMonitorLocked = false;
+      } catch (_) {}
+    };
+
+    // ===== Click Unread (robusto) =====
+    const getUnreadBtn = () => {
+      try {
+        return document.querySelector('#unread-filter');
+      } catch (_) {
+        return null;
       }
     };
 
-    const clickUnread = () => {
-      // Si hay overlay de login, no intentar manipular filtros
-      if (document.getElementById('monitor-login-overlay')) return;
-
-      // Asegurar que el único elemento clickeable sea el filtro
-      allowUnreadOnly();
-
+    window.__anaClickUnreadOnce = () => {
       try {
-        const spans = Array.from(document.querySelectorAll('span'));
-        const labelEl = spans.find((s) => {
-          const t = (s.textContent || '').trim().toLowerCase();
-          return t === 'no leídos' || t === 'no leidos' || t === 'unread';
-        });
-        if (!labelEl) return;
+        if (document.getElementById('monitor-login-overlay')) return false;
+        const btn = getUnreadBtn();
+        if (!btn) return false;
 
-        // En WhatsApp web suele ser un chip/tab; el clickable suele tener role=tab o role=button
-        const clickable =
-          labelEl.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') ||
-          labelEl.parentElement;
-        if (!clickable) return;
-
-        const ariaSelected = String(clickable.getAttribute('aria-selected') || '').toLowerCase();
-        const dataSelected = String(clickable.getAttribute('data-selected') || '').toLowerCase();
-        if (ariaSelected === 'true' || dataSelected === 'true') return;
+        const pressed = String(btn.getAttribute('aria-pressed') || '').toLowerCase();
+        if (pressed === 'true') return true;
 
         try {
-          clickable.scrollIntoView({ block: 'center', inline: 'center' });
-        } catch (_) {
-          // ignore
-        }
+          btn.scrollIntoView({ block: 'center', inline: 'center' });
+        } catch (_) {}
 
         const fire = (type) => {
           try {
-            clickable.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse' }));
-          } catch (_) {
-            // ignore
-          }
+            btn.dispatchEvent(
+              new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse' })
+            );
+          } catch (_) {}
           try {
-            clickable.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true }));
-          } catch (_) {
-            // ignore
-          }
+            btn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true }));
+          } catch (_) {}
         };
 
-        // Secuencia completa: WhatsApp a veces ignora el .click() si no hubo pointer events
         fire('pointerdown');
         fire('mousedown');
         fire('mouseup');
         fire('pointerup');
         fire('click');
 
-        // Fallback final
         try {
-          clickable.click();
-        } catch (_) {
-          // ignore
-        }
-      } catch (e) {
-        // ignore
+          btn.click();
+        } catch (_) {}
+
+        const after = String(btn.getAttribute('aria-pressed') || '').toLowerCase();
+        return after === 'true';
+      } catch (_) {
+        return false;
       }
     };
 
-    // Exponer para poder invocarlo desde Node cuando el DOM se reinicia tras login
-    window.__anaClickUnread = clickUnread;
-    window.__anaAllowUnreadOnly = allowUnreadOnly;
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        allowUnreadOnly();
-        setTimeout(clickUnread, 1200);
-      });
-    } else {
-      allowUnreadOnly();
-      setTimeout(clickUnread, 1200);
+    // Watchdog LIGHT: solo si ya hay sidebar y existe el botón (cada 5s)
+    if (!window.__anaUnreadLightInterval) {
+      window.__anaUnreadLightInterval = setInterval(() => {
+        try {
+          const side = document.querySelector('#side, #pane-side');
+          if (!side) return;
+          const btn = getUnreadBtn();
+          if (!btn) return;
+          window.__anaClickUnreadOnce();
+        } catch (_) {}
+      }, 5000);
     }
 
-    setInterval(() => {
-      try {
-        allowUnreadOnly();
-        clickUnread();
-      } catch (e) {
-        // ignore
-      }
-    }, 1500);
-
-    const observer = new MutationObserver(() => {
-      try {
-        clickUnread();
-      } catch (e) {
-        // ignore
-      }
-    });
-
-    if (document.documentElement) {
-      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
-    } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+    // Observer LIGHT: solo para cuando cambie el DOM (sin observar attributes)
+    if (!window.__anaUnreadObserver) {
+      window.__anaUnreadObserver = new MutationObserver(() => {
+        try {
+          const side = document.querySelector('#side, #pane-side');
+          if (!side) return;
+          const btn = getUnreadBtn();
+          if (!btn) return;
+          window.__anaClickUnreadOnce();
+        } catch (_) {}
       });
+
+      if (document.documentElement) {
+        window.__anaUnreadObserver.observe(document.documentElement, { childList: true, subtree: true });
+      }
     }
   });
+}
+
+/**
+ * Bloquear DevTools shortcuts/contextmenu (una sola vez con initScript)
+ */
+async function installHardKeyBlockersOnce() {
+  if (!monitorPage || monitorPage.isClosed()) return;
+
+  await monitorPage.addInitScript(() => {
+    if (window.__anaKeyBlockInstalled) return;
+    window.__anaKeyBlockInstalled = true;
+
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        const k = e.key;
+        const bad =
+          k === 'F12' ||
+          (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(k)) ||
+          (e.metaKey && e.altKey && ['I', 'J', 'C'].includes(k));
+
+        if (bad) {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+      },
+      true
+    );
+
+    document.addEventListener(
+      'contextmenu',
+      (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      },
+      true
+    );
+  });
+}
+
+async function clickUnreadFilterRobust() {
+  // Espera a que exista la zona de filtros y el botón real (por tu HTML)
+  await monitorPage.waitForSelector('[aria-label="chat-list-filters"]', { timeout: 60000 });
+  await monitorPage.waitForSelector('#unread-filter', { timeout: 60000 });
+
+  // Evita que el lock overlay intercepte (por si se prendió por timing)
+  await monitorPage.evaluate(() => {
+    if (window.__anaDisableMonitorLock) window.__anaDisableMonitorLock();
+  });
+
+  const result = await monitorPage.evaluate(() => {
+    const btn = document.querySelector('#unread-filter');
+    if (!btn) return { found: false };
+
+    const before = String(btn.getAttribute('aria-pressed') || '');
+    if (before.toLowerCase() === 'true') return { found: true, clicked: false, before, after: before };
+
+    try {
+      btn.scrollIntoView({ block: 'center', inline: 'center' });
+    } catch (_) {}
+
+    const fire = (type) => {
+      try {
+        btn.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'mouse' }));
+      } catch (_) {}
+      try {
+        btn.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true }));
+      } catch (_) {}
+    };
+
+    fire('pointerdown');
+    fire('mousedown');
+    fire('mouseup');
+    fire('pointerup');
+    fire('click');
+
+    try {
+      btn.click();
+    } catch (_) {}
+
+    const after = String(btn.getAttribute('aria-pressed') || '');
+    return { found: true, clicked: true, before, after };
+  });
+
+  return result;
 }
 
 export async function initMonitorWhatsApp() {
   console.log(' Iniciando ventana monitor de WhatsApp (No leídos)...');
 
-  const monitorArgs = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-extensions',
-    '--disable-dev-shm-usage',
-    '--disable-blink-features=AutomationControlled',
-    '--disable-dev-tools',
-  ];
+  const monitorNoLock = process.argv.includes('--monitor-no-lock');
+  const monitorClearData = process.argv.includes('--monitor-clear-data');
+  const monitorAltProfile = process.argv.includes('--monitor-alt-profile');
+  const monitorNonPersistent = process.argv.includes('--monitor-non-persistent');
+  const monitorProfilePath = monitorAltProfile ? `${CONFIG.monitorSessionPath}-alt` : CONFIG.monitorSessionPath;
 
-  // Por defecto abrir el monitor en modo app (sin barra de navegador/menús)
-  // Para desactivarlo: npm run start -- --monitor-no-app
-  if (!process.argv.includes('--monitor-no-app')) {
-    monitorArgs.push('--app=https://web.whatsapp.com');
+  const buildMonitorArgs = () => {
+    return [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-extensions',
+      '--disable-blink-features=AutomationControlled',
+      '--app=https://web.whatsapp.com',
+      '--disable-dev-tools',
+    ];
+  };
+
+  const relaunchMonitorBrowser = async (reason) => {
+    try {
+      const profileLabel = monitorNonPersistent ? 'TEMP' : monitorAltProfile ? 'ALT' : 'DEFAULT';
+      console.log(`🔁 [Monitor] Iniciando navegador (${reason || 'recover'}) profile=${profileLabel}...`);
+    } catch (_) {}
+
+    try {
+      if (monitorBrowser) await monitorBrowser.close();
+    } catch (_) {}
+
+    try {
+      if (monitorContext && !monitorBrowser) await monitorContext.close();
+    } catch (_) {}
+
+    try {
+      if (monitorPwBrowser) await monitorPwBrowser.close();
+    } catch (_) {}
+
+    monitorBrowser = null;
+    monitorPwBrowser = null;
+    monitorContext = null;
+    monitorPage = null;
+
+    if (!monitorNonPersistent) {
+      monitorBrowser = await chromium.launchPersistentContext(monitorProfilePath, {
+        headless: false,
+        args: buildMonitorArgs(),
+        viewport: { width: 1280, height: 720 },
+        devtools: false,
+      });
+      monitorContext = monitorBrowser;
+      monitorPage = monitorContext.pages()[0] || (await monitorContext.newPage());
+      return;
+    }
+
+    monitorPwBrowser = await chromium.launch({
+      headless: false,
+      args: buildMonitorArgs(),
+      devtools: false,
+    });
+    monitorContext = await monitorPwBrowser.newContext({ viewport: { width: 1280, height: 720 } });
+    monitorPage = await monitorContext.newPage();
+  };
+
+  await relaunchMonitorBrowser('init');
+
+  const clearMonitorBrowserData = async () => {
+    if (!monitorClearData) return;
+
+    console.log('🧹 [Monitor] Limpiando cookies/cache/storage (modo --monitor-clear-data)...');
+
+    try {
+      const cdp = await monitorContext.newCDPSession(monitorPage);
+      try {
+        await cdp.send('Network.clearBrowserCache');
+      } catch (_) {}
+      try {
+        await cdp.send('Network.clearBrowserCookies');
+      } catch (_) {}
+    } catch (_) {}
+
+    try {
+      await monitorContext.clearCookies();
+    } catch (_) {}
+
+    try {
+      await monitorPage.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    } catch (_) {}
+
+    try {
+      await monitorPage.evaluate(async () => {
+        try { localStorage.clear(); } catch (_) {}
+        try { sessionStorage.clear(); } catch (_) {}
+
+        try {
+          if (typeof caches !== 'undefined' && caches?.keys) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((k) => caches.delete(k)));
+          }
+        } catch (_) {}
+
+        try {
+          if (typeof indexedDB !== 'undefined' && indexedDB?.databases) {
+            const dbs = await indexedDB.databases();
+            await Promise.all(
+              (dbs || []).map(
+                (db) =>
+                  new Promise((resolve) => {
+                    try {
+                      if (!db?.name) return resolve();
+                      const req = indexedDB.deleteDatabase(db.name);
+                      req.onsuccess = () => resolve();
+                      req.onerror = () => resolve();
+                      req.onblocked = () => resolve();
+                    } catch (_) {
+                      resolve();
+                    }
+                  })
+              )
+            );
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+
+    console.log('🧹 [Monitor] Limpieza completa.');
+  };
+
+  if (!monitorContext) throw new Error('Monitor: contexto no inicializado');
+
+  if (!monitorPage) {
+    const pages = monitorContext.pages();
+    monitorPage = pages[0] || (await monitorContext.newPage());
   }
 
-  monitorBrowser = await chromium.launchPersistentContext(CONFIG.monitorSessionPath, {
-    headless: false,
-    args: monitorArgs,
-    viewport: { width: 1280, height: 720 },
-    devtools: false,
+  await installHardKeyBlockersOnce();
+  await clearMonitorBrowserData();
+
+  // IMPORTANTE: evita networkidle; WhatsApp nunca “idle” de manera confiable
+  await monitorPage.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded' });
+
+  console.log('⏳ Esperando que WhatsApp Web (Monitor) cargue completamente...');
+  try {
+    await monitorPage.waitForLoadState('domcontentloaded', { timeout: 30000 });
+    await monitorPage.waitForTimeout(1200);
+  } catch (_) {}
+
+  // Detectar si ya hay sesión iniciada (sidebar presente)
+  const hasExistingSession = await monitorPage.evaluate(() => {
+    try {
+      return Boolean(document.querySelector('#side, #pane-side'));
+    } catch (_) {
+      return false;
+    }
   });
 
-  monitorPage = monitorBrowser.pages()[0] || await monitorBrowser.newPage();
+  // Instalar helpers una sola vez (toast + lock + click unread light)
+  await installMonitorHelpersOnce();
 
-  const installMonitorPageScripts = async () => {
-    await monitorPage.addInitScript(() => {
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'F12') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'J') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'I') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'J') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'C') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-      }, true);
-
-      document.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }, true);
-    });
-
-    await monitorPage.addInitScript(() => {
-      const boot = () => {
-        try {
-          const allowUnreadOnly = () => {
-            try {
-              document.querySelectorAll('.ana-allow-unread').forEach((el) => el.classList.remove('ana-allow-unread'));
-              const spans = Array.from(document.querySelectorAll('span'));
-              const target = spans.find((s) => {
-                const t = (s.textContent || '').trim().toLowerCase();
-                return t === 'no leídos' || t === 'no leidos' || t === 'unread';
-              });
-              if (!target) return;
-              target.classList.add('ana-allow-unread');
-              const clickable = target.closest('button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement;
-              if (clickable) {
-                clickable.classList.add('ana-allow-unread');
-                try { clickable.style.cursor = 'pointer'; } catch (_) {}
-              }
-            } catch (e) {
-              // ignore
-            }
-          };
-
-          const clickUnread = () => {
-            if (document.getElementById('monitor-login-overlay')) return;
-            allowUnreadOnly();
-            try {
-              const spans = Array.from(document.querySelectorAll('span'));
-              const labelEl = spans.find((s) => {
-                const t = (s.textContent || '').trim().toLowerCase();
-                return t === 'no leídos' || t === 'no leidos' || t === 'unread';
-              });
-              if (!labelEl) return;
-
-              const clickable =
-                labelEl.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') ||
-                labelEl.parentElement;
-              if (!clickable) return;
-
-              const ariaSelected = String(clickable.getAttribute('aria-selected') || '').toLowerCase();
-              const dataSelected = String(clickable.getAttribute('data-selected') || '').toLowerCase();
-              if (ariaSelected === 'true' || dataSelected === 'true') return;
-
-              clickable.click();
-            } catch (e) {
-              // ignore
-            }
-          };
-
-          window.__anaAllowUnreadOnly = allowUnreadOnly;
-          window.__anaClickUnread = clickUnread;
-
-          const isConnected = () => {
-            try {
-              return Boolean(document.querySelector('#side, #pane-side'));
-            } catch (_) {
-              return false;
-            }
-          };
-
-          if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
-              try {
-                if (!isConnected()) return;
-                allowUnreadOnly();
-                setTimeout(clickUnread, 1200);
-              } catch (_) {}
-            });
-          } else {
-            try {
-              if (isConnected()) {
-                allowUnreadOnly();
-                setTimeout(clickUnread, 1200);
-              }
-            } catch (_) {}
-          }
-
-          setInterval(() => {
-            try {
-              if (!isConnected()) return;
-              allowUnreadOnly();
-              clickUnread();
-            } catch (_) {
-              // ignore
-            }
-          }, 1500);
-
-          const observer = new MutationObserver(() => {
-            try {
-              if (!isConnected()) return;
-              allowUnreadOnly();
-            } catch (_) {
-              // ignore
-            }
-          });
-
-          if (document.documentElement) {
-            observer.observe(document.documentElement, { childList: true, subtree: true });
-          }
-        } catch (e) {
-          // ignore
-        }
-      };
-
-      try {
-        boot();
-      } catch (e) {
-        // ignore
-      }
-    });
-  };
-
-  const attachMonitorLoadHandler = () => {
-    // Si el DOM recarga/navega, re-instalar helpers (toast/lock/unread) y re-aplicar lock si ya estaba activado
-    monitorPage.on('load', async () => {
-      try {
-        await applyMonitorUIRestrictions();
-        await monitorPage.evaluate(() => {
-          try {
-            if (window.__anaMonitorLocked && window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
-          } catch (e) {
-            // ignore
-          }
-        });
-      } catch (e) {
-        // ignore
-      }
-    });
-  };
-
-  const hardReloadMonitor = async (label) => {
-    const runWithTimeout = async (p, ms) => {
-      return await Promise.race([
-        p,
-        new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout ${ms}ms`)), ms)),
-      ]);
-    };
-
-    const tryGoto = async (url) => {
-      try {
-        await runWithTimeout(monitorPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }), 65000);
-        return true;
-      } catch (e) {
-        return false;
-      }
-    };
-
-    try {
-      console.log(`⚠️  [Monitor] Hard reload (${label})...`);
-    } catch (_) {
-      // ignore
-    }
-
-    // 1) salto a about:blank + regreso
-    const blankOk = await tryGoto('about:blank');
-    const waOk = await tryGoto('https://web.whatsapp.com');
-    if (blankOk && waOk) return;
-
-    // 2) fallback: nueva page dentro del mismo contexto
-    try {
-      const old = monitorPage;
-      monitorPage = await monitorBrowser.newPage();
-      await installMonitorPageScripts();
-      await applyMonitorUIRestrictions();
-      attachMonitorLoadHandler();
-      await tryGoto('https://web.whatsapp.com');
-      try {
-        await old.close();
-      } catch (_) {
-        // ignore
-      }
-    } catch (e) {
-      // ignore
-    }
-  };
-
-  monitorPage = monitorBrowser.pages()[0] || await monitorBrowser.newPage();
-  await installMonitorPageScripts();
-
-  // Instalar helpers de No-leídos y de bloqueo (pero NO bloquear todavía)
-  await applyMonitorUIRestrictions();
-  attachMonitorLoadHandler();
-
-  // WhatsApp Web mantiene conexiones abiertas; 'networkidle' puede quedarse colgado.
-  // Usar 'domcontentloaded' para evitar pantallas de carga eternas.
-  await monitorPage.goto('https://web.whatsapp.com', { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-  // Watchdog: si no aparece sidebar ni QR, recargar (a veces se queda en splash).
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await monitorPage.waitForSelector('#side, #pane-side, canvas, [data-testid="qrcode"], [aria-label*="código"], [aria-label*="qr"], [aria-label*="code"]', { timeout: 30000 });
-      break;
-    } catch (e) {
-      console.log(`⚠️  [Monitor] WhatsApp quedó en carga (sin sidebar/QR). Recargando (${attempt + 1}/3)...`);
-      await hardReloadMonitor(`splash ${attempt + 1}/3`);
-    }
-  }
-
-  // Fallback final: si ya estamos en UI y ya intentamos seleccionar "No leídos", bloquear de todas formas.
-  // (En algunos builds no hay señal confiable de seleccionado.)
-  try {
-    await monitorPage.evaluate(() => {
-      try {
+  if (hasExistingSession) {
+    console.log('🔒 [Monitor] Sesión existente detectada.');
+    if (!monitorNoLock) {
+      await monitorPage.evaluate(() => {
         window.__anaMonitorLocked = true;
         if (window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
-      } catch (e) {
-        // ignore
-      }
-    });
-    console.log('🔒 [Monitor] Bloqueo activado (fallback final)');
-  } catch (e) {
-    // ignore
+      });
+      console.log('🔒 [Monitor] Overlay activado (sesión ya iniciada).');
+    }
   }
 
   console.log('🔐 Validación de credenciales requerida (Monitor)...');
@@ -1111,206 +1103,63 @@ export async function initMonitorWhatsApp() {
   saveAgentConfig(monitorConfig);
   console.log(`✅ Credenciales verificadas (Monitor): ${monitorConfig.agent_id} | Campaña: ${monitorConfig.campaign}`);
 
-  console.log('📱 Escanea el código QR con OTRO teléfono/cuenta');
+  if (!hasExistingSession) {
+    console.log('📱 Escanea el código QR con OTRO teléfono/cuenta');
+  }
   console.log('⏳ Esperando conexión de WhatsApp Web (Monitor)...');
 
-  // A veces WhatsApp se queda en pantalla de carga (logo/barra) y no termina de renderizar #side.
-  // Reintentar con recarga suave.
-  let connected = false;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await monitorPage.waitForSelector('#side, #pane-side', { timeout: 120000 });
-      connected = true;
-      break;
-    } catch (e) {
-      try {
-        console.log(`⚠️  [Monitor] No cargó #side (intento ${attempt + 1}/3). Recargando...`);
-        await hardReloadMonitor(`no-side ${attempt + 1}/3`);
-      } catch (_) {
-        // ignore
-      }
-    }
-  }
-
-  if (!connected) {
-    throw new Error('Monitor: WhatsApp Web no terminó de cargar (#side/#pane-side no apareció)');
-  }
-
+  // Esperar conexión (sidebar)
+  await monitorPage.waitForSelector('#side, #pane-side', { timeout: 300000 });
   console.log('✅ WhatsApp Web (Monitor) conectado - Ventana lista!');
 
-  // Fallback fuerte: click real con Playwright al tab "No leídos" si existe.
-  // (Hay builds de WhatsApp que ignoran element.click()/dispatchEvent)
-  try {
-    const unreadTab = monitorPage.getByRole('tab', { name: /no le[ií]dos|unread/i }).first();
-    await unreadTab.waitFor({ timeout: 5000 });
-    await unreadTab.click({ timeout: 5000 });
-    const selected = await unreadTab.getAttribute('aria-selected');
-    console.log(`👀 [Monitor] Playwright click tab No leídos aria-selected=${selected}`);
+  // Re-instalar helpers por si WhatsApp recargó duro (idempotente)
+  await installMonitorHelpersOnce();
 
-    // En algunos builds el tab no expone aria-selected; si el click no lanza error,
-    // asumimos que el filtro cambió y activamos bloqueo.
+  // Click robusto al filtro real: #unread-filter
+  console.log('🔍 [Monitor] Activando filtro "No leídos"...');
+  let clickedRes = null;
+  try {
+    clickedRes = await Promise.race([
+      clickUnreadFilterRobust(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout 25s activando unread')), 25000)),
+    ]);
+  } catch (e) {
+    console.log('⚠️  [Monitor] No se pudo activar "No leídos" a tiempo:', e.message);
+  }
+
+  console.log('👀 [Monitor] Resultado click unread:', clickedRes);
+
+  // Activar lock después del click (no antes)
+  if (!monitorNoLock) {
     try {
-      await monitorPage.waitForTimeout(700);
-    } catch (_) {
-      // ignore
-    }
-    await monitorPage.evaluate(() => {
-      try {
+      await monitorPage.evaluate(() => {
         window.__anaMonitorLocked = true;
         if (window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
-      } catch (e) {
-        // ignore
-      }
-    });
-    console.log('🔒 [Monitor] Bloqueo activado (solo observación)');
-
-    // Diagnóstico breve para validar overlay visible
-    try {
-      const lockDiag = await monitorPage.evaluate(() => {
-        try {
-          const ov = document.getElementById('ana-monitor-lock-overlay');
-          if (!ov) return { exists: false };
-          const cs = window.getComputedStyle(ov);
-          const r = ov.getBoundingClientRect();
-          return {
-            exists: true,
-            bg: cs.backgroundColor,
-            opacity: cs.opacity,
-            pe: cs.pointerEvents,
-            z: cs.zIndex,
-            w: r.width,
-            h: r.height,
-          };
-        } catch (e) {
-          return { exists: false, error: String(e && e.message ? e.message : e) };
-        }
       });
-      console.log('👀 [Monitor] Lock overlay diag:', lockDiag);
+      console.log('🔒 [Monitor] Overlay activado - Ventana bloqueada');
     } catch (e) {
-      // ignore
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  // Forzar navegación al filtro de "No leídos/Unread" una vez que la sesión ya está conectada.
-  // (Después del login el DOM puede reiniciarse y los intervalos iniciales pueden no bastar.)
-  for (let attempt = 0; attempt < 12; attempt++) {
-    try {
-      const shouldPoll = await monitorPage.evaluate(() => {
-        const side = document.querySelector('#side, #pane-side');
-        return Boolean(side);
-      });
-
-      if (shouldPoll) {
-        const diag = await monitorPage.evaluate(() => {
-          try {
-            if (window.__anaAllowUnreadOnly) window.__anaAllowUnreadOnly();
-
-            const spans = Array.from(document.querySelectorAll('span'));
-            const target = spans.find((s) => {
-              const t = (s.textContent || '').trim().toLowerCase();
-              return t === 'no leídos' || t === 'no leidos' || t === 'unread';
-            });
-
-            const clickable = target ? (target.closest('[role="tab"],button,[role="button"],a,div[role="button"],li[role="button"]') || target.parentElement) : null;
-            const canClick = Boolean(clickable);
-
-            if (window.__anaClickUnread) window.__anaClickUnread();
-
-            const ariaSelectedAfter = clickable ? String(clickable.getAttribute('aria-selected') || '') : '';
-
-            // Si ya quedó seleccionado, activar bloqueo (si aún no estaba)
-            if (String(ariaSelectedAfter || '').toLowerCase() === 'true') {
-              try {
-                window.__anaMonitorLocked = true;
-                if (window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
-              } catch (e) {
-                // ignore
-              }
-            }
-
-            return {
-              foundUnread: Boolean(target),
-              canClick,
-              ariaSelected: ariaSelectedAfter,
-              targetText: target ? (target.textContent || '').trim() : null,
-            };
-          } catch (e) {
-            return { error: String(e && e.message ? e.message : e) };
-          }
-        });
-
-        console.log(`👀 [Monitor] clickUnread diag intento ${attempt + 1}/12:`, diag);
-      }
-    } catch (e) {
-      // ignore
-    }
-    try {
-      await monitorPage.waitForTimeout(500);
-    } catch (e) {
-      break;
+      console.log('⚠️  [Monitor] Error activando overlay:', e.message);
     }
   }
 
-  await monitorPage.evaluate(() => {
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'F12') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.ctrlKey && e.shiftKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.metaKey && e.altKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.metaKey && e.altKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      if (e.metaKey && e.altKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    }, true);
-
-    document.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }, true);
-
-    // UI restrictions intentionally disabled for now
+  // Re-aplicar lock en cada load (sin reinstalar intervals/observers)
+  monitorPage.on('load', async () => {
+    try {
+      await installMonitorHelpersOnce();
+      await monitorPage.evaluate(() => {
+        if (window.__anaMonitorLocked && window.__anaEnableMonitorLock) window.__anaEnableMonitorLock();
+      });
+    } catch (_) {}
   });
 
-  await monitorPage.waitForTimeout(2000);
-
+  // Loop de monitoreo
   processedPhones = new Set();
   if (monitorLoopInterval) {
     try {
       clearInterval(monitorLoopInterval);
-    } catch (e) {
-      // ignore
-    }
+    } catch (_) {}
   }
+
   monitorLoopInterval = setInterval(() => {
     try {
       const ts = new Date();
@@ -1318,26 +1167,40 @@ export async function initMonitorWhatsApp() {
       const mm = String(ts.getMinutes()).padStart(2, '0');
       const ss = String(ts.getSeconds()).padStart(2, '0');
       console.log(`👀 [Monitor] Poll tick ${hh}:${mm}:${ss}`);
-    } catch (e) {
-      // ignore
-    }
+    } catch (_) {}
     monitorUnreadLoop().catch(() => null);
   }, 5000);
+
+  console.log('✅ [Monitor] Loop iniciado.');
 }
 
 export async function closeMonitorBrowser() {
-  if (monitorBrowser) {
-    console.log('🔒 Cerrando navegador monitor...');
-    if (monitorLoopInterval) {
-      try {
-        clearInterval(monitorLoopInterval);
-      } catch (e) {
-        // ignore
-      }
-      monitorLoopInterval = null;
-    }
-    await monitorBrowser.close();
+  if (!monitorBrowser && !monitorContext && !monitorPwBrowser) return;
+  console.log('🔒 Cerrando navegador monitor...');
+
+  if (monitorLoopInterval) {
+    try {
+      clearInterval(monitorLoopInterval);
+    } catch (_) {}
+    monitorLoopInterval = null;
   }
+
+  try {
+    if (monitorBrowser) await monitorBrowser.close();
+  } catch (_) {}
+
+  try {
+    if (!monitorBrowser && monitorContext) await monitorContext.close();
+  } catch (_) {}
+
+  try {
+    if (monitorPwBrowser) await monitorPwBrowser.close();
+  } catch (_) {}
+
+  monitorBrowser = null;
+  monitorPwBrowser = null;
+  monitorContext = null;
+  monitorPage = null;
 }
 
 export function getMonitorPage() {

@@ -17,20 +17,75 @@ export async function readContacts() {
       return;
     }
 
-    fs.createReadStream(CONFIG.inputCsv)
-      .pipe(csvParser({ columns: true, trim: true }))
-      .on('data', (row) => {
-        const contact = normalizeContact(row);
+    // Leer todo el archivo primero para manejar campos multilínea correctamente
+    const fileContent = fs.readFileSync(CONFIG.inputCsv, 'utf-8');
+    const lines = fileContent.split('\n');
+    
+    if (lines.length === 0) {
+      resolve([]);
+      return;
+    }
+    
+    // Obtener headers de la primera línea
+    const headers = lines[0].split(',').map(h => h.trim());
+    
+    // Procesar líneas, manejando campos entre comillas con saltos de línea
+    let currentRow = [];
+    let inQuotedField = false;
+    let currentField = '';
+    
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Contar comillas para determinar si estamos dentro de un campo
+      for (let j = 0; j < line.length; j++) {
+        const char = line[j];
         
-        if (contact.phone) {
-          contacts.push(contact);
+        if (char === '"') {
+          // Comilla doble escapada
+          if (line[j + 1] === '"') {
+            currentField += '"';
+            j++; // Skip next quote
+          } else {
+            // Toggle quoted field state
+            inQuotedField = !inQuotedField;
+          }
+        } else if (char === ',' && !inQuotedField) {
+          // Fin de campo
+          currentRow.push(currentField.trim());
+          currentField = '';
+        } else {
+          currentField += char;
         }
-      })
-      .on('end', () => {
-        console.log(`✅ ${contacts.length} contactos cargados desde CSV`);
-        resolve(contacts);
-      })
-      .on('error', reject);
+      }
+      
+      // Si no estamos en un campo entre comillas, es fin de registro
+      if (!inQuotedField) {
+        currentRow.push(currentField.trim());
+        currentField = '';
+        
+        // Crear objeto del registro
+        if (currentRow.length === headers.length) {
+          const rowObj = {};
+          headers.forEach((header, idx) => {
+            rowObj[header] = currentRow[idx];
+          });
+          
+          const contact = normalizeContact(rowObj);
+          if (contact.phone) {
+            contacts.push(contact);
+          }
+        }
+        
+        currentRow = [];
+      } else {
+        // Agregar salto de línea al campo actual
+        currentField += '\n';
+      }
+    }
+    
+    console.log(`✅ ${contacts.length} contactos cargados desde CSV`);
+    resolve(contacts);
   });
 }
 

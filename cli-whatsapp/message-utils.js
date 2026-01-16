@@ -24,6 +24,9 @@ export function replaceVariables(template, contact) {
     message = message.replace(regex, value);
   });
 
+  // Convertir \n literales a saltos de línea reales
+  message = message.replace(/\\n/g, '\n');
+
   return message;
 }
 
