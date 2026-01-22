@@ -1038,9 +1038,12 @@ async function initChatBackupSystem(page, agentConfig) {
     window.manualConfig = config;
     
     let currentChatPhone = null;
-    let messageObserver = null;
+    let isFirstBackup = true;
     let isBackingUp = false;
-
+    let messageObserver = null;
+    let backupCheckInterval = null;
+    let backupIntervalActive = false; // Flag para prevenir múltiples intervalos
+    
     // Función para normalizar números de teléfono
     const normalizePhoneForBackend = (rawPhone) => {
       const digits = String(rawPhone || '').replace(/\D/g, '');
@@ -1579,9 +1582,6 @@ async function initChatBackupSystem(page, agentConfig) {
       }
     };
 
-    // Variable para almacenar el intervalo de verificación
-    let backupCheckInterval = null;
-
     // Observar cambios de chat (polling cada segundo)
     const observeChatChanges = () => {
       const phoneNumber = getCurrentContactPhone();
@@ -1597,6 +1597,7 @@ async function initChatBackupSystem(page, agentConfig) {
           log('[ChatBackup] 🧹 Limpiando intervalo anterior');
           clearInterval(backupCheckInterval);
           backupCheckInterval = null;
+          backupIntervalActive = false;
         }
         
         // Detener countdown anterior
@@ -1614,26 +1615,33 @@ async function initChatBackupSystem(page, agentConfig) {
         // Iniciar observador de mensajes nuevos (DESHABILITADO - solo usar intervalo de 15s)
         // startMessageObserver(phoneNumber);
         
-        // Iniciar verificación automática cada 15 segundos
-        log('[ChatBackup] ⏰ Iniciando intervalo de respaldo cada 15 segundos');
-        backupCheckInterval = setInterval(() => {
-          log('[ChatBackup] ⏰ Ejecutando respaldo programado (15s)');
-          const currentPhone = getCurrentContactPhone();
-          if (currentPhone === phoneNumber) {
-            // El respaldo pausará y reanudará el countdown automáticamente
-            backupFullConversation(phoneNumber, true);
-          } else {
-            log('[ChatBackup] ⚠️ Chat cambió, saltando respaldo programado');
-          }
-        }, 15000);
+        // Iniciar verificación automática cada 15 segundos (solo si no hay uno activo)
+        if (!backupIntervalActive) {
+          log('[ChatBackup] ⏰ Iniciando intervalo de respaldo cada 15 segundos');
+          backupIntervalActive = true;
+          backupCheckInterval = setInterval(() => {
+            log('[ChatBackup] ⏰ Ejecutando respaldo programado (15s)');
+            const currentPhone = getCurrentContactPhone();
+            if (currentPhone === phoneNumber) {
+              // El respaldo pausará y reanudará el countdown automáticamente
+              backupFullConversation(phoneNumber, true);
+            } else {
+              log('[ChatBackup] ⚠️ Chat cambió, saltando respaldo programado');
+            }
+          }, 15000);
+        } else {
+          log('[ChatBackup] ⚠️ Ya hay un intervalo activo, no se crea otro');
+        }
       } else if (!phoneNumber && currentChatPhone) {
         // Se salió del chat
         log('[ChatBackup] 🚪 Salió del chat');
         currentChatPhone = null;
         stopCountdown();
         if (backupCheckInterval) {
+          log('[ChatBackup] 🧹 Limpiando intervalo al salir del chat');
           clearInterval(backupCheckInterval);
           backupCheckInterval = null;
+          backupIntervalActive = false;
         }
       }
     };
