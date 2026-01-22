@@ -76,6 +76,38 @@ functions:
           path: /backups/latest/{agentId}/{campaign}
           method: options
 
+  saveChatBackup:
+    handler: src/handlers/chatBackups.saveChatBackup
+    events:
+      - httpApi:
+          cors: true
+          path: /backups/chat
+          method: post
+
+  chatBackupsOptions:
+    handler: src/handlers/chatBackups.optionsHandler
+    events:
+      - httpApi:
+          cors: true
+          path: /backups/chat
+          method: options
+
+  getChatBackup:
+    handler: src/handlers/chatBackups.getChatBackup
+    events:
+      - httpApi:
+          cors: true
+          path: /backups/chat/{campaign}/{agentId}/{contactPhone}
+          method: get
+
+  getChatBackupOptions:
+    handler: src/handlers/chatBackups.optionsHandler
+    events:
+      - httpApi:
+          cors: true
+          path: /backups/chat/{campaign}/{agentId}/{contactPhone}
+          method: options
+
   getChats:
     handler: src/handlers/chats.getChats
     events:

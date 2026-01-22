@@ -376,7 +376,7 @@ async function main() {
       }
 
       const POLL_INTERVAL_MS = 30 * 1000;
-      const PAUSE_AFTER_MESSAGES = 15;
+      const PAUSE_AFTER_MESSAGES = 25;
       const PAUSE_DURATION_MS = 30 * 60 * 1000;
 
       const results = [];

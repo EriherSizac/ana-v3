@@ -356,6 +356,57 @@ export async function initManualWhatsApp(allowedContacts = []) {
     console.error('⚠️  Error al preparar botón de historial:', error.message);
   }
 
+  // Exponer función de logging para que los logs del navegador aparezcan en Node.js
+  try {
+    await manualPage.exposeFunction('logToNodeConsole', (message, ...args) => {
+      console.log(message, ...args);
+    });
+  } catch (error) {
+    console.error('⚠️  Error al exponer función de logging:', error.message);
+  }
+
+  // Exponer funciones para respaldo de conversaciones
+  try {
+    await manualPage.exposeFunction('getChatBackupFromBackend', async (campaign, agentId, contactPhone) => {
+      try {
+        const url = `${CONFIG.apiBaseUrl}/backups/chat/${campaign}/${agentId}/${contactPhone}`;
+        console.log(`[ChatBackup] 📡 GET ${url}`);
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        console.log(`[ChatBackup] 📡 Response status: ${response.status}`);
+        const data = await response.json();
+        console.log(`[ChatBackup] 📡 Response data:`, data);
+        return data;
+      } catch (error) {
+        console.error('[ChatBackup] Error al obtener backup:', error);
+        return { success: false, message: 'Error de conexión' };
+      }
+    });
+
+    await manualPage.exposeFunction('saveChatBackupToBackend', async (campaign, agentId, contactPhone, messages) => {
+      try {
+        const response = await fetch(`${CONFIG.apiBaseUrl}/backups/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ campaign, agent_id: agentId, contact_phone: contactPhone, messages })
+        });
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error('[ChatBackup] Error al guardar backup:', error);
+        return { success: false, message: 'Error de conexión' };
+      }
+    });
+  } catch (error) {
+    console.error('⚠️  Error al exponer funciones de chat backup:', error.message);
+  }
+
   try {
     await injectGestionButton(manualPage);
   } catch (error) {
@@ -532,6 +583,14 @@ export async function initManualWhatsApp(allowedContacts = []) {
   backupMonitorInterval = await startBackupMonitor(manualPage);
   console.log('☁️  Botón de respaldo de chats activado');
   console.log('📜 Botón de historial activado (se mostrará cuando WhatsApp cargue)');
+  
+  // Iniciar sistema de respaldo automático de conversaciones
+  await initChatBackupSystem(manualPage, manualConfig);
+  console.log('💾 Sistema de respaldo automático de conversaciones activado');
+  
+  // Recargar la página para que el script de respaldo se ejecute
+  console.log('[ChatBackup] Recargando página para activar sistema de respaldo...');
+  await manualPage.reload({ waitUntil: 'networkidle' });
 }
 
 /**
@@ -747,13 +806,115 @@ async function applyUIRestrictions(allowedContacts) {
         }
       });
       
+      // Bloquear menú contextual en mensajes del chat
+      const blockMessageContextMenu = () => {
+        // Bloquear en el contenedor principal de mensajes
+        const messagesContainer = document.querySelector('[data-testid="conversation-panel-messages"]');
+        if (messagesContainer) {
+          // Bloquear clic derecho
+          messagesContainer.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            return false;
+          }, true);
+          
+          // Bloquear clic izquierdo en mensajes (excepto en el input de texto)
+          messagesContainer.addEventListener('click', (e) => {
+            const target = e.target;
+            // No bloquear si es el input de mensajes o elementos editables
+            if (target.getAttribute('contenteditable') === 'true' || 
+                target.closest('[contenteditable="true"]') ||
+                target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA') {
+              return;
+            }
+            
+            // Verificar si el clic es en un mensaje
+            const messageElement = target.closest('[data-id]');
+            if (messageElement && messageElement.getAttribute('data-id')) {
+              e.preventDefault();
+              e.stopPropagation();
+              e.stopImmediatePropagation();
+              return false;
+            }
+          }, true);
+        }
+        
+        // Bloquear en todos los mensajes individuales
+        const messages = document.querySelectorAll('[data-id]');
+        messages.forEach(msg => {
+          // Bloquear clic derecho
+          msg.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            return false;
+          }, true);
+          
+          // Bloquear clic izquierdo
+          msg.addEventListener('click', (e) => {
+            const target = e.target;
+            // No bloquear si es el input de mensajes o elementos editables
+            if (target.getAttribute('contenteditable') === 'true' || 
+                target.closest('[contenteditable="true"]') ||
+                target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA') {
+              return;
+            }
+            
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            return false;
+          }, true);
+        });
+        
+        // Ocultar cualquier menú contextual que aparezca
+        const contextMenus = document.querySelectorAll('[role="application"]');
+        contextMenus.forEach(menu => {
+          const menuItems = menu.querySelectorAll('[role="button"]');
+          if (menuItems.length > 0) {
+            // Si tiene opciones como "Info. del mensaje", "Responder", etc.
+            const hasMessageOptions = Array.from(menuItems).some(item => 
+              item.textContent.includes('Info') || 
+              item.textContent.includes('Responder') ||
+              item.textContent.includes('Reaccionar') ||
+              item.textContent.includes('Descargar')
+            );
+            if (hasMessageOptions) {
+              menu.style.display = 'none';
+              menu.style.visibility = 'hidden';
+              menu.style.pointerEvents = 'none';
+              menu.remove();
+            }
+          }
+        });
+      };
+      
+      // Ejecutar bloqueo inicial
+      blockMessageContextMenu();
+      
+      // Observar nuevos mensajes para aplicar el bloqueo
+      const messageObserver = new MutationObserver(() => {
+        blockMessageContextMenu();
+      });
+      
+      const chatContainer = document.querySelector('#main');
+      if (chatContainer) {
+        messageObserver.observe(chatContainer, {
+          childList: true,
+          subtree: true
+        });
+      }
+      
       // Agregar overlay informativo
       if (!document.getElementById('manual-mode-indicator')) {
         const indicator = document.createElement('div');
         indicator.id = 'manual-mode-indicator';
         indicator.style.cssText = `
           position: fixed;
-          top: 10px;
+          top: 70px;
           right: 10px;
           background: rgba(37, 211, 102, 0.95);
           color: white;
@@ -850,6 +1011,678 @@ export async function closeManualBrowser() {
  */
 export function getManualPage() {
   return manualPage;
+}
+
+/**
+ * Inicializa el sistema de respaldo automático de conversaciones
+ */
+async function initChatBackupSystem(page, agentConfig) {
+  if (!agentConfig || !agentConfig.agent_id || !agentConfig.campaign) {
+    console.log('⚠️  No hay configuración de agente, sistema de respaldo no disponible');
+    return;
+  }
+
+  await page.addInitScript((config) => {
+    // Función helper para logging que funciona tanto en navegador como en Node.js
+    const log = (...args) => {
+      if (typeof window.logToNodeConsole === 'function') {
+        window.logToNodeConsole(...args);
+      } else {
+        console.log(...args);
+      }
+    };
+    
+    log('[ChatBackup] 🚀 Sistema de respaldo inicializando...', config);
+    
+    // Guardar config globalmente para que el botón de historial pueda acceder
+    window.manualConfig = config;
+    
+    let currentChatPhone = null;
+    let messageObserver = null;
+    let isBackingUp = false;
+
+    // Función para normalizar números de teléfono
+    const normalizePhoneForBackend = (rawPhone) => {
+      const digits = String(rawPhone || '').replace(/\D/g, '');
+      if (!digits) return '';
+
+      let normalized = digits;
+
+      // Si viene sin lada (10 dígitos), asumir México móvil
+      if (normalized.length === 10) {
+        normalized = '521' + normalized; // México móvil: 521 + 10 dígitos
+      }
+
+      // Si ya tiene 521 y 13 dígitos, está correcto
+      if (normalized.startsWith('521') && normalized.length === 13) {
+        return normalized;
+      }
+
+      // Si tiene 52 sin el 1 y 12 dígitos, agregar el 1
+      if (normalized.startsWith('52') && !normalized.startsWith('521') && normalized.length === 12) {
+        normalized = '521' + normalized.slice(2);
+      }
+
+      return normalized;
+    };
+
+    // Función para calcular hash simple de mensajes
+    const calculateMessagesHash = (messages) => {
+      const str = JSON.stringify(messages.map(m => ({
+        id: m.id,
+        timestamp: m.timestamp,
+        body: m.body,
+        from: m.from
+      })));
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+      }
+      return hash.toString(36);
+    };
+
+    // Función para extraer mensajes del chat actual (versión robusta)
+    const extractCurrentChatMessages = () => {
+      const messages = [];
+      const mainContainer = document.querySelector('#main');
+      if (!mainContainer) return messages;
+      
+      // Buscar contenedores de mensajes usando múltiples selectores
+      let messageContainers = Array.from(
+        mainContainer.querySelectorAll('[data-testid="msg-container-in"], [data-testid="msg-container-out"], [data-testid="msg-container"]')
+      );
+
+      // Fallback: usar data-pre-plain-text si no hay msg-container
+      if (messageContainers.length === 0) {
+        const prePlainNodes = Array.from(mainContainer.querySelectorAll('[data-pre-plain-text]'));
+        const uniqueContainers = new Map();
+        for (const node of prePlainNodes) {
+          const c = node.closest('[data-testid="msg-container-in"], [data-testid="msg-container-out"], [data-id]') || node.closest('div');
+          if (!c) continue;
+          const key = c.getAttribute('data-id') || c.getAttribute('data-testid') || `${c.tagName}:${c.className}`;
+          if (!uniqueContainers.has(key)) uniqueContainers.set(key, c);
+        }
+        messageContainers = Array.from(uniqueContainers.values());
+      }
+      
+      messageContainers.forEach(container => {
+        try {
+          const dataId = container.getAttribute('data-id');
+          const testId = container.getAttribute('data-testid') || '';
+          
+          // Determinar si es mensaje saliente o entrante
+          const isOutgoing = testId === 'msg-container-out' ||
+                            (dataId && dataId.includes('true_')) ||
+                            !!container.closest('.message-out') ||
+                            !!container.querySelector('.message-out') ||
+                            !!container.querySelector('[data-icon="msg-dblcheck"]') ||
+                            !!container.querySelector('[data-icon="msg-check"]');
+          
+          const isIncoming = testId === 'msg-container-in' ||
+                            !!container.closest('.message-in') ||
+                            !!container.querySelector('.message-in');
+          
+          // Obtener texto del mensaje con múltiples selectores
+          const textElement = container.querySelector('span.selectable-text.copyable-text span') ||
+                             container.querySelector('span._ao3e.copyable-text') ||
+                             container.querySelector('[data-testid="conversation-text"]') ||
+                             container.querySelector('div.copyable-text') ||
+                             container.querySelector('[class*="copyable-text"] [class*="selectable-text"]');
+          
+          const text = textElement ? textElement.textContent : '';
+          
+          // Obtener timestamp
+          const timeElement = container.querySelector('[data-pre-plain-text]') || container.closest('[data-pre-plain-text]');
+          let timestamp = Date.now();
+          if (timeElement) {
+            const prePlainText = timeElement.getAttribute('data-pre-plain-text');
+            if (prePlainText) {
+              const match = prePlainText.match(/\[([^\]]+)\]/);
+              if (match) timestamp = match[1];
+            }
+          }
+          
+          if (text && dataId) {
+            messages.push({
+              id: dataId || `msg_${messages.length}`,
+              timestamp: timestamp,
+              body: text,
+              from: isOutgoing ? 'me' : 'them',
+              type: 'text',
+              direction: isOutgoing ? 'outgoing' : 'incoming'
+            });
+          }
+        } catch (e) {
+          // Ignorar errores en mensajes individuales
+        }
+      });
+      
+      return messages;
+    };
+
+    // Función para obtener el número del contacto actual (versión robusta)
+    const getCurrentContactPhone = () => {
+      const extractPhone = (raw) => {
+        if (!raw) return null;
+        const str = String(raw);
+        const digits = str.replace(/\D/g, '');
+        if (digits.length < 10) return null;
+
+        // Solo aceptar candidatos que claramente parecen teléfono
+        const looksLikePhone = str.includes('+') || digits.startsWith('52');
+        if (!looksLikePhone) return null;
+
+        return digits;
+      };
+
+      const mainContainer = document.querySelector('#main');
+      const header = (mainContainer && mainContainer.querySelector('header')) || document.querySelector('#main header') || document.querySelector('header');
+      
+      if (header) {
+        // Método 1: Del título del header
+        const titleElement = header.querySelector('span[dir="auto"][title]');
+        if (titleElement) {
+          const title = titleElement.getAttribute('title');
+          const phone = extractPhone(title);
+          if (phone) return phone;
+        }
+
+        // Método 2: De spans con números (sin title)
+        const dirAutoSpans = Array.from(header.querySelectorAll('span[dir="auto"]')).slice(0, 20);
+        for (const s of dirAutoSpans) {
+          const txt = (s.textContent || '').trim();
+          if (!txt) continue;
+          const phone = extractPhone(txt);
+          if (phone) return phone;
+        }
+
+        // Método 3: De span con título que contiene +
+        const phoneSpan = header.querySelector('span[title*="+"]');
+        if (phoneSpan) {
+          const phoneRaw = phoneSpan.getAttribute('title');
+          const phone = extractPhone(phoneRaw);
+          if (phone) return phone;
+        }
+      }
+
+      // Método 4: Del data-id en el contenedor principal
+      if (mainContainer) {
+        const nodes = Array.from(mainContainer.querySelectorAll('[data-id]')).slice(0, 25);
+        for (const n of nodes) {
+          const dataId = n.getAttribute('data-id');
+          // Ignorar grupos
+          if (dataId && String(dataId).includes('@g.us')) continue;
+          const phone = extractPhone(dataId);
+          if (phone) return phone;
+        }
+      }
+
+      // Método 5: Del chat seleccionado en el sidebar
+      const selectedChat =
+        document.querySelector('#pane-side [aria-selected="true"]') ||
+        document.querySelector('#pane-side [aria-current="true"]') ||
+        document.querySelector('#pane-side [role="row"][aria-selected="true"]') ||
+        document.querySelector('#pane-side [role="gridcell"][aria-selected="true"]');
+
+      if (selectedChat) {
+        const dataIdCandidates = [];
+        const direct = selectedChat.getAttribute('data-id');
+        if (direct) dataIdCandidates.push(direct);
+        const inner = selectedChat.querySelector('[data-id]');
+        if (inner) {
+          const innerId = inner.getAttribute('data-id');
+          if (innerId) dataIdCandidates.push(innerId);
+        }
+
+        for (const candidate of dataIdCandidates) {
+          if (String(candidate).includes('@g.us')) continue;
+          const phone = extractPhone(candidate);
+          if (phone) return phone;
+        }
+      }
+
+      return null;
+    };
+
+    // Función para mostrar overlay de respaldo
+    const showBackupOverlay = () => {
+      let overlay = document.getElementById('chat-backup-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'chat-backup-overlay';
+        overlay.style.cssText = `
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          background: rgba(0, 0, 0, 0.9);
+          color: white;
+          padding: 30px 40px;
+          border-radius: 15px;
+          font-family: Arial, sans-serif;
+          font-size: 16px;
+          z-index: 999999999;
+          box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+          text-align: center;
+          min-width: 300px;
+        `;
+        overlay.innerHTML = `
+          <div style="font-size: 40px; margin-bottom: 15px;">💾</div>
+          <div style="font-weight: bold; margin-bottom: 10px;">Respaldando chat...</div>
+          <div style="font-size: 14px; opacity: 0.8;">Verificando cambios en la nube</div>
+        `;
+        document.body.appendChild(overlay);
+      }
+      return overlay;
+    };
+
+    // Función para ocultar overlay de respaldo
+    const hideBackupOverlay = () => {
+      const overlay = document.getElementById('chat-backup-overlay');
+      if (overlay) {
+        overlay.remove();
+      }
+    };
+
+    // Variable para el indicador de countdown
+    let countdownIndicator = null;
+    let countdownInterval = null;
+    let countdownSeconds = 15;
+
+    // Función para crear/actualizar el indicador de countdown
+    const updateCountdownIndicator = () => {
+      if (!countdownIndicator) {
+        log('[ChatBackup] 📊 Creando indicador de countdown');
+        countdownIndicator = document.createElement('div');
+        countdownIndicator.id = 'backup-countdown-indicator';
+        countdownIndicator.style.cssText = `
+          position: fixed;
+          top: 10px;
+          right: 20px;
+          background: rgba(0, 0, 0, 0.85);
+          color: white;
+          padding: 12px 16px;
+          border-radius: 12px;
+          font-family: Arial, sans-serif;
+          font-size: 13px;
+          font-weight: bold;
+          z-index: 999999998;
+          box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        `;
+        document.body.appendChild(countdownIndicator);
+        log('[ChatBackup] ✅ Indicador agregado al DOM');
+      }
+
+      const circumference = 2 * Math.PI * 18;
+      const dashLength = (countdownSeconds / 15) * circumference;
+
+      countdownIndicator.innerHTML = `
+        <svg width="40" height="40" style="transform: rotate(-90deg);">
+          <circle cx="20" cy="20" r="18" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+          <circle cx="20" cy="20" r="18" fill="none" stroke="#25D366" stroke-width="3"
+                  stroke-dasharray="${dashLength} ${circumference}"
+                  stroke-linecap="round"
+                  style="transition: stroke-dasharray 1s linear;"/>
+          <text x="20" y="25" text-anchor="middle" fill="white" font-size="14" font-weight="bold"
+                style="transform: rotate(90deg); transform-origin: 20px 20px;">${countdownSeconds}</text>
+        </svg>
+        <div>
+          <div style="font-size: 12px; opacity: 0.9;">Próximo respaldo</div>
+          <div style="font-size: 11px; opacity: 0.7;">${countdownSeconds}s</div>
+        </div>
+      `;
+    };
+
+    // Función para iniciar el countdown
+    const startCountdown = () => {
+      log('[ChatBackup] 🕐 Iniciando countdown');
+      countdownSeconds = 15;
+      updateCountdownIndicator();
+
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+
+      countdownInterval = setInterval(() => {
+        countdownSeconds--;
+        if (countdownSeconds < 0) {
+          countdownSeconds = 15;
+        }
+        updateCountdownIndicator();
+      }, 1000);
+      
+      log('[ChatBackup] ✅ Countdown iniciado, indicador visible');
+    };
+
+    // Función para detener el countdown
+    const stopCountdown = () => {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
+      if (countdownIndicator) {
+        countdownIndicator.remove();
+        countdownIndicator = null;
+      }
+    };
+
+    // Función para mostrar toast pequeño (no intrusivo)
+    const showBackupToast = (message, type = 'info') => {
+      // Eliminar cualquier toast existente para evitar que se encimen
+      const existingToast = document.getElementById('backup-toast');
+      if (existingToast) {
+        existingToast.remove();
+      }
+      
+      const toast = document.createElement('div');
+      toast.id = 'backup-toast';
+      toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: ${type === 'success' ? 'rgba(37, 211, 102, 0.95)' : 
+                      type === 'info' ? 'rgba(100, 100, 100, 0.95)' : 
+                      'rgba(255, 107, 107, 0.95)'};
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        font-weight: 500;
+        z-index: 999999999;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        animation: slideInUp 0.3s ease;
+        max-width: 300px;
+      `;
+      
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      
+      toast.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div style="font-size: 16px;">${type === 'success' ? '✅' : type === 'info' ? 'ℹ️' : '⚠️'}</div>
+          <div style="flex: 1;">
+            <div>${message}</div>
+            <div style="font-size: 10px; opacity: 0.8; margin-top: 2px;">${timeStr}</div>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(toast);
+      
+      setTimeout(() => {
+        toast.style.animation = 'slideOutDown 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    };
+
+    // Función para mostrar popup de notificación (solo primer respaldo)
+    const showBackupNotification = (message, type = 'info') => {
+      const notification = document.createElement('div');
+      notification.style.cssText = `
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        background: ${type === 'success' ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' : 
+                      type === 'info' ? 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)' : 
+                      'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)'};
+        color: white;
+        padding: 15px 20px;
+        border-radius: 12px;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        font-weight: bold;
+        z-index: 999999999;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        animation: slideInRight 0.3s ease;
+        max-width: 350px;
+      `;
+      
+      const now = new Date();
+      const timestamp = now.toLocaleString('es-MX', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      notification.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="font-size: 24px;">${type === 'success' ? '✅' : type === 'info' ? '📋' : 'ℹ️'}</div>
+          <div style="flex: 1;">
+            <div style="margin-bottom: 5px;">${message}</div>
+            <div style="font-size: 11px; opacity: 0.9;">${timestamp}</div>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(notification);
+      
+      setTimeout(() => {
+        notification.style.animation = 'slideOutRight 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+      }, 4000);
+    };
+
+    // Función para respaldar la conversación completa
+    const backupFullConversation = async (phoneNumber, showUI = true) => {
+      if (isBackingUp) {
+        log('[ChatBackup] ⏸️ Respaldo en progreso, saltando...');
+        return;
+      }
+      isBackingUp = true;
+      
+      // Pausar el countdown mientras se ejecuta el respaldo
+      stopCountdown();
+      
+      // Normalizar el número de teléfono (521 -> 52)
+      const normalizedPhone = normalizePhoneForBackend(phoneNumber);
+      log('[ChatBackup] Número original:', phoneNumber, '-> Normalizado:', normalizedPhone);
+      
+      try {
+        log('[ChatBackup] Respaldando conversación completa para:', normalizedPhone);
+        
+        // Extraer todos los mensajes
+        const messages = extractCurrentChatMessages();
+        if (messages.length === 0) {
+          log('[ChatBackup] No hay mensajes para respaldar');
+          return;
+        }
+        
+        // Calcular hash local
+        const localHash = calculateMessagesHash(messages);
+        log('[ChatBackup] Hash local:', localHash, 'Total mensajes:', messages.length);
+        
+        // Obtener backup del backend
+        const backupData = await window.getChatBackupFromBackend(
+          config.campaign,
+          config.agent_id,
+          normalizedPhone
+        );
+        
+        let shouldBackup = true;
+        
+        if (backupData.success && backupData.data && backupData.data.messages) {
+          const remoteHash = calculateMessagesHash(backupData.data.messages);
+          log('[ChatBackup] Hash remoto:', remoteHash);
+          
+          if (localHash === remoteHash) {
+            log('[ChatBackup] ✅ Hashes coinciden, no es necesario respaldar');
+            shouldBackup = false;
+            if (showUI) {
+              showBackupNotification('No hay cambios en el chat', 'info');
+            }
+          } else {
+            log('[ChatBackup] ⚠️ Hashes diferentes, respaldando...');
+          }
+        } else {
+          log('[ChatBackup] No existe backup previo, creando nuevo...');
+        }
+        
+        if (shouldBackup) {
+          const result = await window.saveChatBackupToBackend(
+            config.campaign,
+            config.agent_id,
+            normalizedPhone,
+            messages
+          );
+          
+          if (result.success) {
+            log('[ChatBackup] ✅ Conversación respaldada:', result.stats);
+            if (showUI) {
+              showBackupNotification(`Chat respaldado (${result.stats.new_messages} nuevos mensajes)`, 'success');
+              isFirstBackup = false;
+            }
+          } else {
+            console.error('[ChatBackup] ❌ Error al respaldar:', result.message);
+            if (showUI) {
+              showBackupNotification('Error al respaldar chat', 'error');
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[ChatBackup] Error en backupFullConversation:', error);
+      } finally {
+        isBackingUp = false;
+        // Reanudar el countdown después de completar el respaldo
+        startCountdown();
+      }
+    };
+
+    // Función para respaldar un mensaje individual (sin UI)
+    const backupSingleMessage = async (phoneNumber, message) => {
+      try {
+        const normalizedPhone = normalizePhoneForBackend(phoneNumber);
+        log('[ChatBackup] Respaldando mensaje individual para:', normalizedPhone);
+        
+        const result = await window.saveChatBackupToBackend(
+          config.campaign,
+          config.agent_id,
+          normalizedPhone,
+          [message]
+        );
+        
+        if (result.success) {
+          log('[ChatBackup] ✅ Mensaje respaldado:', result.stats);
+          // No mostrar notificación para mensajes individuales, solo en verificación de 3 segundos
+        }
+      } catch (error) {
+        console.error('[ChatBackup] Error al respaldar mensaje:', error);
+      }
+    };
+
+    // Variable para almacenar el intervalo de verificación
+    let backupCheckInterval = null;
+
+    // Observar cambios de chat (polling cada segundo)
+    const observeChatChanges = () => {
+      const phoneNumber = getCurrentContactPhone();
+      
+      // Detectar cambio de chat
+      if (phoneNumber && phoneNumber !== currentChatPhone) {
+        log('[ChatBackup] 🔄 Cambio de chat detectado:', phoneNumber);
+        currentChatPhone = phoneNumber;
+        isFirstBackup = true; // Resetear flag para el nuevo chat
+        
+        // Limpiar intervalo anterior si existe
+        if (backupCheckInterval) {
+          clearInterval(backupCheckInterval);
+        }
+        
+        // Detener countdown anterior
+        stopCountdown();
+        
+        // Respaldar conversación completa al entrar al chat (con UI)
+        setTimeout(() => {
+          backupFullConversation(phoneNumber, true);
+          // Iniciar countdown después del primer respaldo
+          setTimeout(() => {
+            startCountdown();
+          }, 500);
+        }, 500);
+        
+        // Iniciar observador de mensajes nuevos
+        startMessageObserver(phoneNumber);
+        
+        // Iniciar verificación automática cada 15 segundos
+        backupCheckInterval = setInterval(() => {
+          const currentPhone = getCurrentContactPhone();
+          if (currentPhone === phoneNumber) {
+            // El respaldo pausará y reanudará el countdown automáticamente
+            backupFullConversation(phoneNumber, true);
+          }
+        }, 15000);
+      } else if (!phoneNumber && currentChatPhone) {
+        // Se salió del chat
+        log('[ChatBackup] 🚪 Salió del chat');
+        currentChatPhone = null;
+        stopCountdown();
+        if (backupCheckInterval) {
+          clearInterval(backupCheckInterval);
+          backupCheckInterval = null;
+        }
+      }
+    };
+
+    // Observar mensajes nuevos en tiempo real
+    const startMessageObserver = (phoneNumber) => {
+      if (messageObserver) {
+        messageObserver.disconnect();
+      }
+      
+      const messagesContainer = document.querySelector('[data-testid="conversation-panel-messages"]');
+      if (!messagesContainer) {
+        log('[ChatBackup] No se encontró contenedor de mensajes');
+        return;
+      }
+      
+      let lastMessageCount = 0;
+      
+      messageObserver = new MutationObserver(() => {
+        const messages = extractCurrentChatMessages();
+        
+        if (messages.length > lastMessageCount) {
+          // Hay mensajes nuevos
+          const newMessages = messages.slice(lastMessageCount);
+          log('[ChatBackup] 📨 Nuevos mensajes detectados:', newMessages.length);
+          
+          // Respaldar cada mensaje nuevo
+          newMessages.forEach(msg => {
+            backupSingleMessage(phoneNumber, msg);
+          });
+        }
+        
+        lastMessageCount = messages.length;
+      });
+      
+      messageObserver.observe(messagesContainer, {
+        childList: true,
+        subtree: true
+      });
+      
+      log('[ChatBackup] 👀 Observador de mensajes iniciado para:', phoneNumber);
+    };
+
+    // Iniciar sistema con polling cada segundo
+    log('[ChatBackup] 🚀 Sistema de respaldo automático inicializado');
+    
+    // Ejecutar primera verificación después de 2 segundos
+    setTimeout(() => {
+      observeChatChanges();
+      // Luego ejecutar cada segundo
+      setInterval(observeChatChanges, 1000);
+    }, 2000);
+  }, agentConfig);
+  
+  console.log('[ChatBackup] Script de respaldo inyectado correctamente');
 }
 
 function normalizePhoneForBackend(rawPhone) {
@@ -1419,49 +2252,69 @@ async function injectHistoryButton(page) {
         btn.innerHTML = '⏳ Cargando...';
 
         try {
-          console.log('[Historial] Llamando a window.getHistoryFromBackend...');
+          console.log('[Historial] Obteniendo backup del chat actual...');
           
           // Verificar si la función existe
-          if (typeof window.getHistoryFromBackend !== 'function') {
-            console.error('[Historial] ❌ window.getHistoryFromBackend no está disponible');
+          if (typeof window.getChatBackupFromBackend !== 'function') {
+            console.error('[Historial] ❌ window.getChatBackupFromBackend no está disponible');
             showNotification('❌ Error: Función no disponible', 'error');
             return;
           }
           
-          // Obtener historial del backend usando la función expuesta de Node.js
-          const result = await window.getHistoryFromBackend();
+          // Obtener configuración del agente (debe estar disponible globalmente)
+          const config = window.manualConfig || { campaign: 'monte_auto_avanza', agent_id: 'erick' };
+          
+          // Normalizar el número de teléfono antes de buscar el backup
+          const normalizePhone = (rawPhone) => {
+            const digits = String(rawPhone || '').replace(/\D/g, '');
+            if (!digits) return '';
+            let normalized = digits;
+            if (normalized.length === 10) {
+              normalized = '521' + normalized;
+            }
+            if (normalized.startsWith('521') && normalized.length === 13) {
+              return normalized;
+            }
+            if (normalized.startsWith('52') && !normalized.startsWith('521') && normalized.length === 12) {
+              normalized = '521' + normalized.slice(2);
+            }
+            return normalized;
+          };
+          
+          const normalizedPhone = normalizePhone(phoneNumber);
+          console.log('[Historial] Número normalizado:', phoneNumber, '->', normalizedPhone);
+          
+          // Obtener backup del chat actual usando el mismo endpoint que usa el sistema de respaldo
+          const result = await window.getChatBackupFromBackend(
+            config.campaign,
+            config.agent_id,
+            normalizedPhone
+          );
           console.log('[Historial] Resultado recibido:', result);
           
           if (!result.success) {
             console.log('[Historial] Sin éxito:', result.message);
-            showNotification(result.message || '📭 No hay historial disponible', 'info');
+            showNotification(result.message || '📭 No hay historial disponible para este chat', 'info');
             return;
           }
 
-          if (!result.data) {
-            console.log('[Historial] No hay data en el resultado');
-            showNotification('📭 No hay datos de historial', 'info');
+          if (!result.data || !result.data.messages) {
+            console.log('[Historial] No hay mensajes en el resultado');
+            showNotification('📭 No hay mensajes respaldados para este chat', 'info');
             return;
           }
 
-          // Buscar mensajes del contacto actual
-          console.log('[Historial] Buscando mensajes para:', phoneNumber);
-          const messages = findMessagesForContact(result.data, phoneNumber);
+          const messages = result.data.messages;
           
           if (messages.length === 0) {
             console.log('[Historial] No se encontraron mensajes');
-            // Asegurar que no quede el historial anterior visible
-            const b = document.getElementById('history-bubble');
-            if (b) b.remove();
-            const o = document.getElementById('history-overlay');
-            if (o) o.remove();
-            showNotification(`📭 No hay historial para este contacto`, 'info');
+            showNotification(`📭 No hay mensajes en el respaldo`, 'info');
             return;
           }
 
           console.log('[Historial] Mostrando burbuja con', messages.length, 'mensajes');
           // Mostrar burbuja con historial
-          showHistoryBubble(messages, phoneNumber, result.date);
+          showHistoryBubble(messages, phoneNumber, result.data.last_updated);
 
         } catch (error) {
           console.error('[Historial] Error:', error);
@@ -1720,32 +2573,31 @@ async function injectHistoryButton(page) {
 
       messages.forEach((msg, index) => {
         const msgDiv = document.createElement('div');
+        
+        // Determinar el tipo de mensaje basado en direction o from
+        const isOutgoing = msg.direction === 'outgoing' || msg.from === 'me';
+        const messageLabel = isOutgoing ? '📤 Enviado' : '📥 Recibido';
+        const bgColor = isOutgoing ? '#e3f2fd' : '#f1f8e9'; // Azul claro para enviados, verde claro para recibidos
+        const borderColor = isOutgoing ? '#2196F3' : '#4CAF50'; // Azul para enviados, verde para recibidos
+        
         msgDiv.style.cssText = `
           margin-bottom: 15px;
           padding: 15px;
-          background: ${msg.status === 'sent' ? '#e7f3ff' : '#f5f5f5'};
-          border-left: 4px solid ${msg.status === 'sent' ? '#667eea' : '#ccc'};
+          background: ${bgColor};
+          border-left: 4px solid ${borderColor};
           border-radius: 8px;
         `;
-
+        
         msgDiv.innerHTML = `
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-            <strong style="color: #333;">${msg.name || msg.contact_name || phoneNumber}</strong>
-            <span style="color: #666; font-size: 12px;">${formatSentAt(msg.sent_at || msg.sentAt || msg.timestamp)}</span>
+            <strong style="color: #333;">${isOutgoing ? '📤 Yo' : '📥 ' + (msg.name || msg.contact_name || phoneNumber)}</strong>
+            <span style="color: #666; font-size: 12px;">${msg.timestamp || msg.sent_at || msg.sentAt || 'Sin fecha'}</span>
           </div>
-          <div style="color: #555; white-space: pre-wrap; margin-bottom: 8px;">
-            <strong style="font-size: 11px; color: #999;">MENSAJE ENVIADO:</strong><br>
-            ${msg.message_sent || msg.message || msg.text || 'Sin mensaje'}
+          <div style="color: #333; white-space: pre-wrap; margin-bottom: 8px; font-size: 14px;">
+            ${msg.body || msg.message_sent || msg.message || msg.text || 'Sin mensaje'}
           </div>
-          ${msg.response ? `
-            <div style="margin-top: 10px; padding: 10px; background: #fff; border-radius: 5px; border-left: 3px solid #25D366;">
-              <strong style="color: #25D366; font-size: 12px;">RESPUESTA RECIBIDA:</strong>
-              <div style="color: #555; margin-top: 5px;">${msg.response}</div>
-            </div>
-          ` : '<div style="color: #999; font-size: 12px; font-style: italic;">Sin respuesta</div>'}
-          <div style="margin-top: 8px; font-size: 12px; color: #999;">
-            Estado: <span style="color: ${msg.status === 'sent' ? '#25D366' : '#ff6b6b'};">${msg.status === 'sent' ? '✅ Enviado' : '❌ Error'}</span>
-            ${msg.error ? `<br><span style="color: #ff6b6b;">Error: ${msg.error}</span>` : ''}
+          <div style="margin-top: 8px; font-size: 11px; color: #999;">
+            Tipo: ${msg.type || 'text'}
           </div>
         `;
 
@@ -1758,6 +2610,11 @@ async function injectHistoryButton(page) {
       // Agregar overlay primero, luego la burbuja
       document.body.appendChild(overlay);
       document.body.appendChild(bubble);
+      
+      // Auto-scroll al final para mostrar los mensajes más recientes
+      setTimeout(() => {
+        content.scrollTop = content.scrollHeight;
+      }, 100);
 
       // Cerrar burbuja y overlay
       document.getElementById('close-history-bubble').onclick = () => {
