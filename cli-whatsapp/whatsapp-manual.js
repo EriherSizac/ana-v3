@@ -1609,8 +1609,8 @@ async function initChatBackupSystem(page, agentConfig) {
           }, 500);
         }, 500);
         
-        // Iniciar observador de mensajes nuevos
-        startMessageObserver(phoneNumber);
+        // Iniciar observador de mensajes nuevos (DESHABILITADO - solo usar intervalo de 15s)
+        // startMessageObserver(phoneNumber);
         
         // Iniciar verificación automática cada 15 segundos
         backupCheckInterval = setInterval(() => {
