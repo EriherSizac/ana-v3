@@ -1,3 +1,6 @@
+// IMPORTANTE: setup-env.js debe importarse PRIMERO
+import './setup-env.js';
+
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import {

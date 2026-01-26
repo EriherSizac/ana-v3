@@ -1,3 +1,6 @@
+// IMPORTANTE: setup-env.js debe importarse PRIMERO para configurar variables de entorno
+import './setup-env.js';
+
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
