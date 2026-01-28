@@ -610,7 +610,13 @@ async function applyUIRestrictions(allowedContacts) {
   
   await manualPage.addInitScript((numbers) => {
     // Función global para aplicar restricciones
-    window.applyManualUIRestrictions = () => {
+    if (window.__anaManualRestrictionsBootstrapped) return;
+    window.__anaManualRestrictionsBootstrapped = true;
+
+    let __anaManualApplyScheduled = false;
+    let __anaManualLastApplyAt = 0;
+
+    const runApplyManualUIRestrictions = () => {
       // Inyectar CSS global para bloquear elementos del navegador
       if (!document.getElementById('manual-restrictions-style')) {
         const style = document.createElement('style');
@@ -624,6 +630,18 @@ async function applyUIRestrictions(allowedContacts) {
             display: none !important;
             visibility: hidden !important;
             opacity: 0 !important;
+            pointer-events: none !important;
+          }
+
+          /* Bloquear interacción con mensajes (evita selección/clic/menús) */
+          .message-in,
+          .message-in *,
+          .message-out,
+          .message-out * {
+            pointer-events: none !important;
+          }
+
+          [role="gridcell"] {
             pointer-events: none !important;
           }
           
@@ -643,6 +661,12 @@ async function applyUIRestrictions(allowedContacts) {
             -webkit-user-select: text !important;
             -moz-user-select: text !important;
             -ms-user-select: text !important;
+          }
+
+          /* Asegurar que el input/footer del chat siga funcionando */
+          #main footer,
+          #main footer * {
+            pointer-events: auto !important;
           }
         `;
         document.head.appendChild(style);
@@ -727,6 +751,23 @@ async function applyUIRestrictions(allowedContacts) {
       disableElements('#pane-side > div:nth-child(2) > div > div > div:nth-child(6) > div > div > div > div._ak8l._ap1_ > div._ak8j > div._ak8i');
       disableElements('[aria-label*="mensajes no leídos"]');
       disableElements('button span[data-icon="ic-chevron-down-menu"]');
+
+      // Bloquear el área del chevron/menu en cada chat (selector exacto reportado)
+      disableElements('#pane-side > div:nth-child(1) > div > div > div:nth-child(1) > div > div > div > div._ak8l._ap1_ > div._ak8j');
+
+      // Fallback robusto: deshabilitar el botón que contiene el icono del chevron
+      try {
+        const chevrons = document.querySelectorAll('#pane-side span[data-icon="ic-chevron-down-menu"]');
+        chevrons.forEach((icon) => {
+          const btn = icon.closest('button');
+          if (!btn) return;
+          btn.style.pointerEvents = 'none';
+          btn.style.opacity = '0';
+          btn.style.visibility = 'hidden';
+        });
+      } catch (e) {
+        // Ignorar
+      }
       
       // Ocultar botones de navegación inferior (Estado, Canales, Comunidades, Multimedia, Ajustes, Perfil)
       hideElements('[data-icon="status-refreshed"]');
@@ -811,67 +852,76 @@ async function applyUIRestrictions(allowedContacts) {
       
       // Bloquear menú contextual en mensajes del chat
       const blockMessageContextMenu = () => {
-        // Bloquear en el contenedor principal de mensajes
         const messagesContainer = document.querySelector('[data-testid="conversation-panel-messages"]');
-        if (messagesContainer) {
-          // Bloquear clic derecho
-          messagesContainer.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
+        if (!messagesContainer) return;
+
+        if (window.__anaManualMessageContextMenuBlocked) return;
+        window.__anaManualMessageContextMenuBlocked = true;
+
+        const shouldAllow = (target) => {
+          try {
+            if (!target) return false;
+            if (target.getAttribute && target.getAttribute('contenteditable') === 'true') return true;
+            if (target.closest && target.closest('[contenteditable="true"]')) return true;
+            const tag = String(target.tagName || '').toUpperCase();
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
             return false;
-          }, true);
-          
-          // Bloquear clic izquierdo en mensajes (excepto en el input de texto)
-          messagesContainer.addEventListener('click', (e) => {
+          } catch (_) {
+            return false;
+          }
+        };
+
+        messagesContainer.addEventListener(
+          'contextmenu',
+          (e) => {
             const target = e.target;
-            // No bloquear si es el input de mensajes o elementos editables
-            if (target.getAttribute('contenteditable') === 'true' || 
-                target.closest('[contenteditable="true"]') ||
-                target.tagName === 'INPUT' ||
-                target.tagName === 'TEXTAREA') {
-              return;
-            }
-            
-            // Verificar si el clic es en un mensaje
-            const messageElement = target.closest('[data-id]');
-            if (messageElement && messageElement.getAttribute('data-id')) {
+            if (shouldAllow(target)) return;
+            const messageElement = target && target.closest ? target.closest('[data-id]') : null;
+            if (messageElement && messageElement.getAttribute && messageElement.getAttribute('data-id')) {
               e.preventDefault();
               e.stopPropagation();
               e.stopImmediatePropagation();
               return false;
             }
-          }, true);
+          },
+          true
+        );
+
+        // Bloquear teclas que suelen abrir acciones sobre mensajes (por ejemplo Delete)
+        if (!window.__anaManualMessageKeyBlocker) {
+          window.__anaManualMessageKeyBlocker = (e) => {
+            try {
+              const k = String(e.key || '').toLowerCase();
+              if (k === 'delete' || k === 'backspace') {
+                const active = document.activeElement;
+                if (active && (active.getAttribute?.('contenteditable') === 'true' || active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+                  return;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
+              }
+            } catch (_) {}
+          };
+          document.addEventListener('keydown', window.__anaManualMessageKeyBlocker, true);
         }
-        
-        // Bloquear en todos los mensajes individuales
-        const messages = document.querySelectorAll('[data-id]');
-        messages.forEach(msg => {
-          // Bloquear clic derecho
-          msg.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            return false;
-          }, true);
-          
-          // Bloquear clic izquierdo
-          msg.addEventListener('click', (e) => {
+
+        messagesContainer.addEventListener(
+          'click',
+          (e) => {
             const target = e.target;
-            // No bloquear si es el input de mensajes o elementos editables
-            if (target.getAttribute('contenteditable') === 'true' || 
-                target.closest('[contenteditable="true"]') ||
-                target.tagName === 'INPUT' ||
-                target.tagName === 'TEXTAREA') {
-              return;
+            if (shouldAllow(target)) return;
+            const messageElement = target && target.closest ? target.closest('[data-id]') : null;
+            if (messageElement && messageElement.getAttribute && messageElement.getAttribute('data-id')) {
+              e.preventDefault();
+              e.stopPropagation();
+              e.stopImmediatePropagation();
+              return false;
             }
-            
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            return false;
-          }, true);
-        });
+          },
+          true
+        );
         
         // Ocultar cualquier menú contextual que aparezca
         const contextMenus = document.querySelectorAll('[role="application"]');
@@ -899,16 +949,72 @@ async function applyUIRestrictions(allowedContacts) {
       blockMessageContextMenu();
       
       // Observar nuevos mensajes para aplicar el bloqueo
-      const messageObserver = new MutationObserver(() => {
-        blockMessageContextMenu();
-      });
-      
-      const chatContainer = document.querySelector('#main');
-      if (chatContainer) {
-        messageObserver.observe(chatContainer, {
-          childList: true,
-          subtree: true
+      if (!window.__anaManualMessageObserver) {
+        window.__anaManualMessageObserver = new MutationObserver(() => {
+          blockMessageContextMenu();
         });
+        const chatContainer = document.querySelector('#main');
+        if (chatContainer) {
+          window.__anaManualMessageObserver.observe(chatContainer, {
+            childList: true,
+            subtree: true
+          });
+        }
+      }
+
+      // Bloquear menú/contextmenu de la lista de chats (evita eliminar/archivar)
+      if (!window.__anaManualChatListBlockerInstalled) {
+        window.__anaManualChatListBlockerInstalled = true;
+        const pane = document.querySelector('#pane-side');
+        if (pane) {
+          const shouldAllowPane = (target) => {
+            try {
+              if (!target) return false;
+              if (target.getAttribute && target.getAttribute('contenteditable') === 'true') return true;
+              if (target.closest && target.closest('[contenteditable="true"]')) return true;
+              const tag = String(target.tagName || '').toUpperCase();
+              if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+              // permitir click normal sobre el row para abrir chat
+              const isRow = target.closest && target.closest('[role="row"], [role="listitem"]');
+              const isMenuButton = target.closest && target.closest('button[aria-label*="Menú"], button[aria-label*="Menu"], [data-icon="down"], [data-icon="chevron-down"], [data-icon="more"], [data-icon="more-refreshed"]');
+              if (isRow && !isMenuButton) return true;
+              return false;
+            } catch (_) {
+              return false;
+            }
+          };
+
+          pane.addEventListener(
+            'contextmenu',
+            (e) => {
+              const target = e.target;
+              if (shouldAllowPane(target)) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.stopImmediatePropagation();
+              return false;
+            },
+            true
+          );
+
+          pane.addEventListener(
+            'click',
+            (e) => {
+              const target = e.target;
+              if (shouldAllowPane(target)) return;
+              // bloquear específicamente clicks en menú/flecha de cada chat
+              const isMenuButton = target && target.closest && target.closest('button[aria-label*="Menú"], button[aria-label*="Menu"], [data-icon="down"], [data-icon="chevron-down"], [data-icon="more"], [data-icon="more-refreshed"]');
+              if (!isMenuButton) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.stopImmediatePropagation();
+              return false;
+            },
+            true
+          );
+        } else {
+          window.__anaManualChatListBlockerInstalled = false;
+        }
       }
       
       // Agregar overlay informativo
@@ -960,6 +1066,27 @@ async function applyUIRestrictions(allowedContacts) {
       }
     };
 
+    window.applyManualUIRestrictions = () => {
+      const now = Date.now();
+      if (__anaManualApplyScheduled) return;
+      if (now - __anaManualLastApplyAt < 1500) {
+        __anaManualApplyScheduled = true;
+        setTimeout(() => {
+          __anaManualApplyScheduled = false;
+          __anaManualLastApplyAt = Date.now();
+          try {
+            runApplyManualUIRestrictions();
+          } catch (_) {}
+        }, 1500);
+        return;
+      }
+
+      __anaManualLastApplyAt = now;
+      try {
+        runApplyManualUIRestrictions();
+      } catch (_) {}
+    };
+
   // Aplicar restricciones cuando el DOM esté listo
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
@@ -974,27 +1101,29 @@ async function applyUIRestrictions(allowedContacts) {
   }
 
   // Aplicar restricciones cada segundo
-  setInterval(window.applyManualUIRestrictions, 1000);
+  if (!window.__anaManualRestrictionsInterval) {
+    window.__anaManualRestrictionsInterval = setInterval(window.applyManualUIRestrictions, 5000);
+  }
 
   // Observar cambios en el DOM
-  const observer = new MutationObserver(window.applyManualUIRestrictions);
-  if (document.documentElement) {
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['style', 'class']
+  if (!window.__anaManualRestrictionsObserver) {
+    window.__anaManualRestrictionsObserver = new MutationObserver(() => {
+      window.applyManualUIRestrictions();
     });
-  } else {
-    // Si el DOM aún no está listo, esperar
-    document.addEventListener('DOMContentLoaded', () => {
-      observer.observe(document.documentElement, {
+    if (document.documentElement) {
+      window.__anaManualRestrictionsObserver.observe(document.documentElement, {
         childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['style', 'class']
+        subtree: true
       });
-    });
+    } else {
+      // Si el DOM aún no está listo, esperar
+      document.addEventListener('DOMContentLoaded', () => {
+        window.__anaManualRestrictionsObserver.observe(document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+      });
+    }
   }
 }, allowedNumbers);
 }
@@ -1046,6 +1175,11 @@ async function initChatBackupSystem(page, agentConfig) {
     let messageObserver = null;
     let backupCheckInterval = null;
     let backupIntervalActive = false; // Flag para prevenir múltiples intervalos
+
+    let lastPhoneCandidate = null;
+    let phoneStableStreak = 0;
+    let nullPhoneStreak = 0;
+    let lastChatSwitchAt = 0;
     
     // Función para normalizar números de teléfono
     const normalizePhoneForBackend = (rawPhone) => {
@@ -1295,7 +1429,7 @@ async function initChatBackupSystem(page, agentConfig) {
     // Variable para el indicador de countdown
     let countdownIndicator = null;
     let countdownInterval = null;
-    let countdownSeconds = 15;
+    let countdownSeconds = 45;
 
     // Función para crear/actualizar el indicador de countdown
     const updateCountdownIndicator = () => {
@@ -1325,7 +1459,7 @@ async function initChatBackupSystem(page, agentConfig) {
       }
 
       const circumference = 2 * Math.PI * 18;
-      const dashLength = (countdownSeconds / 15) * circumference;
+      const dashLength = (countdownSeconds / 45) * circumference;
 
       countdownIndicator.innerHTML = `
         <svg width="40" height="40" style="transform: rotate(-90deg);">
@@ -1347,7 +1481,7 @@ async function initChatBackupSystem(page, agentConfig) {
     // Función para iniciar el countdown
     const startCountdown = () => {
       log('[ChatBackup] 🕐 Iniciando countdown');
-      countdownSeconds = 15;
+      countdownSeconds = 45;
       updateCountdownIndicator();
 
       if (countdownInterval) {
@@ -1357,7 +1491,7 @@ async function initChatBackupSystem(page, agentConfig) {
       countdownInterval = setInterval(() => {
         countdownSeconds--;
         if (countdownSeconds < 0) {
-          countdownSeconds = 15;
+          countdownSeconds = 45;
         }
         updateCountdownIndicator();
       }, 1000);
@@ -1587,10 +1721,31 @@ async function initChatBackupSystem(page, agentConfig) {
 
     // Observar cambios de chat (polling cada segundo)
     const observeChatChanges = () => {
-      const phoneNumber = getCurrentContactPhone();
-      
+      const phoneNumberCandidate = getCurrentContactPhone();
+
+      if (phoneNumberCandidate) {
+        nullPhoneStreak = 0;
+        if (phoneNumberCandidate === lastPhoneCandidate) {
+          phoneStableStreak++;
+        } else {
+          lastPhoneCandidate = phoneNumberCandidate;
+          phoneStableStreak = 1;
+        }
+      } else {
+        nullPhoneStreak++;
+        phoneStableStreak = 0;
+        lastPhoneCandidate = null;
+      }
+
+      const phoneNumber = phoneStableStreak >= 2 ? phoneNumberCandidate : null;
+
       // Detectar cambio de chat
       if (phoneNumber && phoneNumber !== currentChatPhone) {
+        const now = Date.now();
+        if (now - lastChatSwitchAt < 1500) {
+          return;
+        }
+        lastChatSwitchAt = now;
         log('[ChatBackup] 🔄 Cambio de chat detectado:', phoneNumber);
         currentChatPhone = phoneNumber;
         isFirstBackup = true; // Resetear flag para el nuevo chat
@@ -1620,10 +1775,10 @@ async function initChatBackupSystem(page, agentConfig) {
         
         // Iniciar verificación automática cada 15 segundos (solo si no hay uno activo)
         if (!backupIntervalActive) {
-          log('[ChatBackup] ⏰ Iniciando intervalo de respaldo cada 15 segundos');
+          log('[ChatBackup] ⏰ Iniciando intervalo de respaldo cada 45 segundos');
           backupIntervalActive = true;
           backupCheckInterval = setInterval(() => {
-            log('[ChatBackup] ⏰ Ejecutando respaldo programado (15s)');
+            log('[ChatBackup] ⏰ Ejecutando respaldo programado (45)');
             const currentPhone = getCurrentContactPhone();
             if (currentPhone === phoneNumber) {
               // El respaldo pausará y reanudará el countdown automáticamente
@@ -1631,11 +1786,11 @@ async function initChatBackupSystem(page, agentConfig) {
             } else {
               log('[ChatBackup] ⚠️ Chat cambió, saltando respaldo programado');
             }
-          }, 15000);
+          }, 45000);
         } else {
           log('[ChatBackup] ⚠️ Ya hay un intervalo activo, no se crea otro');
         }
-      } else if (!phoneNumber && currentChatPhone) {
+      } else if (nullPhoneStreak >= 3 && currentChatPhone) {
         // Se salió del chat
         log('[ChatBackup] 🚪 Salió del chat');
         currentChatPhone = null;
