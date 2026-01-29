@@ -245,9 +245,23 @@ import { initWhatsApp, sendMessage, closeBrowser, getPage } from './whatsapp.js'
 import { initManualWhatsApp, closeManualBrowser, getManualPage } from './whatsapp-manual.js';
 import { initMonitorWhatsApp, closeMonitorBrowser, getMonitorPage } from './whatsapp-monitor.js';
 import { sendBackup, hasAgentConfig, fetchAssignedChats, updatePendingContacts, loadAgentConfig, insertInteractions } from './agent-config.js';
+import { checkForUpdatesAndApply } from './self-update.js';
 
 // Función principal
 async function main() {
+  // Auto-update (solo EXE/pkg). Se desactiva con --no-self-update
+  if (!process.argv.includes('--no-self-update')) {
+    try {
+      const updated = await checkForUpdatesAndApply();
+      if (updated) {
+        console.log('⬇️  Actualización aplicada. Reiniciando...');
+        return;
+      }
+    } catch (e) {
+      console.error('⚠️  Auto-update falló:', e?.message || e);
+    }
+  }
+
   // Flags de utilería para recuperar perfiles corruptos (pantalla de carga infinita)
   if (process.argv.includes('--reset-monitor-session')) {
     safeResetDir(CONFIG.monitorSessionPath, 'Monitor Session');
@@ -485,13 +499,11 @@ async function main() {
             console.log(`\n⏸️  Límite alcanzado (${PAUSE_AFTER_MESSAGES} mensajes). Pausando 20 minutos...`);
             await Promise.all([
               setPauseBlocker(page, true),
-              setPauseBlocker(manualPage, true),
               setPauseBlocker(monitorPage, true),
             ]);
             await sleepWithCountdown(PAUSE_DURATION_MS, 'Fin de pausa', [page, manualPage, monitorPage]);
             await Promise.all([
               setPauseBlocker(page, false),
-              setPauseBlocker(manualPage, false),
               setPauseBlocker(monitorPage, false),
             ]);
             sentSinceLastPause = 0;

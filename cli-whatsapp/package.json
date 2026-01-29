@@ -1,7 +1,7 @@
-{
+﻿{
   "name": "whatsapp-cli-sender",
-  "version": "1.0.0",
-  "description": "CLI para envío masivo de WhatsApp",
+  "version": "1.0.16",
+  "description": "CLI para envÃ­o masivo de WhatsApp",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -21,3 +21,19 @@
     "pkg": "^5.8.1"
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

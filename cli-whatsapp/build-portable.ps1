@@ -3,10 +3,45 @@
 
 $ErrorActionPreference = "Stop"
 
+function Update-PackageJsonPatchVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageJsonPath
+    )
+
+    if (!(Test-Path -Path $PackageJsonPath)) {
+        throw "No se encontró $PackageJsonPath"
+    }
+
+    $raw = Get-Content -Raw -Path $PackageJsonPath
+    $m = [regex]::Match($raw, '"version"\s*:\s*"(?<v>\d+\.\d+\.\d+)"')
+    if (!$m.Success) {
+        throw "No se pudo leer version desde package.json"
+    }
+
+    $v = $m.Groups['v'].Value
+    $parts = $v.Split('.')
+    $major = [int]$parts[0]
+    $minor = [int]$parts[1]
+    $patch = [int]$parts[2]
+    $newVersion = "$major.$minor.$($patch + 1)"
+
+    $updated = [regex]::Replace(
+        $raw,
+        '"version"\s*:\s*"\d+\.\d+\.\d+"',
+        '"version": "' + $newVersion + '"',
+        1
+    )
+    Set-Content -Path $PackageJsonPath -Value $updated -Encoding UTF8
+    return $newVersion
+}
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  ANA - Build Portable Installer" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
+
+$anaVersion = Update-PackageJsonPatchVersion -PackageJsonPath "package.json"
+Write-Host "Version incrementada: $anaVersion" -ForegroundColor Green
 
 # Configuracion
 $NODE_VERSION = "18.20.2"
@@ -57,6 +92,7 @@ Write-Host "[4/8] Copiando archivos de la aplicacion..." -ForegroundColor Yellow
 $filesToCopy = @(
     "setup-env.js",
     "index.js",
+    "self-update.js",
     "whatsapp.js",
     "whatsapp-manual.js",
     "whatsapp-monitor.js",
@@ -161,6 +197,12 @@ endlocal
 Set-Content -Path "$DIST_DIR\ANA-con-imagen.bat" -Value $launcherScriptImage -Encoding ASCII
 Write-Host "    [OK] Script de inicio con imagen creado" -ForegroundColor Green
 
+$latest = [ordered]@{
+    version = $anaVersion
+    url = 'https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-Setup-Portable.exe'
+}
+($latest | ConvertTo-Json -Depth 3) | Set-Content -Path "$DIST_DIR\latest.json" -Encoding UTF8
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  [OK] Build completado exitosamente" -ForegroundColor Green
@@ -172,6 +214,7 @@ Write-Host "  - app/             (Aplicacion y dependencias)" -ForegroundColor W
 Write-Host "  - browsers/        (Navegadores Playwright)" -ForegroundColor White
 Write-Host "  - ANA.bat          (Script de inicio)" -ForegroundColor White
 Write-Host "  - ANA-con-imagen.bat (Script con imagen)" -ForegroundColor White
+Write-Host "  - latest.json      (manifest para auto-update)" -ForegroundColor White
 Write-Host ""
 Write-Host "Siguiente paso:" -ForegroundColor Yellow
 Write-Host "  1. Abre Inno Setup Compiler" -ForegroundColor White

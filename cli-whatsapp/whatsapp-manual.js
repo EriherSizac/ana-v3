@@ -1,6 +1,9 @@
 // IMPORTANTE: setup-env.js debe importarse PRIMERO
 import './setup-env.js';
 
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
@@ -269,6 +272,13 @@ async function showManualLoginOverlay(requireAll = true) {
  */
 export async function initManualWhatsApp(allowedContacts = []) {
   console.log(' Iniciando ventana manual de WhatsApp...');
+
+  const downloadsPath = path.join(os.homedir(), 'Downloads');
+  try {
+    fs.mkdirSync(downloadsPath, { recursive: true });
+  } catch (_) {
+    // ignore
+  }
   
   manualBrowser = await chromium.launchPersistentContext(CONFIG.manualSessionPath, {
     headless: false,
@@ -283,58 +293,44 @@ export async function initManualWhatsApp(allowedContacts = []) {
     ],
     viewport: { width: 1280, height: 720 },
     devtools: false,
+    acceptDownloads: true,
+    downloadsPath,
   });
 
   manualPage = manualBrowser.pages()[0] || await manualBrowser.newPage();
+
+  try {
+    manualPage.on('download', async (download) => {
+      try {
+        const suggested = String(download.suggestedFilename() || 'download.bin');
+        const parsed = path.parse(suggested);
+        let finalPath = path.join(downloadsPath, suggested);
+        let n = 1;
+        while (fs.existsSync(finalPath)) {
+          finalPath = path.join(downloadsPath, `${parsed.name} (${n})${parsed.ext}`);
+          n += 1;
+        }
+        await download.saveAs(finalPath);
+        console.log(`⬇️  Descarga guardada: ${finalPath}`);
+      } catch (e) {
+        console.error('⚠️  No se pudo guardar la descarga en Downloads:', e?.message || e);
+      }
+    });
+  } catch (_) {
+    // ignore
+  }
   
   // Inyectar protecciones ANTES de cargar WhatsApp (EXACTO como en whatsapp.js)
   await manualPage.addInitScript(() => {
     // Bloquear atajos de teclado para DevTools
     document.addEventListener('keydown', (e) => {
-      // F12
-      if (e.key === 'F12') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+I (Windows/Linux)
-      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+J (Console)
-      if (e.ctrlKey && e.shiftKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+C (Inspect)
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+I (Mac)
-      if (e.metaKey && e.altKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+J (Mac Console)
-      if (e.metaKey && e.altKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+C (Mac Inspect)
-      if (e.metaKey && e.altKey && e.key === 'C') {
+      if (e.key === 'F5') return;
+
+      const k = String(e.key || '');
+      const isFunctionKey = /^F\d{1,2}$/.test(k);
+      const hasModifier = Boolean(e.ctrlKey || e.metaKey || e.altKey);
+
+      if (isFunctionKey || hasModifier) {
         e.preventDefault();
         e.stopPropagation();
         return false;
@@ -641,7 +637,29 @@ async function applyUIRestrictions(allowedContacts) {
             pointer-events: none !important;
           }
 
+          /* Permitir interacción en descargas de audio (adjuntos) */
+          [data-icon="audio-download"],
+          [data-icon="audio-download"] * {
+            pointer-events: auto !important;
+          }
+
+          /* Bloquear reenviar */
+          [data-icon="forward-refreshed"],
+          [data-icon="forward-refreshed"] * {
+            pointer-events: none !important;
+          }
+
           [role="gridcell"] {
+            pointer-events: none !important;
+          }
+
+          #app > div > div > div.x78zum5.xdt5ytf.x5yr21d > div > div._aig-._as6h.x9f619.x1n2onr6.x5yr21d.x6ikm8r.x10wlt62.x17dzmu4.x1i1dayz.x2ipvbc.xjdofhw.xpilrb4.x1t7ytsu.x1vb5itz.x1c4vz4f.x2lah0s.x1oy9qf3.xwfak60.x5hsz1j.x17dq4o0.x10e4vud > span > div > span > div > div {
+            pointer-events: none !important;
+          }
+
+          /* Fallback robusto para el mismo contenedor (WhatsApp cambia clases frecuentemente) */
+          #app [role="application"] [data-icon="ic-chevron-down-menu"],
+          #app [data-icon="ic-chevron-down-menu"] {
             pointer-events: none !important;
           }
           
