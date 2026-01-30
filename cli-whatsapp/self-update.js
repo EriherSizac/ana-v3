@@ -183,7 +183,7 @@ export async function checkForUpdatesAndApply(options = {}) {
     return false;
   }
 
-  const defaultDownloadUrl = 'https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-Setup-Portable.exe';
+  const defaultDownloadBaseUrl = 'https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-';
 
   const currentVersion = String(process.env.ANA_VERSION || readLocalPackageVersion() || '0.0.0');
   if (compareVersions(currentVersion, '0.0.0') <= 0) {
@@ -205,21 +205,34 @@ export async function checkForUpdatesAndApply(options = {}) {
   }
 
   const latestVersion = String(manifest?.version || '0.0.0');
+  const safeLatestVersion = String(latestVersion || '')
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .replace(/[^0-9.]/g, '');
   if (options?.log !== false) {
     console.log(`🔄 Auto-update: versión remota ${latestVersion}`);
+    console.log(`🔄 Auto-update: versión remota (safe) ${safeLatestVersion}`);
   }
-  if (compareVersions(latestVersion, currentVersion) <= 0) {
+  if (compareVersions(safeLatestVersion, currentVersion) <= 0) {
     if (options?.log !== false) console.log('🔄 Auto-update: no hay actualización disponible');
     return false;
   }
 
-  const url = String(manifest?.url || defaultDownloadUrl || '').trim();
+  const url = String(manifest?.url || `${defaultDownloadBaseUrl}${safeLatestVersion}.exe` || '').trim();
   if (!url) {
     if (options?.log !== false) console.error('⚠️  Auto-update: manifest sin url de descarga');
     return false;
   }
 
-  const tmpExe = path.join(os.tmpdir(), `ANA-${latestVersion}.exe`);
+  const tmpExeRaw = path.join(os.tmpdir(), `ANA-${safeLatestVersion}.exe`);
+  const tmpExe = String(tmpExeRaw || '')
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .replace(/[\\/\s]+$/g, '');
+  if (options?.log !== false) {
+    console.log('🔄 Auto-update: tmpExe(raw)=', JSON.stringify(tmpExeRaw));
+    console.log('🔄 Auto-update: tmpExe(clean)=', JSON.stringify(tmpExe));
+  }
 
   try {
     if (options?.log !== false) console.log(`⬇️  Auto-update: descargando update desde ${url}`);
@@ -258,7 +271,7 @@ export async function checkForUpdatesAndApply(options = {}) {
     }
   } else {
     try {
-      const child = spawn(tmpExe, [], {
+      const child = spawn('cmd.exe', ['/c', 'start', '', tmpExe], {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
@@ -266,8 +279,20 @@ export async function checkForUpdatesAndApply(options = {}) {
       child.unref();
       if (options?.log !== false) console.log('⬇️  Auto-update: lanzando instalador (portable)');
     } catch (e) {
-      if (options?.log !== false) console.error('⚠️  Auto-update: no se pudo lanzar instalador:', e?.message || e);
-      return false;
+      if (options?.log !== false) console.error('⚠️  Auto-update: no se pudo lanzar instalador via cmd/start:', e?.message || e);
+
+      try {
+        const child = spawn(tmpExe, [], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+        if (options?.log !== false) console.log('⬇️  Auto-update: lanzando instalador (portable) [fallback]');
+      } catch (e2) {
+        if (options?.log !== false) console.error('⚠️  Auto-update: no se pudo lanzar instalador (fallback):', e2?.message || e2);
+        return false;
+      }
     }
   }
 

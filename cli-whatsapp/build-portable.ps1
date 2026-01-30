@@ -91,6 +91,7 @@ Remove-Item -Path $NODE_ZIP -Force
 Write-Host "[4/8] Copiando archivos de la aplicacion..." -ForegroundColor Yellow
 $filesToCopy = @(
     "setup-env.js",
+    "constants.js",
     "index.js",
     "self-update.js",
     "whatsapp.js",
@@ -199,7 +200,7 @@ Write-Host "    [OK] Script de inicio con imagen creado" -ForegroundColor Green
 
 $latest = [ordered]@{
     version = $anaVersion
-    url = 'https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-Setup-Portable.exe'
+    url = "https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-$anaVersion.exe"
 }
 ($latest | ConvertTo-Json -Depth 3) | Set-Content -Path "$DIST_DIR\latest.json" -Encoding UTF8
 

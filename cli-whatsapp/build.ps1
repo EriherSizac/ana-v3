@@ -82,7 +82,7 @@ Copy-Item -Recurse -Force (Join-Path $msPlaywright "*") $browsersTarget
 
 $latest = [ordered]@{
   version = $anaVersion
-  url = 'https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-Setup-Portable.exe'
+  url = "https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-$anaVersion.exe"
 }
 $latestJsonPath = Join-Path (Resolve-Path "dist").Path "latest.json"
 ($latest | ConvertTo-Json -Depth 3) | Set-Content -Path $latestJsonPath -Encoding UTF8

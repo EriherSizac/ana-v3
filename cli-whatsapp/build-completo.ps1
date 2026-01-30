@@ -75,6 +75,25 @@ try {
 # Verificar que el instalador se genero
 $installerPath = "dist-portable\ANA-Setup-Portable.exe"
 if (Test-Path -Path $installerPath) {
+    $raw = Get-Content -Raw -Path "package.json"
+    $m = [regex]::Match($raw, '"version"\s*:\s*"(?<v>\d+\.\d+\.\d+)"')
+    $anaVersion = if ($m.Success) { $m.Groups['v'].Value } else { $null }
+
+    if ($anaVersion) {
+        $renamedInstallerPath = "dist-portable\ANA-$anaVersion.exe"
+        try {
+            if (Test-Path -Path $renamedInstallerPath) {
+                Remove-Item -Force $renamedInstallerPath
+            }
+            Move-Item -Path $installerPath -Destination $renamedInstallerPath -Force
+            $installerPath = $renamedInstallerPath
+        } catch {
+            Write-Host "[WARN] No se pudo renombrar el instalador a versionado: $_" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[WARN] No se pudo leer version desde package.json para renombrar el instalador" -ForegroundColor Yellow
+    }
+
     $installerSize = (Get-Item $installerPath).Length / 1MB
     
     Write-Host ""

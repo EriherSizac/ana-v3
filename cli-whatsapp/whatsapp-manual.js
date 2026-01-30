@@ -326,6 +326,10 @@ export async function initManualWhatsApp(allowedContacts = []) {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'F5') return;
 
+      // Permitir pegar
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) return;
+      if (e.metaKey && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) return;
+
       const k = String(e.key || '');
       const isFunctionKey = /^F\d{1,2}$/.test(k);
       const hasModifier = Boolean(e.ctrlKey || e.metaKey || e.altKey);
@@ -427,22 +431,20 @@ export async function initManualWhatsApp(allowedContacts = []) {
   } catch (error) {
     console.log('⚠️  Timeout esperando carga, continuando...');
   }
-  
-  // IMPORTANTE: Pedir credenciales ANTES de esperar la conexión
-  console.log('🔐 Validación de credenciales requerida (Manual)...');
-  console.log('📝 Ingresa usuario, campaña y palabra del día');
-  
-  // Siempre pedir todos los campos (usuario, campaña y palabra del día)
-  let manualConfig = await showManualLoginOverlay(true);
-  saveAgentConfig(manualConfig);
-  console.log(`✅ Credenciales verificadas (Manual): ${manualConfig.agent_id} | Campaña: ${manualConfig.campaign}`);
+
+  const manualConfig = loadAgentConfig();
+  if (!manualConfig?.agent_id || !manualConfig?.campaign) {
+    console.log('⚠️  [Manual] No se encontró configuración de agente. Ejecuta primero la ventana automática para validar credenciales.');
+  } else {
+    console.log(`✅ [Manual] Configuración cargada: ${manualConfig.agent_id} | Campaña: ${manualConfig.campaign}`);
+  }
 
   console.log('📱 Escanea el código QR con OTRO teléfono/cuenta');
   
   console.log('⏳ Esperando conexión de WhatsApp Web (Manual)...');
   
   // Ahora sí, esperar a que WhatsApp se conecte
-  await manualPage.waitForSelector('#side', { timeout: 300000 });
+  await manualPage.waitForSelector('#side, #pane-side', { timeout: 300000 });
   
   console.log('✅ WhatsApp Web (Manual) conectado - Ventana lista!');
   
@@ -643,6 +645,14 @@ async function applyUIRestrictions(allowedContacts) {
             pointer-events: auto !important;
           }
 
+          /* Permitir abrir fotos (preview) */
+          [role="button"][aria-label="Abrir foto"],
+          [role="button"][aria-label="Abrir foto"] *,
+          [role="button"][aria-label="Open photo"],
+          [role="button"][aria-label="Open photo"] * {
+            pointer-events: auto !important;
+          }
+
           /* Bloquear reenviar */
           [data-icon="forward-refreshed"],
           [data-icon="forward-refreshed"] * {
@@ -684,6 +694,36 @@ async function applyUIRestrictions(allowedContacts) {
           /* Asegurar que el input/footer del chat siga funcionando */
           #main footer,
           #main footer * {
+            pointer-events: auto !important;
+          }
+
+          /* Visor de imagen: desactivar interacciones del header/toolbar (mantener Cerrar) */
+          button[aria-label="Alejar"],
+          button[aria-label="Acercar"],
+          button[aria-label="Ir al mensaje"],
+          button[aria-label="Responder"],
+          button[aria-label="Destacar"],
+          button[aria-label="Fijar"],
+          button[aria-label="Reaccionar"],
+          button[aria-label="Reenviar"],
+          button[aria-label="Menú"],
+          button[aria-label="Zoom out"],
+          button[aria-label="Zoom in"],
+          button[aria-label="Go to message"],
+          button[aria-label="Reply"],
+          button[aria-label="Star"],
+          button[aria-label="Pin"],
+          button[aria-label="React"],
+          button[aria-label="Forward"],
+          button[aria-label="Menu"] {
+            pointer-events: none !important;
+          }
+
+          /* Mantener botón de cerrar activo */
+          button[aria-label="Cerrar"],
+          button[aria-label="Close"],
+          button[aria-label="Cerrar"] *,
+          button[aria-label="Close"] * {
             pointer-events: auto !important;
           }
         `;
@@ -883,6 +923,13 @@ async function applyUIRestrictions(allowedContacts) {
             if (target.closest && target.closest('[contenteditable="true"]')) return true;
             const tag = String(target.tagName || '').toUpperCase();
             if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+
+            // Permitir abrir fotos (preview/visor)
+            const photoButton =
+              (target.closest &&
+                target.closest('[role="button"][aria-label="Abrir foto"], [role="button"][aria-label="Open photo"]')) ||
+              null;
+            if (photoButton) return true;
             return false;
           } catch (_) {
             return false;

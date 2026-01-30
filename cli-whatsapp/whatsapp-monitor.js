@@ -1099,12 +1099,12 @@ export async function initMonitorWhatsApp() {
     }
   }
 
-  console.log('🔐 Validación de credenciales requerida (Monitor)...');
-  console.log('📝 Ingresa usuario, campaña y palabra del día');
-
-  const monitorConfig = await showMonitorLoginOverlay(true);
-  saveAgentConfig(monitorConfig);
-  console.log(`✅ Credenciales verificadas (Monitor): ${monitorConfig.agent_id} | Campaña: ${monitorConfig.campaign}`);
+  const monitorConfig = loadAgentConfig();
+  if (!monitorConfig?.agent_id || !monitorConfig?.campaign) {
+    console.log('⚠️  [Monitor] No se encontró configuración de agente. Ejecuta primero la ventana automática para validar credenciales.');
+  } else {
+    console.log(`✅ [Monitor] Configuración cargada: ${monitorConfig.agent_id} | Campaña: ${monitorConfig.campaign}`);
+  }
 
   if (!hasExistingSession) {
     console.log('📱 Escanea el código QR con OTRO teléfono/cuenta');

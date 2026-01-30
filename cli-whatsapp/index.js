@@ -240,6 +240,7 @@ function waitForEnterIfPkg(message) {
 }
 
 import { CONFIG } from './config.js';
+import { CONSTANTS } from './constants.js';
 import { saveResults, saveResponses } from './csv-utils.js';
 import { initWhatsApp, sendMessage, closeBrowser, getPage } from './whatsapp.js';
 import { initManualWhatsApp, closeManualBrowser, getManualPage } from './whatsapp-manual.js';
@@ -393,7 +394,7 @@ async function main() {
       }
 
       const POLL_INTERVAL_MS = 30 * 1000;
-      const PAUSE_AFTER_MESSAGES = 25;
+      const PAUSE_AFTER_MESSAGES = CONSTANTS.PAUSE_AFTER_MESSAGES;
       const PAUSE_DURATION_MS = 30 * 60 * 1000;
 
       const results = [];
@@ -491,8 +492,8 @@ async function main() {
           }
 
           if (i < contacts.length - 1) {
-            console.log(`⏳ Esperando ${CONFIG.delayBetweenMessages / 1000}s antes del siguiente mensaje...`);
-            await page.waitForTimeout(CONFIG.delayBetweenMessages);
+            console.log(`⏳ Esperando ${CONSTANTS.SEND_DELAY_BETWEEN_CONTACTS_MS / 1000}s antes del siguiente contacto...`);
+            await page.waitForTimeout(CONSTANTS.SEND_DELAY_BETWEEN_CONTACTS_MS);
           }
 
           if (sentSinceLastPause >= PAUSE_AFTER_MESSAGES) {

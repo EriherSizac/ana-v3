@@ -226,18 +226,30 @@ async function showLoginOverlay(requireAll = true) {
             
             <div style="margin-bottom: 30px; text-align: left;">
               <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Palabra del Día</label>
-              <input type="password" id="login-daily-password" placeholder="Ingresa la palabra del día" style="
-                width: 100%;
-                padding: 12px 15px;
-                border: 2px solid #333;
-                border-radius: 10px;
-                background: #1a1a1a;
-                color: white;
-                font-size: 16px;
-                box-sizing: border-box;
-                outline: none;
-                transition: border-color 0.3s;
-              " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+              <div style="display:flex; gap:10px; align-items:center;">
+                <input type="password" id="login-daily-password" placeholder="Ingresa la palabra del día" style="
+                  flex: 1;
+                  padding: 12px 15px;
+                  border: 2px solid #333;
+                  border-radius: 10px;
+                  background: #1a1a1a;
+                  color: white;
+                  font-size: 16px;
+                  box-sizing: border-box;
+                  outline: none;
+                  transition: border-color 0.3s;
+                " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
+                <button id="login-daily-toggle" type="button" style="
+                  padding: 12px 14px;
+                  background: #1a1a1a;
+                  color: #25D366;
+                  border: 2px solid #333;
+                  border-radius: 10px;
+                  font-size: 14px;
+                  cursor: pointer;
+                  white-space: nowrap;
+                ">Ver</button>
+              </div>
             </div>
             
             <button id="login-submit-btn" style="
@@ -304,6 +316,7 @@ async function showLoginOverlay(requireAll = true) {
         const userInput = document.getElementById('login-user');
         const campaignInput = document.getElementById('login-campaign');
         const dailyPasswordInput = document.getElementById('login-daily-password');
+        const dailyToggleBtn = document.getElementById('login-daily-toggle');
         const errorEl = document.getElementById('login-error');
         const loadingEl = document.getElementById('login-loading');
 
@@ -349,6 +362,20 @@ async function showLoginOverlay(requireAll = true) {
         };
 
         btn.addEventListener('click', handleSubmit);
+
+        if (dailyPasswordInput && dailyToggleBtn && !dailyToggleBtn.dataset.listenerAdded) {
+          dailyToggleBtn.dataset.listenerAdded = 'true';
+          dailyToggleBtn.addEventListener('click', () => {
+            try {
+              const isHidden = dailyPasswordInput.type === 'password';
+              dailyPasswordInput.type = isHidden ? 'text' : 'password';
+              dailyToggleBtn.textContent = isHidden ? 'Ocultar' : 'Ver';
+              dailyPasswordInput.focus();
+            } catch (_) {
+              // ignore
+            }
+          });
+        }
 
         const inputs = [dailyPasswordInput];
         if (requireAll) inputs.push(userInput, campaignInput);
@@ -668,7 +695,7 @@ export async function initWhatsApp() {
   console.log('⏳ Esperando conexión de WhatsApp Web...');
   
   // Ahora sí, esperar a que WhatsApp se conecte
-  await autoPage.waitForSelector('#side', { timeout: 300000 });
+  await autoPage.waitForSelector('#side, #pane-side', { timeout: 300000 });
   
   console.log('✅ WhatsApp Web conectado - Iniciando automatización...');
   

@@ -133,7 +133,14 @@ export async function insertInteractions(interactions) {
  */
 export function saveAgentConfig(config) {
   try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    const safe = { ...(config || {}) };
+    delete safe.dailyPassword;
+    delete safe.daily_password;
+    delete safe.daily_password_word;
+    delete safe.palabraDelDia;
+    delete safe.palabra_del_dia;
+    delete safe.dailyWord;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(safe, null, 2));
     console.log('✅ Configuración del agente guardada');
   } catch (error) {
     console.error('Error al guardar configuración del agente:', error.message);
