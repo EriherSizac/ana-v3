@@ -197,6 +197,69 @@ functions:
           method: options
           cors: true
 
+  # Supervisores - Consultar asignaciones (assignments)
+  listAgentAssignments:
+    handler: src/handlers/supervisors.listAgentAssignments
+    events:
+      - httpApi:
+          path: /supervisors/assignments/agents/{agent}/{campaign}
+          method: get
+          cors: true
+
+  getAgentAssignments:
+    handler: src/handlers/supervisors.getAgentAssignments
+    events:
+      - httpApi:
+          path: /supervisors/assignments/agents/{agent}/{campaign}/contacts
+          method: get
+          cors: true
+
+  supervisorsAssignmentsOptions:
+    handler: src/handlers/supervisors.optionsHandler
+    events:
+      - httpApi:
+          path: /supervisors/assignments/agents/{agent}/{campaign}
+          method: options
+          cors: true
+      - httpApi:
+          path: /supervisors/assignments/agents/{agent}/{campaign}/contacts
+          method: options
+          cors: true
+
+  # Agentes - Publicar selección final hacia key legacy/deprecated
+  publishAgentContactsDeprecated:
+    handler: src/handlers/supervisors.publishAgentContactsDeprecated
+    events:
+      - httpApi:
+          path: /agents/{agent}/{campaign}/contacts
+          method: post
+          cors: true
+
+  agentsPublishContactsOptions:
+    handler: src/handlers/supervisors.optionsHandler
+    events:
+      - httpApi:
+          path: /agents/{agent}/{campaign}/contacts
+          method: options
+          cors: true
+
+  # Supervisores - Descargar archivo(s) por S3 key(s)
+  downloadFilesByKey:
+    handler: src/handlers/supervisors.downloadFilesByKey
+    events:
+      - httpApi:
+          path: /supervisors/files/download
+          method: post
+          cors: true
+
+  supervisorsFilesDownloadOptions:
+    handler: src/handlers/supervisors.optionsHandler
+    events:
+      - httpApi:
+          path: /supervisors/files/download
+          method: options
+          cors: true
+
   # Credenciales por campaña
   getCampaignCredentials:
     handler: src/handlers/credentials.getCampaignCredentials

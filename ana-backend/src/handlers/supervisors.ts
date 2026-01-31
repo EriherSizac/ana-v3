@@ -1,8 +1,117 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3Client = new S3Client({ region: 'us-east-1' });
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
+
+const makeTimestampForKey = (): string => {
+  // ISO pero safe para S3 key/filename (sin ':' ni '.')
+  return new Date().toISOString().replace(/[:.]/g, '-');
+};
+
+type MultipartFile = {
+  fieldname: string;
+  filename: string | null;
+  contentType: string | null;
+  data: Buffer;
+};
+
+const parseMultipartFormData = (
+  event: APIGatewayProxyEvent
+): { fields: Record<string, string>; files: MultipartFile[] } => {
+  const contentTypeHeader =
+    event.headers?.['content-type'] ||
+    event.headers?.['Content-Type'] ||
+    '';
+
+  const match = contentTypeHeader.match(/boundary=([^;]+)/i);
+  if (!match) {
+    throw new Error('multipart_missing_boundary');
+  }
+  const boundary = match[1].trim().replace(/^"|"$/g, '');
+
+  if (!event.body) {
+    throw new Error('multipart_missing_body');
+  }
+
+  const bodyBuffer = event.isBase64Encoded
+    ? Buffer.from(event.body, 'base64')
+    : Buffer.from(event.body, 'utf8');
+
+  const boundaryBuf = Buffer.from(`--${boundary}`);
+  const delimiter = Buffer.from(`\r\n--${boundary}`);
+
+  // Start after the initial boundary
+  const start = bodyBuffer.indexOf(boundaryBuf);
+  if (start === -1) {
+    throw new Error('multipart_boundary_not_found');
+  }
+
+  const parts: Buffer[] = [];
+  let cursor = start + boundaryBuf.length;
+  while (cursor < bodyBuffer.length) {
+    // Skip optional leading CRLF
+    if (bodyBuffer[cursor] === 0x0d && bodyBuffer[cursor + 1] === 0x0a) {
+      cursor += 2;
+    }
+
+    const next = bodyBuffer.indexOf(delimiter, cursor);
+    if (next === -1) break;
+
+    const part = bodyBuffer.subarray(cursor, next);
+    parts.push(part);
+    cursor = next + delimiter.length;
+
+    // If this is the final boundary, it will be followed by "--"
+    if (bodyBuffer[cursor] === 0x2d && bodyBuffer[cursor + 1] === 0x2d) {
+      break;
+    }
+  }
+
+  const fields: Record<string, string> = {};
+  const files: MultipartFile[] = [];
+
+  for (const part of parts) {
+    const headerEnd = part.indexOf(Buffer.from('\r\n\r\n'));
+    if (headerEnd === -1) continue;
+
+    const headersText = part.subarray(0, headerEnd).toString('utf8');
+    let data = part.subarray(headerEnd + 4);
+
+    // Trim trailing CRLF
+    if (data.length >= 2 && data[data.length - 2] === 0x0d && data[data.length - 1] === 0x0a) {
+      data = data.subarray(0, data.length - 2);
+    }
+
+    const cdLine = headersText
+      .split('\r\n')
+      .find((l) => l.toLowerCase().startsWith('content-disposition:'));
+    if (!cdLine) continue;
+
+    const nameMatch = cdLine.match(/name="([^"]+)"/i);
+    const fileMatch = cdLine.match(/filename="([^"]*)"/i);
+    const fieldname = nameMatch ? nameMatch[1] : '';
+
+    const ctLine = headersText
+      .split('\r\n')
+      .find((l) => l.toLowerCase().startsWith('content-type:'));
+    const contentType = ctLine ? ctLine.split(':').slice(1).join(':').trim() : null;
+
+    if (fileMatch) {
+      files.push({
+        fieldname,
+        filename: fileMatch[1] || null,
+        contentType,
+        data,
+      });
+    } else if (fieldname) {
+      fields[fieldname] = data.toString('utf8');
+    }
+  }
+
+  return { fields, files };
+};
 
 /**
  * Handler para OPTIONS - solo retorna 200 para CORS preflight
@@ -17,6 +126,380 @@ export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
     },
     body: ''
   };
+
+};
+
+/**
+ * Lista archivos de asignaciones (assignments) para un agente/campaña
+ * Prefijo: assignments/agents/{campaign}/ y filtra por {agent}-contacts*.csv
+ */
+export const listAgentAssignments = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  try {
+    const { agent, campaign } = event.pathParameters || {};
+
+    if (!agent || !campaign) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Agente y campaña son requeridos' }),
+      };
+    }
+
+    const prefix = `assignments/agents/${campaign}/`;
+    const listRes = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: prefix,
+      })
+    );
+
+    const items = (listRes.Contents || [])
+      .filter((o) => !!o.Key)
+      .map((o) => ({
+        key: String(o.Key),
+        lastModified: o.LastModified ? new Date(o.LastModified).toISOString() : null,
+        size: typeof o.Size === 'number' ? o.Size : null,
+      }))
+      .filter((o) => {
+        const filename = o.key.split('/').pop() || '';
+        return filename.startsWith(`${agent}-contacts`) && filename.endsWith('.csv');
+      });
+
+    items.sort((a, b) => {
+      const ta = a.lastModified ? Date.parse(a.lastModified) : 0;
+      const tb = b.lastModified ? Date.parse(b.lastModified) : 0;
+      return tb - ta;
+    });
+
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({ success: true, data: { agent, campaign, prefix, items } }),
+    };
+  } catch (error) {
+    console.error('Error listando assignments:', error);
+    return {
+      statusCode: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
+    };
+  }
+};
+
+export const downloadFilesByKey = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  try {
+    if (!event.body) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Body requerido' }),
+      };
+    }
+
+    let requestData: any;
+    try {
+      requestData = JSON.parse(event.body);
+    } catch {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Body debe ser JSON válido con campo: key o keys' }),
+      };
+    }
+
+    const keys: string[] = Array.isArray(requestData?.keys)
+      ? requestData.keys.map((k: any) => String(k))
+      : requestData?.key
+        ? [String(requestData.key)]
+        : [];
+
+    const cleanedKeys = keys.map((k) => k.trim()).filter(Boolean);
+    if (cleanedKeys.length < 1) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Se requiere key o keys' }),
+      };
+    }
+
+    const results = await Promise.all(
+      cleanedKeys.map(async (key) => {
+        try {
+          const url = await getSignedUrl(
+            s3Client,
+            new GetObjectCommand({
+              Bucket: BUCKET_NAME,
+              Key: key,
+            }),
+            { expiresIn: 60 * 15 }
+          );
+
+          return {
+            key,
+            ok: true,
+            url,
+            expiresInSeconds: 60 * 15,
+          };
+        } catch (error: any) {
+          return {
+            key,
+            ok: false,
+            error: error?.name || 'Error',
+          };
+        }
+      })
+    );
+
+    const okCount = results.filter((r) => r.ok).length;
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({ success: true, data: { okCount, total: results.length, results } }),
+    };
+  } catch (error) {
+    console.error('Error descargando por key(s):', error);
+    return {
+      statusCode: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
+    };
+  }
+};
+
+/**
+ * Obtiene el CSV assignment actual (assignments) para un agente/campaña
+ */
+export const getAgentAssignments = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  try {
+    const { agent, campaign } = event.pathParameters || {};
+
+    if (!agent || !campaign) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Agente y campaña son requeridos' }),
+      };
+    }
+
+    const prefix = `assignments/agents/${campaign}/`;
+    const listRes = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: prefix,
+      })
+    );
+
+    const candidates = (listRes.Contents || [])
+      .filter((o) => !!o.Key)
+      .map((o) => ({
+        key: String(o.Key),
+        lastModified: o.LastModified ? new Date(o.LastModified).getTime() : 0,
+      }))
+      .filter((o) => {
+        const filename = o.key.split('/').pop() || '';
+        return filename.startsWith(`${agent}-contacts`) && filename.endsWith('.csv');
+      })
+      .sort((a, b) => b.lastModified - a.lastModified);
+
+    const latest = candidates[0];
+    if (!latest?.key) {
+      return {
+        statusCode: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'CSV assignment no encontrado' }),
+      };
+    }
+
+    const response = await s3Client.send(
+      new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: latest.key,
+      })
+    );
+
+    const csvContent = await response.Body?.transformToString();
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'text/csv',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: csvContent || '',
+    };
+  } catch (error: any) {
+    if (error?.name === 'NoSuchKey') {
+      return {
+        statusCode: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'CSV assignment no encontrado' }),
+      };
+    }
+
+    console.error('Error al obtener CSV assignment:', error);
+    return {
+      statusCode: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
+    };
+  }
+};
+
+/**
+ * Ruta separada para que el agente publique su selección final
+ * Escribe en la ruta legacy/deprecated: agents/{campaign}/{agent}-contacts.csv
+ */
+export const publishAgentContactsDeprecated = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  try {
+    const { agent, campaign } = event.pathParameters || {};
+
+    if (!agent || !campaign) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Agente y campaña son requeridos' }),
+      };
+    }
+
+    if (!event.body) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Body requerido' }),
+      };
+    }
+
+    const contentTypeHeader =
+      event.headers?.['content-type'] ||
+      event.headers?.['Content-Type'] ||
+      '';
+
+    if (!contentTypeHeader.toLowerCase().includes('multipart/form-data')) {
+      return {
+        statusCode: 415,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Content-Type debe ser multipart/form-data' }),
+      };
+    }
+
+    let csv: string = '';
+    try {
+      const { fields, files } = parseMultipartFormData(event);
+      const file =
+        files.find((f) => f.fieldname === 'file') ||
+        files.find((f) => f.fieldname === 'csv') ||
+        files[0];
+
+      if (file?.data) {
+        csv = file.data.toString('utf8');
+      } else if (fields.csv) {
+        csv = String(fields.csv);
+      }
+    } catch (error) {
+      console.error('Error parseando multipart:', error);
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Multipart inválido' }),
+      };
+    }
+
+    if (!csv.trim()) {
+      return {
+        statusCode: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({ success: false, message: 'Archivo CSV requerido' }),
+      };
+    }
+
+    const ts = makeTimestampForKey();
+    const key_deprecated = `agents/${campaign}/${agent}-contacts-${ts}.csv`;
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key_deprecated,
+        Body: csv,
+        ContentType: 'text/csv',
+      })
+    );
+
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({ success: true, message: 'CSV publicado', data: { agent, campaign, key: key_deprecated } }),
+    };
+  } catch (error) {
+    console.error('Error publicando CSV (deprecated):', error);
+    return {
+      statusCode: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+      body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
+    };
+  }
 };
 
 export const uploadAgentContactsLogging = async (
@@ -308,8 +791,10 @@ export const uploadAgentContacts = async (
     const processedCsv = processedLines.join('\n') + '\n';
 
     // Guardar en S3: /agents/{campaign}/{agent}-contacts.csv
-    const key = `agents/${campaign}/${agent}-contacts.csv`;
-    const historic_key = `historic/agents/${campaign}/${agent}-contacts.csv`;
+    const ts = makeTimestampForKey();
+    const key_deprecated = `agents/${campaign}/${agent}-contacts-${ts}.csv`;
+    const key = `assignments/agents/${campaign}/${agent}-contacts-${ts}.csv`;
+    const historic_key = `historic/agents/${campaign}/${agent}-contacts-${ts}.csv`;
     
     await s3Client.send(new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -340,6 +825,7 @@ export const uploadAgentContacts = async (
         data: {
           agent,
           campaign,
+          key_deprecated,
           key,
           historic_key,
           contactCount,
@@ -390,11 +876,44 @@ export const getAgentContacts = async (
       };
     }
 
-    const key = `agents/${campaign}/${agent}-contacts.csv`;
-    
+    const prefix = `agents/${campaign}/`;
+    const listRes = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: prefix,
+      })
+    );
+
+    const candidates = (listRes.Contents || [])
+      .filter((o) => !!o.Key)
+      .map((o) => ({
+        key: String(o.Key),
+        lastModified: o.LastModified ? new Date(o.LastModified).getTime() : 0,
+      }))
+      .filter((o) => {
+        const filename = o.key.split('/').pop() || '';
+        return filename.startsWith(`${agent}-contacts`) && filename.endsWith('.csv');
+      })
+      .sort((a, b) => b.lastModified - a.lastModified);
+
+    const latest = candidates[0];
+    if (!latest?.key) {
+      return {
+        statusCode: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+        body: JSON.stringify({
+          success: false,
+          message: 'CSV no encontrado'
+        })
+      };
+    }
+
     const response = await s3Client.send(new GetObjectCommand({
       Bucket: BUCKET_NAME,
-      Key: key,
+      Key: latest.key,
     }));
 
     const csvContent = await response.Body?.transformToString();
