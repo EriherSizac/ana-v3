@@ -1014,15 +1014,54 @@ export function getPage() {
   return autoPage;
 }
 
-/**
- * Verifica si un número tiene WhatsApp
- * @param {string} invalidNumberTextSelector - Selector del texto de error
- * @returns {Promise<boolean>} true si el número es inválido
- */
-async function checkInvalidNumber(invalidNumberTextSelector) {
+async function checkNoWhatsappModal() {
   try {
-    const invalidNumber = await autoPage.waitForSelector(invalidNumberTextSelector, { timeout: 8000 });
-    return !!invalidNumber;
+    const patterns = [
+      /no\s+est[aá]\s+en\s+whatsapp/i,
+      /no\s+est[aá]\s+en\s+WhatsApp/i,
+      /not\s+on\s+whatsapp/i,
+      /is\s+not\s+on\s+whatsapp/i,
+      /isn['’]t\s+on\s+whatsapp/i,
+      /phone\s+number\s+shared\s+via\s+url\s+is\s+invalid/i,
+      /el\s+n[uú]mero\s+de\s+tel[eé]fono\s+compartido\s+a\s+trav[eé]s\s+de\s+la\s+direcci[oó]n\s+url\s+no\s+es\s+v[aá]lido/i,
+    ];
+
+    const hit = await autoPage.evaluate((payload) => {
+      const { sources, regexes } = payload;
+
+      const re = regexes.map((r) => {
+        try {
+          return new RegExp(r.source, r.flags);
+        } catch (_) {
+          return null;
+        }
+      }).filter(Boolean);
+
+      const texts = [];
+      for (const sel of sources) {
+        const nodes = Array.from(document.querySelectorAll(sel)).slice(0, 30);
+        for (const n of nodes) {
+          const aria = n.getAttribute && n.getAttribute('aria-label');
+          if (aria) texts.push(String(aria));
+          const txt = (n.textContent || '').trim();
+          if (txt) texts.push(txt);
+        }
+      }
+
+      const combined = texts.join(' | ');
+      return re.some((x) => x.test(combined));
+    }, {
+      sources: [
+        '[data-animate-modal-popup="true"][aria-label]',
+        '[role="dialog"][aria-label]',
+        'div[aria-label][data-animate-modal-popup="true"]',
+        'div[aria-label][role="dialog"]',
+        'div[aria-label]',
+      ],
+      regexes: patterns.map((p) => ({ source: p.source, flags: p.flags })),
+    });
+
+    return Boolean(hit);
   } catch (_) {
     return false;
   }
@@ -1055,8 +1094,8 @@ async function pasteAndSendMedia(messageBoxSelector, invalidNumberTextSelector, 
     return null;
   } catch (e) {
     // Si no encontramos el cuadro de mensaje, puede ser porque el número es inválido
-    const maybeInvalid = await autoPage.$('text="El número de teléfono compartido a través de la dirección URL no es válido."');
-    if (maybeInvalid) {
+    const noWhatsapp = await checkNoWhatsappModal();
+    if (noWhatsapp) {
       console.log(`❌ Número inválido (no tiene WhatsApp) detectado durante pegado de media: ${phone}`);
       return {
         status: 'no_whatsapp',
@@ -1243,9 +1282,12 @@ export async function sendMessage(contact, messageTemplate) {
 
     // Verificar si el número es válido usando el modal de error (sin WhatsApp)
     const invalidNumberTextSelector = 'text="El número de teléfono compartido a través de la dirección URL no es válido."';
-    
-    const isInvalid = await checkInvalidNumber(invalidNumberTextSelector);
-    if (isInvalid) {
+
+    const noWhatsappEarly = await Promise.race([
+      autoPage.waitForSelector(invalidNumberTextSelector, { timeout: 8000 }).then(() => true).catch(() => false),
+      autoPage.waitForTimeout(1200).then(() => checkNoWhatsappModal()),
+    ]);
+    if (noWhatsappEarly) {
       console.log(`❌ Número inválido (no tiene WhatsApp): ${contact.phone}`);
       return await finalizeReturn({
         ...contact,
@@ -1277,8 +1319,8 @@ export async function sendMessage(contact, messageTemplate) {
       await autoPage.waitForSelector(messageBoxSelector, { timeout: 30000 });
     } catch (e) {
       // Antes de marcar error genérico, revisamos si apareció el texto de número inválido
-      const maybeInvalid = await autoPage.$(invalidNumberTextSelector);
-      if (maybeInvalid) {
+      const noWhatsappLate = await checkNoWhatsappModal();
+      if (noWhatsappLate) {
         console.log(`❌ Número inválido (no tiene WhatsApp) detectado tarde: ${contact.phone}`);
         return await finalizeReturn({
           ...contact,
@@ -1305,8 +1347,8 @@ export async function sendMessage(contact, messageTemplate) {
       await autoPage.click(messageBoxSelector);
     } catch (e) {
       // Si al hacer clic el popup de número inválido intercepta el click, lo tratamos como no_whatsapp
-      const maybeInvalid = await autoPage.$(invalidNumberTextSelector);
-      if (maybeInvalid) {
+      const noWhatsappOnClick = await checkNoWhatsappModal();
+      if (noWhatsappOnClick) {
         console.log(`❌ Número inválido (no tiene WhatsApp) al intentar enfocar el cuadro: ${contact.phone}`);
         return await finalizeReturn({
           ...contact,

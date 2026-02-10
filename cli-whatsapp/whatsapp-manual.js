@@ -266,6 +266,220 @@ async function showManualLoginOverlay(requireAll = true) {
   });
 }
 
+async function injectNoWhatsappInfoButton(page) {
+  const config = loadAgentConfig();
+  if (!config) {
+    console.log('⚠️  No hay configuración de agente, botón de info no-whatsapp no disponible');
+    return;
+  }
+
+  const rawCampaign = config.campaign || '';
+  const campaignName = rawCampaign.includes('-') ? rawCampaign.split('-').slice(1).join('-') : rawCampaign;
+  const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
+
+  const readNoWhatsappPhonesFromResultsCsv = () => {
+    try {
+      const filePath = CONFIG.outputCsv;
+      if (!filePath || !fs.existsSync(filePath)) return [];
+
+      const text = fs.readFileSync(filePath, 'utf-8');
+      const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length < 2) return [];
+
+      const headers = lines[0].split(',').map((h) => String(h || '').trim().toLowerCase());
+      const idxPhone = headers.indexOf('phone');
+      const idxStatus = headers.indexOf('status');
+      if (idxPhone === -1 || idxStatus === -1) return [];
+
+      const phones = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',');
+        const status = String(cols[idxStatus] || '').trim();
+        if (status !== 'no_whatsapp') continue;
+        const phoneRaw = String(cols[idxPhone] || '').trim();
+        const digits = phoneRaw.replace(/\D/g, '');
+        if (!digits) continue;
+        const last10 = digits.length > 10 ? digits.slice(-10) : digits;
+        phones.push(last10);
+      }
+
+      return Array.from(new Set(phones));
+    } catch (e) {
+      console.error('⚠️  Error leyendo resultados.csv para no_whatsapp:', e?.message || e);
+      return [];
+    }
+  };
+
+  await page.exposeFunction('getNoWhatsappPhonesFromNode', async () => {
+    const phones10 = readNoWhatsappPhonesFromResultsCsv();
+    const masked = phones10.map((p) => String(p).slice(-4)).filter(Boolean);
+    return {
+      count: masked.length,
+      phones10,
+      masked,
+    };
+  });
+
+  await page.exposeFunction('submitNoWhatsappInfoInteraction', async (phones10) => {
+    try {
+      const list = Array.isArray(phones10) ? phones10 : [];
+      const now = new Date();
+      const contact_date = now.toISOString().slice(0, 10);
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
+
+      const interactions = list.slice(0, 200).map((phone10) => ({
+        credit_id: '',
+        campaign_name: String(campaignName || ''),
+        user_id: INTERACTIONS_USER_ID,
+        subdictamen: 'Consulta No Whatsapp',
+        contact_date,
+        contact_time: `${hh}:${mm}`,
+        range_time: `${hh}:00 - ${nextH}:00`,
+        action_channel: 'whatsapp',
+        action: 'whatsapp',
+        contactable: false,
+        phone_number: String(phone10 || ''),
+        email_address: null,
+        template_used: null,
+        comments: 'opened_no_whatsapp_info_modal',
+        promise_date: null,
+        promise_amount: null,
+        promise_payment_plan: null,
+        inoutbound: 'inbound',
+        payment_made_date: null,
+      }));
+
+      if (interactions.length === 0) return { ok: true, status: 204, body: { message: 'no phones' } };
+      return await insertInteractions(interactions);
+    } catch (e) {
+      console.error('❌ Error al insertar interacción (no_whatsapp info):', e?.message || e);
+      return { ok: false, status: 0, body: null, error: e?.message || String(e) };
+    }
+  });
+
+  await page.addInitScript(() => {
+    const ensureStyles = () => {
+      if (document.getElementById('no-whatsapp-info-styles')) return;
+      const style = document.createElement('style');
+      style.id = 'no-whatsapp-info-styles';
+      style.textContent = `
+        #no-whatsapp-info-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 99999996; backdrop-filter: blur(2px); }
+        #no-whatsapp-info-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: #fff; border-radius: 14px; width: 420px; max-width: calc(100vw - 40px); max-height: 75vh; overflow: hidden; z-index: 99999997; font-family: Arial, sans-serif; }
+        #no-whatsapp-info-modal header { background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); color: #fff; padding: 12px 14px; display:flex; align-items:center; justify-content: space-between; }
+        #no-whatsapp-info-modal header h2 { margin:0; font-size: 14px; }
+        #no-whatsapp-info-modal header button { background: rgba(255,255,255,.2); border:none; color:#fff; width: 28px; height: 28px; border-radius: 50%; font-size: 18px; cursor:pointer; }
+        #no-whatsapp-info-body { padding: 12px 14px; overflow:auto; max-height: calc(75vh - 52px); }
+        .no-wa-pill { display:inline-block; padding: 6px 10px; background:#f3f4f6; border: 1px solid #e5e7eb; border-radius: 999px; margin: 6px 6px 0 0; font-size: 12px; color: #111827; }
+        .no-wa-muted { font-size: 12px; color: #6b7280; }
+      `;
+      document.head.appendChild(style);
+    };
+
+    const closeModal = () => {
+      const overlay = document.getElementById('no-whatsapp-info-overlay');
+      const modal = document.getElementById('no-whatsapp-info-modal');
+      if (overlay) overlay.remove();
+      if (modal) modal.remove();
+    };
+
+    const openModal = async () => {
+      ensureStyles();
+      closeModal();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'no-whatsapp-info-overlay';
+      overlay.onclick = () => closeModal();
+
+      const modal = document.createElement('div');
+      modal.id = 'no-whatsapp-info-modal';
+      modal.onclick = (e) => e.stopPropagation();
+      modal.innerHTML = `
+        <header>
+          <h2>ℹ️ Números sin WhatsApp</h2>
+          <button id="no-whatsapp-info-close">×</button>
+        </header>
+        <div id="no-whatsapp-info-body">
+          <div class="no-wa-muted">Cargando...</div>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+      document.body.appendChild(modal);
+
+      const closeBtn = document.getElementById('no-whatsapp-info-close');
+      if (closeBtn) closeBtn.onclick = () => closeModal();
+
+      try {
+        const data = await window.getNoWhatsappPhonesFromNode();
+        const body = document.getElementById('no-whatsapp-info-body');
+        if (!body) return;
+
+        const count = Number(data?.count || 0);
+        const masked = Array.isArray(data?.masked) ? data.masked : [];
+        const phones10 = Array.isArray(data?.phones10) ? data.phones10 : [];
+
+        if (count === 0) {
+          body.innerHTML = `<div class="no-wa-muted">No hay números marcados como <strong>no_whatsapp</strong> en resultados.csv.</div>`;
+        } else {
+          const header = `<div class="no-wa-muted">Total: <strong>${count}</strong></div>`;
+          const pills = masked.map((d) => `<span class="no-wa-pill">**** ${String(d)}</span>`).join('');
+          body.innerHTML = header + `<div style="margin-top: 8px;">${pills}</div>`;
+        }
+
+        if (typeof window.submitNoWhatsappInfoInteraction === 'function') {
+          window.submitNoWhatsappInfoInteraction(phones10).catch(() => null);
+        }
+      } catch (e) {
+        const body = document.getElementById('no-whatsapp-info-body');
+        if (body) body.innerHTML = `<div class="no-wa-muted">Error cargando lista.</div>`;
+      }
+    };
+
+    const createButton = () => {
+      const existing = document.getElementById('no-whatsapp-info-btn');
+      if (existing) return;
+
+      const btn = document.createElement('button');
+      btn.id = 'no-whatsapp-info-btn';
+      btn.title = 'Números sin WhatsApp';
+      btn.innerHTML = 'ℹ️';
+      btn.style.cssText = `
+        position: fixed;
+        bottom: 70px;
+        right: 20px;
+        width: 30px;
+        height: 30px;
+        border: none;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.92);
+        color: #111;
+        font-size: 16px;
+        cursor: pointer;
+        z-index: 999998;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+      `;
+      btn.onmouseover = () => {
+        btn.style.transform = 'scale(1.05)';
+      };
+      btn.onmouseout = () => {
+        btn.style.transform = 'scale(1)';
+      };
+      btn.onclick = () => openModal();
+      document.body.appendChild(btn);
+    };
+
+    window.addEventListener('load', () => {
+      setTimeout(() => createButton(), 2500);
+    });
+
+    setInterval(() => {
+      createButton();
+    }, 5000);
+  });
+}
+
 /**
  * Inicializa la ventana manual de WhatsApp para respuestas
  * @param {Array} allowedContacts - Lista de contactos permitidos (números de teléfono)
@@ -414,6 +628,12 @@ export async function initManualWhatsApp(allowedContacts = []) {
     await injectGestionButton(manualPage);
   } catch (error) {
     console.error('⚠️  Error al preparar botón de gestión:', error.message);
+  }
+
+  try {
+    await injectNoWhatsappInfoButton(manualPage);
+  } catch (error) {
+    console.error('⚠️  Error al preparar botón de info no-whatsapp:', error.message);
   }
   
   // IMPORTANTE:

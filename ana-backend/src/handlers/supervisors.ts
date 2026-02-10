@@ -396,6 +396,17 @@ export const publishAgentContactsDeprecated = async (
   try {
     const { agent, campaign } = event.pathParameters || {};
 
+    console.log('[publishAgentContactsDeprecated] start', {
+      agent,
+      campaign,
+      method: event.httpMethod,
+      path: event.path,
+      hasBody: Boolean(event.body),
+      bodyLength: event.body ? event.body.length : 0,
+      isBase64Encoded: Boolean((event as any).isBase64Encoded),
+      contentType: event.headers?.['content-type'] || event.headers?.['Content-Type'] || '',
+    });
+
     if (!agent || !campaign) {
       return {
         statusCode: 400,
@@ -423,6 +434,10 @@ export const publishAgentContactsDeprecated = async (
       event.headers?.['Content-Type'] ||
       '';
 
+    console.log('[publishAgentContactsDeprecated] content-type check', {
+      contentTypeHeader,
+    });
+
     if (!contentTypeHeader.toLowerCase().includes('multipart/form-data')) {
       return {
         statusCode: 415,
@@ -437,16 +452,46 @@ export const publishAgentContactsDeprecated = async (
     let csv: string = '';
     try {
       const { fields, files } = parseMultipartFormData(event);
+
+      console.log('[publishAgentContactsDeprecated] multipart parsed', {
+        fieldKeys: Object.keys(fields || {}),
+        filesCount: Array.isArray(files) ? files.length : 0,
+        files: Array.isArray(files)
+          ? files.map((f: any) => ({
+              fieldname: f?.fieldname,
+              filename: f?.filename,
+              mimetype: f?.mimetype,
+              size: f?.data?.length,
+            }))
+          : [],
+      });
+
       const file =
         files.find((f) => f.fieldname === 'file') ||
         files.find((f) => f.fieldname === 'csv') ||
         files[0];
+
+      console.log('[publishAgentContactsDeprecated] selected file', {
+        fieldname: (file as any)?.fieldname,
+        filename: (file as any)?.filename,
+        mimetype: (file as any)?.mimetype,
+        size: (file as any)?.data?.length,
+        hasFieldsCsv: Boolean((fields as any)?.csv),
+      });
 
       if (file?.data) {
         csv = file.data.toString('utf8');
       } else if (fields.csv) {
         csv = String(fields.csv);
       }
+
+      const csvPreview = (csv || '').slice(0, 200);
+      const csvLineCount = csv ? csv.split(/\r?\n/).filter((l) => l.trim().length > 0).length : 0;
+      console.log('[publishAgentContactsDeprecated] csv extracted', {
+        csvLength: csv ? csv.length : 0,
+        csvLineCount,
+        csvPreview,
+      });
     } catch (error) {
       console.error('Error parseando multipart:', error);
       return {
@@ -460,6 +505,10 @@ export const publishAgentContactsDeprecated = async (
     }
 
     if (!csv.trim()) {
+      console.log('[publishAgentContactsDeprecated] empty csv after parse', {
+        agent,
+        campaign,
+      });
       return {
         statusCode: 400,
         headers: {
@@ -472,6 +521,13 @@ export const publishAgentContactsDeprecated = async (
 
     const ts = makeTimestampForKey();
     const key_deprecated = `agents/${campaign}/${agent}-contacts-${ts}.csv`;
+
+    console.log('[publishAgentContactsDeprecated] uploading to s3', {
+      bucket: BUCKET_NAME,
+      key: key_deprecated,
+      csvLength: csv.length,
+      csvFirstLine: csv.split(/\r?\n/)[0] || '',
+    });
     await s3Client.send(
       new PutObjectCommand({
         Bucket: BUCKET_NAME,
@@ -480,6 +536,11 @@ export const publishAgentContactsDeprecated = async (
         ContentType: 'text/csv',
       })
     );
+
+    console.log('[publishAgentContactsDeprecated] upload done', {
+      bucket: BUCKET_NAME,
+      key: key_deprecated,
+    });
 
     return {
       statusCode: 200,
@@ -801,6 +862,7 @@ export const uploadAgentContacts = async (
       Key: key,
       Body: processedCsv,
       ContentType: 'text/csv',
+      Metadata: metadata ? { metadata: String(metadata) } : undefined,
     }));
 
     await s3Client.send(new PutObjectCommand({
@@ -810,6 +872,8 @@ export const uploadAgentContacts = async (
       ContentType: 'text/csv',
       Metadata: metadata ? { metadata: String(metadata) } : undefined,
     }));
+
+    
 
     console.log(`CSV subido: ${key} con ${contactCount} contactos`);
 
