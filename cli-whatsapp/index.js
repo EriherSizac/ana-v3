@@ -466,7 +466,7 @@ async function main() {
             
             let creditId = '';
             if (clientInfo && clientInfo.length > 0) {
-              creditId = String(clientInfo[0].credit_id || '');
+              creditId = String(clientInfo[0]?.credit_info?.credit_id || '');
               console.log(`✅ credit_id encontrado: ${creditId}`);
             } else {
               console.log('⚠️  No se encontró credit_id para este teléfono');
