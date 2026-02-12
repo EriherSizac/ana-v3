@@ -446,6 +446,9 @@ async function main() {
           ]);
 
           try {
+            console.log('📋 [DEBUG] Objeto contact completo:');
+            console.log(JSON.stringify(contact, null, 2));
+            
             const now = new Date();
             const contact_date = now.toISOString().slice(0, 10);
             const hh = String(now.getHours()).padStart(2, '0');
@@ -455,9 +458,23 @@ async function main() {
             const phone10 = phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
             const subdictamen = result?.status === 'no_whatsapp' ? 'No tiene Whatsapp' : 'Se envía WhatsApp';
 
+            // Siempre buscar credit_id por teléfono
+            console.log('🔍 Buscando credit_id por teléfono...');
+            const { normalizePhoneForBackend, searchClientInfoByPhone } = await import('./agent-config.js');
+            const phoneE164 = normalizePhoneForBackend(contact.phone);
+            const clientInfo = await searchClientInfoByPhone(campaignName, phoneE164);
+            
+            let creditId = '';
+            if (clientInfo && clientInfo.length > 0) {
+              creditId = String(clientInfo[0].credit_id || '');
+              console.log(`✅ credit_id encontrado: ${creditId}`);
+            } else {
+              console.log('⚠️  No se encontró credit_id para este teléfono');
+            }
+
             const interactionRes = await insertInteractions([
               {
-                credit_id: String(contact.credit || ''),
+                credit_id: creditId,
                 campaign_name: String(campaignName || ''),
                 user_id: INTERACTIONS_USER_ID,
                 subdictamen,

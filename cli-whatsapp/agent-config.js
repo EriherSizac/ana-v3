@@ -95,12 +95,17 @@ export function loadAgentConfig() {
 export async function insertInteractions(interactions) {
   const url = `${INTERACTIONS_API_BASE_URL}/interactions`;
   try {
+    const payload = { interactions };
+    
+    console.log('📤 [insertInteractions] Payload enviado:');
+    console.log(JSON.stringify(payload, null, 2));
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ interactions }),
+      body: JSON.stringify(payload),
     });
 
     const text = await response.text().catch(() => '');
@@ -112,6 +117,9 @@ export async function insertInteractions(interactions) {
         parsed = { raw: text };
       }
     }
+
+    console.log(`📥 [insertInteractions] Respuesta del backend (${response.status}):`);
+    console.log(JSON.stringify(parsed, null, 2));
 
     if (!response.ok) {
       console.error(`❌ insertInteractions failed: ${response.status} ${response.statusText}`);
