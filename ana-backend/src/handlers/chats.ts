@@ -24,7 +24,10 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
     const agentId = event.pathParameters?.agentId;
     const campaignId = event.pathParameters?.campaignId;
 
+    console.log('[getChats] start', { agentId, campaignId, bucket: BUCKET_NAME });
+
     if (!agentId || !campaignId) {
+      console.log('[getChats] ERROR: missing params', { agentId, campaignId });
       return {
         statusCode: 400,
         body: JSON.stringify({ error: 'agentId and campaignId parameters are required' }),
@@ -36,6 +39,9 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
       Bucket: BUCKET_NAME,
       Prefix: prefix,
     }));
+
+    const allKeys = (listRes.Contents || []).map((o) => o.Key);
+    console.log('[getChats] S3 list', { prefix, totalObjects: allKeys.length, keys: allKeys.slice(0, 10) });
 
     const candidates = (listRes.Contents || [])
       .filter((o) => !!o.Key)
@@ -49,7 +55,10 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
       })
       .filter((o) => !!o.LastModified);
 
+    console.log('[getChats] candidates for agent', { agentId, candidateCount: candidates.length, candidateKeys: candidates.map((c) => c.Key) });
+
     if (candidates.length === 0) {
+      console.log('[getChats] no candidates found, returning 404');
       return {
         statusCode: 404,
         body: JSON.stringify({ error: 'Chat assignment not found' }),
@@ -75,6 +84,11 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
         body: JSON.stringify({ error: 'File not found or empty' }),
       };
     }
+
+    const csvLines = bodyContents.trim().split('\n');
+    console.log('[getChats] CSV preview (first 5 rows):');
+    csvLines.slice(0, 5).forEach((line, idx) => console.log(`  [${idx}] ${line}`));
+    console.log('[getChats] total lines:', csvLines.length);
 
     // Consumir el archivo: una vez leído, se elimina de S3
     try {
