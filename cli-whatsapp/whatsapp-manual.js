@@ -620,6 +620,22 @@ export async function initManualWhatsApp(allowedContacts = []) {
         return { success: false, message: 'Error de conexión' };
       }
     });
+    await manualPage.exposeFunction('listAllChatBackupsFromBackend', async (campaign, agentId) => {
+      try {
+        const url = `${CONFIG.apiBaseUrl}/backups/chats/${campaign}/${agentId}`;
+        console.log(`[ChatBackup] 📡 LIST ${url}`);
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        console.log(`[ChatBackup] 📡 List response status: ${response.status}`);
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error('[ChatBackup] Error al listar backups:', error);
+        return { success: false, message: 'Error de conexión' };
+      }
+    });
   } catch (error) {
     console.error('⚠️  Error al exponer funciones de chat backup:', error.message);
   }
@@ -2031,6 +2047,13 @@ async function initChatBackupSystem(page, agentConfig) {
           return;
         }
         lastChatSwitchAt = now;
+
+        // Respaldar el chat anterior antes de cambiar (auto-save al salir)
+        if (currentChatPhone) {
+          log('[ChatBackup] 💾 Auto-guardando chat anterior antes de cambiar:', currentChatPhone);
+          backupFullConversation(currentChatPhone, false).catch(() => {});
+        }
+
         log('[ChatBackup] 🔄 Cambio de chat detectado:', phoneNumber);
         currentChatPhone = phoneNumber;
         isFirstBackup = true; // Resetear flag para el nuevo chat
@@ -2076,7 +2099,9 @@ async function initChatBackupSystem(page, agentConfig) {
           log('[ChatBackup] ⚠️ Ya hay un intervalo activo, no se crea otro');
         }
       } else if (nullPhoneStreak >= 3 && currentChatPhone) {
-        // Se salió del chat
+        // Se salió del chat — respaldar antes de limpiar
+        log('[ChatBackup] 💾 Auto-guardando chat antes de salir:', currentChatPhone);
+        backupFullConversation(currentChatPhone, false).catch(() => {});
         log('[ChatBackup] 🚪 Salió del chat');
         currentChatPhone = null;
         stopCountdown();
@@ -2686,100 +2711,233 @@ async function injectHistoryButton(page) {
         btn.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
       };
 
-      btn.onclick = async () => {
-        console.log('[Historial] Botón clickeado');
+      // Función para normalizar el número de teléfono
+      const normalizePhone = (rawPhone) => {
+        const digits = String(rawPhone || '').replace(/\D/g, '');
+        if (!digits) return '';
+        let normalized = digits;
+        if (normalized.length === 10) {
+          normalized = '521' + normalized;
+        }
+        if (normalized.startsWith('521') && normalized.length === 13) {
+          return normalized;
+        }
+        if (normalized.startsWith('52') && !normalized.startsWith('521') && normalized.length === 12) {
+          normalized = '521' + normalized.slice(2);
+        }
+        return normalized;
+      };
 
-        // Siempre limpiar UI previa para evitar que se quede visible el historial del chat anterior
-        const prevBubble = document.getElementById('history-bubble');
-        if (prevBubble) prevBubble.remove();
-        const prevOverlay = document.getElementById('history-overlay');
-        if (prevOverlay) prevOverlay.remove();
-        
-        // Obtener número del contacto actual
-        const phoneNumber = getCurrentContactPhone();
-        console.log('[Historial] Número detectado:', phoneNumber);
-        
-        if (!phoneNumber) {
-          console.log('[Historial] No hay número, mostrando notificación');
-          showNotification('⚠️ Selecciona un chat primero', 'warning');
+      // Función para cargar y mostrar historial dado un número
+      const loadAndShowHistory = async (phoneNumber) => {
+        console.log('[Historial] Cargando historial para:', phoneNumber);
+
+        if (typeof window.getChatBackupFromBackend !== 'function') {
+          console.error('[Historial] ❌ window.getChatBackupFromBackend no está disponible');
+          showNotification('❌ Error: Función no disponible', 'error');
           return;
         }
 
-        btn.disabled = true;
-        btn.innerHTML = '⏳ Cargando...';
+        const config = window.manualConfig || { campaign: 'monte_auto_avanza', agent_id: 'erick' };
+        const normalizedPhone = normalizePhone(phoneNumber);
+        console.log('[Historial] Número normalizado:', phoneNumber, '->', normalizedPhone);
 
-        try {
-          console.log('[Historial] Obteniendo backup del chat actual...');
-          
-          // Verificar si la función existe
-          if (typeof window.getChatBackupFromBackend !== 'function') {
-            console.error('[Historial] ❌ window.getChatBackupFromBackend no está disponible');
-            showNotification('❌ Error: Función no disponible', 'error');
-            return;
-          }
-          
-          // Obtener configuración del agente (debe estar disponible globalmente)
-          const config = window.manualConfig || { campaign: 'monte_auto_avanza', agent_id: 'erick' };
-          
-          // Normalizar el número de teléfono antes de buscar el backup
-          const normalizePhone = (rawPhone) => {
-            const digits = String(rawPhone || '').replace(/\D/g, '');
-            if (!digits) return '';
-            let normalized = digits;
-            if (normalized.length === 10) {
-              normalized = '521' + normalized;
-            }
-            if (normalized.startsWith('521') && normalized.length === 13) {
-              return normalized;
-            }
-            if (normalized.startsWith('52') && !normalized.startsWith('521') && normalized.length === 12) {
-              normalized = '521' + normalized.slice(2);
-            }
-            return normalized;
-          };
-          
-          const normalizedPhone = normalizePhone(phoneNumber);
-          console.log('[Historial] Número normalizado:', phoneNumber, '->', normalizedPhone);
-          
-          // Obtener backup del chat actual usando el mismo endpoint que usa el sistema de respaldo
-          const result = await window.getChatBackupFromBackend(
-            config.campaign,
-            config.agent_id,
-            normalizedPhone
-          );
-          console.log('[Historial] Resultado recibido:', result);
-          
-          if (!result.success) {
-            console.log('[Historial] Sin éxito:', result.message);
-            showNotification(result.message || '📭 No hay historial disponible para este chat', 'info');
-            return;
-          }
+        const result = await window.getChatBackupFromBackend(
+          config.campaign,
+          config.agent_id,
+          normalizedPhone
+        );
+        console.log('[Historial] Resultado recibido:', result);
 
-          if (!result.data || !result.data.messages) {
-            console.log('[Historial] No hay mensajes en el resultado');
-            showNotification('📭 No hay mensajes respaldados para este chat', 'info');
-            return;
-          }
-
-          const messages = result.data.messages;
-          
-          if (messages.length === 0) {
-            console.log('[Historial] No se encontraron mensajes');
-            showNotification(`📭 No hay mensajes en el respaldo`, 'info');
-            return;
-          }
-
-          console.log('[Historial] Mostrando burbuja con', messages.length, 'mensajes');
-          // Mostrar burbuja con historial
-          showHistoryBubble(messages, phoneNumber, result.data.last_updated);
-
-        } catch (error) {
-          console.error('[Historial] Error:', error);
-          showNotification('❌ Error al cargar historial', 'error');
-        } finally {
-          btn.disabled = false;
-          btn.innerHTML = '📜 Ver Historial';
+        if (!result.success) {
+          showNotification(result.message || '📭 No hay historial disponible para este número', 'info');
+          return;
         }
+
+        if (!result.data || !result.data.messages || result.data.messages.length === 0) {
+          showNotification('📭 No hay mensajes respaldados para este número', 'info');
+          return;
+        }
+
+        console.log('[Historial] Mostrando burbuja con', result.data.messages.length, 'mensajes');
+        showHistoryBubble(result.data.messages, phoneNumber, result.data.last_updated);
+      };
+
+      // Función para mostrar el modal de búsqueda de historial
+      const showHistorySearchModal = async () => {
+        // Limpiar UI previa
+        ['history-bubble', 'history-overlay', 'history-search-modal', 'history-search-overlay'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.remove();
+        });
+
+        const config = window.manualConfig || {};
+
+        // Overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'history-search-overlay';
+        overlay.style.cssText = `
+          position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+          background: rgba(0,0,0,0.5); z-index: 99999998; backdrop-filter: blur(2px);
+        `;
+
+        // Modal
+        const modal = document.createElement('div');
+        modal.id = 'history-search-modal';
+        modal.onclick = (e) => e.stopPropagation();
+        modal.style.cssText = `
+          position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+          background: white; border-radius: 20px; z-index: 99999999;
+          width: 500px; max-height: 80vh; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+          font-family: Arial, sans-serif; overflow: hidden; display: flex; flex-direction: column;
+        `;
+
+        modal.innerHTML = `
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h2 style="margin: 0; font-size: 20px;">📜 Historial de Chats</h2>
+              <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">Selecciona un número para ver sus mensajes</p>
+            </div>
+            <button id="close-history-search" style="background: rgba(255,255,255,0.2); border: none; color: white; font-size: 24px; cursor: pointer; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">×</button>
+          </div>
+          <div style="padding: 15px 20px 10px 20px;">
+            <input type="text" id="history-filter-input" placeholder="🔍 Filtrar por número..." style="
+              width: 100%; padding: 10px 14px; border: 2px solid #ddd; border-radius: 10px;
+              font-size: 14px; outline: none; box-sizing: border-box; transition: border-color 0.3s;
+            " onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#ddd'">
+          </div>
+          <div id="history-chat-list" style="padding: 0 20px 20px 20px; overflow-y: auto; flex: 1;">
+            <div style="text-align: center; padding: 40px 0; color: #999;">
+              <div style="font-size: 30px; margin-bottom: 10px;">⏳</div>
+              <div>Cargando conversaciones...</div>
+            </div>
+          </div>
+        `;
+
+        document.body.appendChild(overlay);
+        document.body.appendChild(modal);
+
+        overlay.onclick = () => { overlay.remove(); modal.remove(); };
+        document.getElementById('close-history-search').addEventListener('click', () => {
+          overlay.remove(); modal.remove();
+        });
+
+        const listContainer = document.getElementById('history-chat-list');
+        const filterInput = document.getElementById('history-filter-input');
+        let allChats = [];
+
+        // Fetch all chat backups
+        try {
+          if (typeof window.listAllChatBackupsFromBackend !== 'function') {
+            listContainer.innerHTML = '<div style="text-align: center; padding: 30px; color: #ff6b6b;">❌ Función no disponible</div>';
+            return;
+          }
+
+          const result = await window.listAllChatBackupsFromBackend(config.campaign, config.agent_id);
+          console.log('[Historial] Lista de chats:', result);
+
+          if (!result.success || !result.chats || result.chats.length === 0) {
+            listContainer.innerHTML = '<div style="text-align: center; padding: 30px; color: #999;"><div style="font-size: 30px; margin-bottom: 10px;">📭</div><div>No hay conversaciones respaldadas</div></div>';
+            return;
+          }
+
+          allChats = result.chats;
+        } catch (error) {
+          console.error('[Historial] Error al listar chats:', error);
+          listContainer.innerHTML = '<div style="text-align: center; padding: 30px; color: #ff6b6b;">❌ Error al cargar conversaciones</div>';
+          return;
+        }
+
+        // Render chat list
+        const renderChatList = (chats) => {
+          if (chats.length === 0) {
+            listContainer.innerHTML = '<div style="text-align: center; padding: 30px; color: #999;">Sin resultados</div>';
+            return;
+          }
+
+          listContainer.innerHTML = '';
+          chats.forEach(chat => {
+            const phone = chat.contact_phone || '';
+            const phone10 = phone.length > 10 ? phone.slice(-10) : phone;
+            const lastUpdated = chat.last_updated ? new Date(chat.last_updated).toLocaleString('es-MX', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Sin fecha';
+            const preview = chat.last_message_preview || 'Sin mensajes';
+            const totalMsgs = chat.total_messages || 0;
+
+            const row = document.createElement('div');
+            row.style.cssText = `
+              display: flex; align-items: center; padding: 12px; margin-bottom: 8px;
+              border: 1px solid #eee; border-radius: 12px; cursor: pointer;
+              transition: all 0.2s; gap: 12px;
+            `;
+            row.onmouseover = () => { row.style.background = '#f0f2ff'; row.style.borderColor = '#667eea'; };
+            row.onmouseout = () => { row.style.background = 'white'; row.style.borderColor = '#eee'; };
+
+            row.innerHTML = `
+              <div style="width: 45px; height: 45px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; flex-shrink: 0;">📱</div>
+              <div style="flex: 1; min-width: 0;">
+                <div style="font-weight: bold; font-size: 14px; color: #333;">${phone10}</div>
+                <div style="font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${preview}</div>
+              </div>
+              <div style="text-align: right; flex-shrink: 0;">
+                <div style="font-size: 11px; color: #999;">${lastUpdated}</div>
+                <div style="font-size: 11px; color: #667eea; font-weight: bold;">${totalMsgs} msgs</div>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 4px; flex-shrink: 0;">
+                <button class="hist-view-btn" data-phone="${phone}" title="Ver historial" style="
+                  background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none;
+                  border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; white-space: nowrap;
+                ">📜 Ver</button>
+                <button class="hist-open-btn" data-phone10="${phone10}" title="Abrir chat" style="
+                  background: #25D366; color: white; border: none;
+                  border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; white-space: nowrap;
+                ">💬 Abrir</button>
+              </div>
+            `;
+
+            listContainer.appendChild(row);
+          });
+
+          // Event delegation for buttons
+          listContainer.querySelectorAll('.hist-view-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const phone = btn.getAttribute('data-phone');
+              overlay.remove(); modal.remove();
+              await loadAndShowHistory(phone);
+            });
+          });
+
+          listContainer.querySelectorAll('.hist-open-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const p10 = btn.getAttribute('data-phone10');
+              const chatUrl = 'https://web.whatsapp.com/send?phone=52' + p10;
+              console.log('[Historial] Abriendo chat:', chatUrl);
+              overlay.remove(); modal.remove();
+              window.location.href = chatUrl;
+            });
+          });
+        };
+
+        renderChatList(allChats);
+
+        // Filter
+        filterInput.addEventListener('input', () => {
+          const query = filterInput.value.replace(/\D/g, '');
+          if (!query) {
+            renderChatList(allChats);
+            return;
+          }
+          const filtered = allChats.filter(c => (c.contact_phone || '').includes(query));
+          renderChatList(filtered);
+        });
+
+        setTimeout(() => filterInput.focus(), 100);
+      };
+
+      btn.onclick = () => {
+        console.log('[Historial] Botón clickeado');
+        showHistorySearchModal();
       };
 
       document.body.appendChild(btn);
@@ -3001,24 +3159,41 @@ async function injectHistoryButton(page) {
         align-items: center;
       `;
 
+      const phone10 = phoneNumber.replace(/\D/g, '');
+      const phoneDisplay = phone10.length > 10 ? phone10.slice(-10) : phone10;
+
       header.innerHTML = `
-        <div>
+        <div style="flex: 1;">
           <h2 style="margin: 0; font-size: 20px;">📜 Historial de Mensajes</h2>
-          <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">Fecha: ${date} | Total: ${messages.length} mensaje(s)</p>
+          <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">📱 ${phoneDisplay} | Fecha: ${date} | ${messages.length} mensaje(s)</p>
         </div>
-        <button id="close-history-bubble" style="
-          background: rgba(255, 255, 255, 0.2);
-          border: none;
-          color: white;
-          font-size: 24px;
-          cursor: pointer;
-          width: 32px;
-          height: 32px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        ">×</button>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button id="open-chat-from-history" title="Abrir este chat en WhatsApp" style="
+            background: #25D366;
+            border: none;
+            color: white;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 6px 14px;
+            border-radius: 8px;
+            white-space: nowrap;
+            transition: opacity 0.3s;
+          " onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">💬 Abrir chat</button>
+          <button id="close-history-bubble" style="
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          ">×</button>
+        </div>
       `;
 
       const content = document.createElement('div');
@@ -3072,6 +3247,19 @@ async function injectHistoryButton(page) {
       setTimeout(() => {
         content.scrollTop = content.scrollHeight;
       }, 100);
+
+      // Abrir chat desde historial
+      const openChatBtn = document.getElementById('open-chat-from-history');
+      if (openChatBtn) {
+        openChatBtn.onclick = () => {
+          const p10 = phoneDisplay;
+          const chatUrl = 'https://web.whatsapp.com/send?phone=52' + p10;
+          console.log('[Historial] Abriendo chat desde historial:', chatUrl);
+          bubble.remove();
+          overlay.remove();
+          window.location.href = chatUrl;
+        };
+      }
 
       // Cerrar burbuja y overlay
       document.getElementById('close-history-bubble').onclick = () => {

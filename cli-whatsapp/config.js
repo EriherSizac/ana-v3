@@ -33,7 +33,7 @@ export const CONFIG = {
   useClipboardMedia: false, // Si es true, intentará pegar media desde el portapapeles antes del texto
   showOverlay: true, // Si es true, muestra un overlay para evitar interacción del usuario
   enableManualWindow: true, // Si es true, abre ventana para respuestas manuales
-  enableMonitorWindow: false, // Cambiar a true para reactivar la ventana monitor
+  enableMonitorWindow: true, // Cambiar a false para desactivar la ventana monitor
 };
 
 export const __dirname_export = baseDir;

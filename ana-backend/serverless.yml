@@ -108,6 +108,22 @@ functions:
           path: /backups/chat/{campaign}/{agentId}/{contactPhone}
           method: options
 
+  listChatBackups:
+    handler: src/handlers/chatBackups.listChatBackups
+    events:
+      - httpApi:
+          cors: true
+          path: /backups/chats/{campaign}/{agentId}
+          method: get
+
+  listChatBackupsOptions:
+    handler: src/handlers/chatBackups.optionsHandler
+    events:
+      - httpApi:
+          cors: true
+          path: /backups/chats/{campaign}/{agentId}
+          method: options
+
   getChats:
     handler: src/handlers/chats.getChats
     events:
