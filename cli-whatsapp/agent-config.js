@@ -239,7 +239,32 @@ export async function sendBackup(data) {
  * @returns {Array} Array de objetos con los datos del CSV
  */
 function parseCSV(csvText) {
-  const lines = csvText.trim().split('\n');
+  // Separar el CSV en filas lógicas respetando campos con comillas que contienen saltos de línea
+  const splitCSVRows = (text) => {
+    const rows = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+
+      if (char === '"') {
+        inQuotes = !inQuotes;
+        current += char;
+      } else if ((char === '\n' || char === '\r') && !inQuotes) {
+        // Fin de fila lógica (fuera de comillas)
+        if (char === '\r' && text[i + 1] === '\n') i++; // Saltar \r\n
+        if (current.trim()) rows.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    if (current.trim()) rows.push(current);
+    return rows;
+  };
+
+  const lines = splitCSVRows(csvText.trim());
   if (lines.length < 2) return [];
   
   // Función para parsear una línea CSV respetando comillas dobles
@@ -301,11 +326,31 @@ function parseCSV(csvText) {
     const values = parseCSVLine(lines[i]);
     if (values.length >= headers.length) {
       const contact = {};
+      // Guardar todos los valores por nombre original de columna CSV
+      const rawValues = {};
       headers.forEach((header, idx) => {
+        const value = values[idx] || '';
+        rawValues[header] = value;
         // Usar el nombre mapeado si existe, sino usar el original
         const fieldName = fieldMapping[header] || header;
-        contact[fieldName] = values[idx] || '';
+        contact[fieldName] = value;
       });
+
+      // Interpolar variables {variable} en el mensaje con los valores del CSV
+      if (contact.message) {
+        contact.message = contact.message.replace(/\{(\w+)\}/g, (match, varName) => {
+          // Buscar por nombre mapeado (contact fields)
+          if (contact[varName] !== undefined && varName !== 'message') return contact[varName];
+          // Buscar por nombre original de columna CSV
+          if (rawValues[varName] !== undefined) return rawValues[varName];
+          // Buscar por nombre parcial (ej: {credit} -> id_credito, {name} -> nombre_cliente)
+          const partialKey = Object.keys(rawValues).find(k => k.includes(varName));
+          if (partialKey) return rawValues[partialKey];
+          // No encontrado, dejar el placeholder original
+          return match;
+        });
+      }
+
       contacts.push(contact);
     }
   }
