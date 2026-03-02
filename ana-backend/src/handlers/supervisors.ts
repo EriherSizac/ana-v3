@@ -845,6 +845,7 @@ export const uploadAgentContacts = async (
     let csv: string = '';
     let message: string = '';
     let metadata: string | undefined;
+    let direct: boolean = false;
 
     if (isMultipart) {
       // Parsear multipart/form-data
@@ -888,6 +889,7 @@ export const uploadAgentContacts = async (
 
         message = fields.message || '';
         metadata = fields.metadata || undefined;
+        direct = fields.direct === 'true' || fields.direct === '1';
 
         console.log('[uploadAgentContacts] multipart extracted', {
           csvLength: csv.length,
@@ -934,6 +936,7 @@ export const uploadAgentContacts = async (
       csv = requestData.csv || '';
       message = requestData.message || '';
       metadata = requestData.metadata || undefined;
+      direct = requestData.direct === true || requestData.direct === 'true';
 
       console.log('[uploadAgentContacts] JSON parsed', {
         hasCsv: Boolean(csv),
@@ -1014,10 +1017,22 @@ export const uploadAgentContacts = async (
 
     const processedCsv = processedLines.join('\n') + '\n';
 
-    // Guardar en S3: agents/{campaign}/{agent}-contacts-{ts}.csv (donde getChats lo consume)
+    // Guardar en S3: decidir ruta según parámetro 'direct'
     const ts = makeTimestampForKey();
-    const key = `agents/${campaign}/${agent}-contacts-${ts}.csv`;
     const historic_key = `historic/agents/${campaign}/${agent}-contacts-${ts}.csv`;
+    
+    let key: string;
+    let destination: string;
+    
+    if (direct) {
+      // Modo directo: guardar en agents/ (consumo inmediato por CLI)
+      key = `agents/${campaign}/${agent}-contacts-${ts}.csv`;
+      destination = 'agents (directo)';
+    } else {
+      // Modo normal: guardar en assignments/ (asignaciones pendientes)
+      key = `assignments/agents/${campaign}/${agent}-contacts-${ts}.csv`;
+      destination = 'assignments';
+    }
 
     console.log('[uploadAgentContacts] CSV preview (first 5 rows):');
     processedLines.slice(0, 5).forEach((line, idx) => console.log(`  [${idx}] ${line}`));
@@ -1034,6 +1049,8 @@ export const uploadAgentContacts = async (
       bucket: BUCKET_NAME,
       key,
       historic_key,
+      destination,
+      isDirect: direct,
       csvLength: processedCsv.length,
       contactCount,
       headerLine: processedLines[0] || '',
@@ -1058,7 +1075,7 @@ export const uploadAgentContacts = async (
     }));
     console.log('[uploadAgentContacts] S3 upload OK (historic):', historic_key);
 
-    console.log(`[uploadAgentContacts] OK: ${key} con ${contactCount} contactos`);
+    console.log(`[uploadAgentContacts] OK: ${key} con ${contactCount} contactos (destino: ${destination})`);
 
     return {
       statusCode: 200,
@@ -1074,6 +1091,8 @@ export const uploadAgentContacts = async (
           campaign,
           key,
           historic_key,
+          destination,
+          isDirect: direct,
           contactCount,
           messageAdded: message,
           metadata: metadata || null,
