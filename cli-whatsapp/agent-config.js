@@ -40,34 +40,50 @@ export function normalizePhoneForBackend(rawPhone) {
 export async function searchClientInfoByPhone(campaignName, phoneE164) {
   const url = `${INTERACTIONS_API_BASE_URL}/client-info`;
   try {
-    const payload = {
-      campaign_name: String(campaignName || ''),
-      search_type: 'Telefono',
-      search_value: String(phoneE164 || ''),
+    const post = async (searchValue, label) => {
+      const payload = {
+        campaign_name: String(campaignName || ''),
+        search_type: 'Telefono',
+        search_value: String(searchValue || ''),
+      };
+
+      console.log('[searchClientInfoByPhone] Request:', { url, payload, label: label || null });
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const rawText = await response.text().catch(() => '');
+      const data = rawText ? JSON.parse(rawText) : {};
+      const result = Array.isArray(data.result) ? data.result : [];
+
+      console.log('[searchClientInfoByPhone] Response:', {
+        status: response.status,
+        ok: response.ok,
+        resultLength: result.length,
+        label: label || null,
+      });
+
+      return { response, result };
     };
 
-    console.log('[searchClientInfoByPhone] Request:', { url, payload });
+    const primary = await post(phoneE164, 'primary');
+    if (primary.response.ok) return primary.result;
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    // Fallback: si el backend responde 404 con teléfono en formato +52..., intentar sin el prefijo +52
+    const searchValueStr = String(phoneE164 || '');
+    if (primary.response.status === 404 && searchValueStr.startsWith('+52')) {
+      const fallbackValue = searchValueStr.slice(3);
+      console.log('[searchClientInfoByPhone] 404 con +52. Reintentando sin prefijo +52...', { from: searchValueStr, to: fallbackValue });
+      const secondary = await post(fallbackValue, 'retry_without_+52');
+      if (secondary.response.ok) return secondary.result;
+    }
 
-    const rawText = await response.text().catch(() => '');
-    const data = rawText ? JSON.parse(rawText) : {};
-    const result = Array.isArray(data.result) ? data.result : [];
-    
-    console.log('[searchClientInfoByPhone] Response:', { 
-      status: response.status, 
-      ok: response.ok,
-      resultLength: result.length 
-    });
-    
-    if (!response.ok) return [];
-    return result;
+    return [];
   } catch (error) {
     console.error('❌ Error al buscar client-info:', error.message);
     return [];
@@ -95,39 +111,78 @@ export function loadAgentConfig() {
 export async function insertInteractions(interactions) {
   const url = `${INTERACTIONS_API_BASE_URL}/interactions`;
   try {
-    const payload = { interactions };
-    
-    console.log('📤 [insertInteractions] Payload enviado:');
-    console.log(JSON.stringify(payload, null, 2));
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const post = async (payloadToSend, label) => {
+      console.log(`📤 [insertInteractions] Payload enviado${label ? ` (${label})` : ''}:`);
+      console.log(JSON.stringify(payloadToSend, null, 2));
 
-    const text = await response.text().catch(() => '');
-    let parsed = {};
-    if (text) {
-      try {
-        parsed = JSON.parse(text);
-      } catch (e) {
-        parsed = { raw: text };
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payloadToSend),
+      });
+
+      const text = await response.text().catch(() => '');
+      let parsed = {};
+      if (text) {
+        try {
+          parsed = JSON.parse(text);
+        } catch (e) {
+          parsed = { raw: text };
+        }
+      }
+
+      console.log(`📥 [insertInteractions] Respuesta del backend (${response.status})${label ? ` (${label})` : ''}:`);
+      console.log(JSON.stringify(parsed, null, 2));
+
+      return { response, text, parsed };
+    };
+
+    const payload = { interactions };
+    const first = await post(payload, 'primary');
+
+    // Retry: si el backend responde 404 con teléfono en formato +52..., intentar sin el prefijo +52
+    if (first.response.status === 404) {
+      const stripPlus52 = (v) => {
+        const s = String(v || '');
+        return s.startsWith('+52') ? s.slice(3) : s;
+      };
+
+      const phoneKeys = ['phone_number', 'contact_phone', 'phone'];
+      const needsRetry = Array.isArray(interactions) && interactions.some((it) =>
+        phoneKeys.some((k) => typeof it?.[k] === 'string' && it[k].startsWith('+52'))
+      );
+
+      if (needsRetry) {
+        const interactionsRetry = interactions.map((it) => {
+          const next = { ...(it || {}) };
+          phoneKeys.forEach((k) => {
+            if (typeof next[k] === 'string') next[k] = stripPlus52(next[k]);
+          });
+          return next;
+        });
+        const retryPayload = { interactions: interactionsRetry };
+        console.log('🔁 [insertInteractions] 404 con +52. Reintentando sin prefijo +52...');
+        const second = await post(retryPayload, 'retry_without_+52');
+
+        if (!second.response.ok) {
+          console.error(`❌ insertInteractions failed: ${second.response.status} ${second.response.statusText}`);
+          if (second.text) console.error(`   Body: ${second.text}`);
+          return { ok: false, status: second.response.status, body: second.parsed };
+        }
+
+        return { ok: true, status: second.response.status, body: second.parsed };
       }
     }
 
-    console.log(`📥 [insertInteractions] Respuesta del backend (${response.status}):`);
-    console.log(JSON.stringify(parsed, null, 2));
-
-    if (!response.ok) {
-      console.error(`❌ insertInteractions failed: ${response.status} ${response.statusText}`);
-      if (text) console.error(`   Body: ${text}`);
-      return { ok: false, status: response.status, body: parsed };
+    if (!first.response.ok) {
+      console.error(`❌ insertInteractions failed: ${first.response.status} ${first.response.statusText}`);
+      if (first.text) console.error(`   Body: ${first.text}`);
+      return { ok: false, status: first.response.status, body: first.parsed };
     }
 
-    return { ok: true, status: response.status, body: parsed };
+    return { ok: true, status: first.response.status, body: first.parsed };
   } catch (error) {
     console.error('❌ Error al insertar interacción:', error.message);
     console.error('   URL:', url);
@@ -316,7 +371,9 @@ function parseCSV(csvText) {
     'name': 'name',
     'message': 'message',
     'credit': 'credit',
+    'credito': 'credit',
     'credit_id': 'credit',
+    'id_credito': 'credit',
     'discount': 'discount',
     'total_balance': 'total_balance',
     'product': 'product',

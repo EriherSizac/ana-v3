@@ -2216,27 +2216,44 @@ async function fetchResultCodesFromBackend(campaignName) {
 async function searchClientInfoByPhone(campaignName, phone) {
   const url = `${INTERACTIONS_API_BASE_URL}/client-info`;
   try {
-    const payload = {
-      campaign_name: campaignName,
-      search_type: 'Telefono',
-      search_value: phone,
-    };
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const post = async (searchValue, label) => {
+      const payload = {
+        campaign_name: campaignName,
+        search_type: 'Telefono',
+        search_value: searchValue,
+      };
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-    const rawText = await response.text().catch(() => '');
-    const data = rawText ? JSON.parse(rawText) : {};
-    const result = Array.isArray(data.result) ? data.result : [];
-    if (!response.ok || result.length === 0) {
-      console.log('[Gestion][client-info] url=', url);
-      console.log('[Gestion][client-info] payload=', payload);
-      console.log('[Gestion][client-info] status=', response.status);
-      console.log('[Gestion][client-info] body=', rawText);
+      const rawText = await response.text().catch(() => '');
+      const data = rawText ? JSON.parse(rawText) : {};
+      const result = Array.isArray(data.result) ? data.result : [];
+      if (!response.ok || result.length === 0) {
+        console.log('[Gestion][client-info] url=', url);
+        console.log('[Gestion][client-info] payload=', payload);
+        console.log('[Gestion][client-info] status=', response.status);
+        console.log('[Gestion][client-info] body=', rawText);
+        if (label) console.log('[Gestion][client-info] label=', label);
+      }
+      return { response, result };
+    };
+
+    const primary = await post(phone, 'primary');
+    if (primary.response.ok) return primary.result;
+
+    // Fallback: si el backend responde 404 con teléfono en formato +52..., intentar sin el prefijo +52
+    const phoneStr = String(phone || '');
+    if (primary.response.status === 404 && phoneStr.startsWith('+52')) {
+      const fallbackValue = phoneStr.slice(3);
+      console.log('[Gestion][client-info] 404 con +52. Reintentando sin prefijo +52...', { from: phoneStr, to: fallbackValue });
+      const secondary = await post(fallbackValue, 'retry_without_+52');
+      if (secondary.response.ok) return secondary.result;
     }
-    return result;
+
+    return [];
   } catch (error) {
     console.error('❌ Error al buscar client-info:', error.message);
     return [];
