@@ -514,8 +514,10 @@ async function main() {
           }
 
           if (i < contacts.length - 1) {
-            console.log(`⏳ Esperando ${CONSTANTS.SEND_DELAY_BETWEEN_CONTACTS_MS / 1000}s antes del siguiente contacto...`);
-            await page.waitForTimeout(CONSTANTS.SEND_DELAY_BETWEEN_CONTACTS_MS);
+            const delayMs = CONSTANTS.getRandomDelay();
+            const delaySec = Math.round(delayMs / 1000);
+            console.log(`⏳ Esperando ${delaySec}s antes del siguiente contacto (aleatorio entre 30-120s, pico en 60-80s)...`);
+            await page.waitForTimeout(delayMs);
           }
 
           if (sentSinceLastPause >= PAUSE_AFTER_MESSAGES) {
