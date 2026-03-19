@@ -91,4 +91,19 @@ Write-Host "\nBuild listo:"
 Write-Host "- dist\\ANA.exe"
 Write-Host "- dist\\browsers\\..."
 Write-Host "- dist\\latest.json"
+
+Write-Host "\n[6/6] Subiendo a S3..."
+try {
+  & ".\setup-and-upload.ps1"
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host "\n✅ Build y subida a S3 completados!"
+  } else {
+    Write-Host "\n⚠️  Error al subir a S3 (exit code: $LASTEXITCODE)"
+    Write-Host "Puedes subir manualmente ejecutando: .\setup-and-upload.ps1"
+  }
+} catch {
+  Write-Host "\n⚠️  Error al subir a S3: $_"
+  Write-Host "Puedes subir manualmente ejecutando: .\setup-and-upload.ps1"
+}
+
 Write-Host "\nSiguiente paso: abrir Inno Setup y compilar installer\\ANA.iss"

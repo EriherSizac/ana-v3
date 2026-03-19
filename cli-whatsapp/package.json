@@ -1,6 +1,6 @@
 ﻿{
   "name": "whatsapp-cli-sender",
-  "version": "1.0.37",
+  "version": "1.0.39",
   "description": "CLI para envÃ­o masivo de WhatsApp",
   "main": "index.js",
   "type": "module",
@@ -9,7 +9,8 @@
     "start-image": "node index.js --clipboard-media",
     "build:bundle": "esbuild index.js --bundle --platform=node --format=cjs --outfile=dist\\app.cjs --external:playwright",
     "build:exe": "pkg dist\\app.cjs --targets node18-win-x64 --output dist\\ANA.exe",
-    "build": "powershell -ExecutionPolicy Bypass -File build.ps1"
+    "build": "powershell -ExecutionPolicy Bypass -File build.ps1",
+    "upload": "powershell -ExecutionPolicy Bypass -File setup-and-upload.ps1"
   },
   "dependencies": {
     "playwright": "^1.48.2",
@@ -21,6 +22,8 @@
     "pkg": "^5.8.1"
   }
 }
+
+
 
 
 

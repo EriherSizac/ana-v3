@@ -111,9 +111,48 @@ if (Test-Path -Path $installerPath) {
     Write-Host "  [OK] Todas las dependencias npm" -ForegroundColor Green
     Write-Host "  [OK] Scripts de inicio (.bat)" -ForegroundColor Green
     Write-Host ""
+    
+    # Paso 4: Subir a S3
+    Write-Host "PASO 4: Subiendo instalador a S3" -ForegroundColor Magenta
+    Write-Host "---------------------------------" -ForegroundColor Magenta
+    Write-Host ""
+    
+    try {
+        & ".\setup-and-upload.ps1"
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host ""
+            Write-Host "========================================" -ForegroundColor Green
+            Write-Host "  [OK] PROCESO COMPLETO EXITOSO" -ForegroundColor Green
+            Write-Host "========================================" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Instalador generado y subido:" -ForegroundColor Cyan
+            Write-Host "  Archivo local: $installerPath" -ForegroundColor White
+            Write-Host "  Tamano: $([math]::Round($installerSize, 2)) MB" -ForegroundColor White
+            Write-Host ""
+            Write-Host "URLs publicas en S3:" -ForegroundColor Cyan
+            Write-Host "  Version especifica: https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-$anaVersion.exe" -ForegroundColor White
+            Write-Host "  Ultima version:     https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-latest.exe" -ForegroundColor White
+            Write-Host ""
+        } else {
+            Write-Host ""
+            Write-Host "[WARN] El instalador se genero pero no se pudo subir a S3" -ForegroundColor Yellow
+            Write-Host "Puedes subir manualmente ejecutando: .\setup-and-upload.ps1" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Instalador local disponible en: $installerPath" -ForegroundColor Cyan
+            Write-Host ""
+        }
+    } catch {
+        Write-Host ""
+        Write-Host "[WARN] Error al subir a S3: $_" -ForegroundColor Yellow
+        Write-Host "Puedes subir manualmente ejecutando: .\setup-and-upload.ps1" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Instalador local disponible en: $installerPath" -ForegroundColor Cyan
+        Write-Host ""
+    }
+    
     Write-Host "Siguiente paso:" -ForegroundColor Yellow
     Write-Host "  1. Prueba el instalador en una maquina limpia" -ForegroundColor White
-    Write-Host "  2. Distribuye: $installerPath" -ForegroundColor White
+    Write-Host "  2. Los usuarios pueden descargarlo desde S3" -ForegroundColor White
     Write-Host ""
 } else {
     Write-Host ""

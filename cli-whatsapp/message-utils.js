@@ -7,7 +7,8 @@
 export function replaceVariables(template, contact) {
   let message = template;
   
-  const replacements = {
+  // Primero, mapear las variables estándar (para compatibilidad)
+  const standardReplacements = {
     '{{phone}}': contact.phone || '',
     '{{name}}': contact.name || '',
     '{{first_name}}': contact.first_name || '',
@@ -19,9 +20,21 @@ export function replaceVariables(template, contact) {
     '{{product}}': contact.product || '',
   };
 
-  Object.entries(replacements).forEach(([key, value]) => {
+  Object.entries(standardReplacements).forEach(([key, value]) => {
     const regex = new RegExp(key.replace(/[{}]/g, '\\$&'), 'g');
     message = message.replace(regex, value);
+  });
+
+  // Luego, reemplazar CUALQUIER otra variable que venga del CSV original
+  // Buscar todas las variables {{algo}} en el mensaje
+  const variablePattern = /\{\{([^}]+)\}\}/g;
+  message = message.replace(variablePattern, (match, varName) => {
+    // Si la variable existe en el objeto contact (del CSV), usarla
+    if (contact.hasOwnProperty(varName)) {
+      return contact[varName] || '';
+    }
+    // Si no existe, dejar la variable sin reemplazar
+    return match;
   });
 
   // Convertir \n literales a saltos de línea reales
@@ -36,17 +49,19 @@ export function replaceVariables(template, contact) {
  * @returns {Object} Contacto normalizado
  */
 export function normalizeContact(row) {
-  const contact = {
-    phone: row.phone_number || row.contact_phone || row.contact_pho || row.phone || row.telefono || '',
-    name: row.name || row.nombre || '',
-    first_name: row.first_name || row.nombre_pila || '',
-    last_name: row.last_name || row.apellido || '',
-    credit: row.credit || row.credito || '',
-    discount: row.discount || row.descuento || '',
-    total_balanc: row.total_balance || row.total_balanc || row.balance || row.saldo || '',
-    product: row.product || row.producto || '',
-    message: row.message || row.mensaje || '',
-  };
+  // Primero, copiar TODAS las columnas del CSV al objeto contact
+  const contact = { ...row };
+  
+  // Luego, mapear las columnas estándar con alias (para compatibilidad)
+  contact.phone = row.phone_number || row.contact_phone || row.contact_pho || row.phone || row.telefono || '';
+  contact.name = row.name || row.nombre || '';
+  contact.first_name = row.first_name || row.nombre_pila || '';
+  contact.last_name = row.last_name || row.apellido || '';
+  contact.credit = row.credit || row.credito || '';
+  contact.discount = row.discount || row.descuento || '';
+  contact.total_balanc = row.total_balance || row.total_balanc || row.balance || row.saldo || '';
+  contact.product = row.product || row.producto || '';
+  contact.message = row.message || row.mensaje || '';
 
   // Construir nombre si no existe
   if (!contact.name && (contact.first_name || contact.last_name)) {

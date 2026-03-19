@@ -1,6 +1,7 @@
 node_modules/
 whatsapp-session/
 whatsapp-session-manual/
+whatsapp-session-monitor/
 resultados.csv
 respuestas.csv
 *.log
@@ -14,3 +15,10 @@ dist-portable/
 
 # Archivos temporales de Node.js
 *.zip
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
