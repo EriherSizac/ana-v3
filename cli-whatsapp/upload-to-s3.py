@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
+import threading
 
 try:
     import boto3
@@ -31,32 +32,61 @@ load_dotenv()
 BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "ana-backend-storage-prod")
 REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 
+class ProgressPercentage:
+    """Callback para mostrar progreso de subida"""
+    def __init__(self, filename):
+        self._filename = filename
+        self._size = float(os.path.getsize(filename))
+        self._seen_so_far = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, bytes_amount):
+        with self._lock:
+            self._seen_so_far += bytes_amount
+            percentage = (self._seen_so_far / self._size) * 100
+            sys.stdout.write(
+                f"\r  Progreso: {self._seen_so_far / (1024*1024):.1f}MB / {self._size / (1024*1024):.1f}MB ({percentage:.1f}%)"
+            )
+            sys.stdout.flush()
+
 def read_version():
     """Lee la versión desde package.json"""
     package_json_path = Path("package.json")
     if not package_json_path.exists():
         raise FileNotFoundError("No se encontró package.json")
     
-    with open(package_json_path, 'r', encoding='utf-8') as f:
+    # Usar utf-8-sig para manejar BOM (Byte Order Mark) si existe
+    with open(package_json_path, 'r', encoding='utf-8-sig') as f:
         data = json.load(f)
         return data.get('version')
 
 def upload_file_to_s3(s3_client, local_path, s3_key, content_type=None):
-    """Sube un archivo a S3 con permisos públicos"""
-    extra_args = {'ACL': 'public-read'}
+    """Sube un archivo a S3 con barra de progreso"""
+    extra_args = {}
     if content_type:
         extra_args['ContentType'] = content_type
     
     try:
-        s3_client.upload_file(
-            str(local_path),
-            BUCKET_NAME,
-            s3_key,
-            ExtraArgs=extra_args
-        )
+        progress = ProgressPercentage(str(local_path))
+        if extra_args:
+            s3_client.upload_file(
+                str(local_path),
+                BUCKET_NAME,
+                s3_key,
+                ExtraArgs=extra_args,
+                Callback=progress
+            )
+        else:
+            s3_client.upload_file(
+                str(local_path),
+                BUCKET_NAME,
+                s3_key,
+                Callback=progress
+            )
+        print()  # Nueva línea después del progreso
         return True
     except ClientError as e:
-        print(f"❌ Error al subir {s3_key}: {e}")
+        print(f"\n❌ Error al subir {s3_key}: {e}")
         return False
 
 def copy_s3_object(s3_client, source_key, dest_key):
@@ -65,8 +95,7 @@ def copy_s3_object(s3_client, source_key, dest_key):
         s3_client.copy_object(
             Bucket=BUCKET_NAME,
             CopySource={'Bucket': BUCKET_NAME, 'Key': source_key},
-            Key=dest_key,
-            ACL='public-read'
+            Key=dest_key
         )
         return True
     except ClientError as e:
@@ -85,18 +114,29 @@ def main():
         sys.exit(1)
     
     # Verificar que los archivos existen
-    exe_path = Path("dist/ANA.exe")
-    latest_json_path = Path("dist/latest.json")
+    # Buscar el instalador en dist-portable con el nombre versionado
+    exe_path = Path(f"dist-portable/ANA-{version}.exe")
+    
+    # Si no existe con versión, buscar el genérico
+    if not exe_path.exists():
+        exe_path = Path("dist-portable/ANA-Setup-Portable.exe")
     
     if not exe_path.exists():
-        print(f"❌ No se encontró {exe_path}")
-        print("Ejecuta 'npm run build' primero.")
+        print(f"❌ No se encontró el instalador en dist-portable/")
+        print("Ejecuta el build completo primero: .\\build-completo.ps1")
         sys.exit(1)
     
+    # Crear latest.json si no existe
+    latest_json_path = Path("dist-portable/latest.json")
     if not latest_json_path.exists():
-        print(f"❌ No se encontró {latest_json_path}")
-        print("Ejecuta 'npm run build' primero.")
-        sys.exit(1)
+        print(f"[INFO] Creando latest.json...")
+        latest_data = {
+            "version": version,
+            "url": f"https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-{version}.exe"
+        }
+        with open(latest_json_path, 'w', encoding='utf-8') as f:
+            json.dump(latest_data, f, indent=2)
+        print(f"[OK] latest.json creado")
     
     # Crear cliente S3
     try:
