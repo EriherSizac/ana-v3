@@ -509,6 +509,33 @@ async function main() {
               if (interactionRes?.body) console.error(`   Body: ${JSON.stringify(interactionRes.body)}`);
               if (interactionRes?.error) console.error(`   Error: ${interactionRes.error}`);
             }
+
+            if (result?.status === 'no_whatsapp' && creditId && phone10) {
+              try {
+                console.log(`📵 Marcando teléfono sin WhatsApp en backend: ${phone10}`);
+                const patchRes = await fetch('https://7uj0qjoby9.execute-api.us-east-2.amazonaws.com/phone', {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    credit_id: creditId,
+                    campaign_name: String(campaignName || ''),
+                    current_phone: phone10,
+                    phone: {
+                      has_whatsapp: false,
+                      whatsapp_contactable: false,
+                    },
+                  }),
+                });
+                if (patchRes.ok) {
+                  console.log(`✅ Teléfono actualizado sin WhatsApp: ${phone10}`);
+                } else {
+                  const patchBody = await patchRes.text();
+                  console.error(`❌ Error al actualizar teléfono (${patchRes.status}): ${patchBody}`);
+                }
+              } catch (patchErr) {
+                console.error('⚠️  No se pudo actualizar el teléfono en backend:', patchErr.message);
+              }
+            }
           } catch (e) {
             console.error('⚠️  No se pudo registrar la interacción:', e.message);
           }
