@@ -177,7 +177,7 @@ async function showLoginOverlay(requireAll = true) {
         const userField = requireAll ? `
           <div style="margin-bottom: 20px; text-align: left;">
             <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-            <input type="text" id="login-user" value="${savedUser || ''}" placeholder="ej: erick" style="
+            <input type="text" id="login-user" value="${savedUser || ''}" placeholder="ej: erick" oninput="this.value=this.value.toLowerCase()" style="
               width: 100%;
               padding: 12px 15px;
               border: 2px solid #333;
@@ -195,7 +195,7 @@ async function showLoginOverlay(requireAll = true) {
         const campaignField = requireAll ? `
           <div style="margin-bottom: 20px; text-align: left; z-index: 10000000">
             <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-            <input type="text" id="login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" style="
+            <input type="text" id="login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" oninput="this.value=this.value.toLowerCase()" style="
               width: 100%;
               padding: 12px 15px;
               border: 2px solid #333;
@@ -227,7 +227,7 @@ async function showLoginOverlay(requireAll = true) {
             <div style="margin-bottom: 30px; text-align: left;">
               <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Palabra del Día</label>
               <div style="display:flex; gap:10px; align-items:center;">
-                <input type="password" id="login-daily-password" placeholder="Ingresa la palabra del día" style="
+                <input type="password" id="login-daily-password" placeholder="Ingresa la palabra del día" oninput="this.value=this.value.toLowerCase()" style="
                   flex: 1;
                   padding: 12px 15px;
                   border: 2px solid #333;

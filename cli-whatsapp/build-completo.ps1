@@ -15,8 +15,6 @@ Write-Host "-----------------------------------" -ForegroundColor Magenta
 & ".\verificar-build.ps1"
 # Los scripts de PowerShell ya tienen exit 1 si fallan, no necesitamos verificar LASTEXITCODE
 
-Write-Host ""
-Read-Host "Presiona Enter para continuar con el build"
 
 # Paso 2: Build Portable
 Write-Host ""
@@ -25,8 +23,6 @@ Write-Host "----------------------------------------" -ForegroundColor Magenta
 & ".\build-portable.ps1"
 # Los scripts de PowerShell ya tienen exit 1 si fallan, no necesitamos verificar LASTEXITCODE
 
-Write-Host ""
-Read-Host "Presiona Enter para continuar con la compilacion del instalador"
 
 # Paso 3: Compilar con Inno Setup
 Write-Host ""
