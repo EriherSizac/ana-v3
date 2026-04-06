@@ -36,6 +36,7 @@ provider:
   environment:
     BUCKET_NAME: ${self:service}-storage-${sls:stage}
     ANA_API_URL: https://ow24p7ablb.execute-api.us-east-1.amazonaws.com
+    TEMPLATES_BUCKET: s3-motor-509399624341-prod
   iam:
     role:
       statements:
@@ -48,6 +49,8 @@ provider:
           Resource:
             - arn:aws:s3:::${self:service}-storage-${sls:stage}/*
             - arn:aws:s3:::${self:service}-storage-${sls:stage}
+            - arn:aws:s3:::s3-motor-509399624341-prod
+            - arn:aws:s3:::s3-motor-509399624341-prod/templates/*
 
 functions:
   hello:
@@ -336,6 +339,31 @@ functions:
     events:
       - httpApi:
           path: /credentials/regenerate
+          method: options
+          cors: true
+
+  # Templates de campaña (S3: s3-motor-509399624341-prod)
+  getTemplates:
+    handler: src/handlers/templates.getTemplates
+    events:
+      - httpApi:
+          path: /templates
+          method: get
+          cors: true
+
+  putTemplate:
+    handler: src/handlers/templates.putTemplate
+    events:
+      - httpApi:
+          path: /templates
+          method: post
+          cors: true
+
+  templatesOptions:
+    handler: src/handlers/templates.optionsHandler
+    events:
+      - httpApi:
+          path: /templates
           method: options
           cors: true
 

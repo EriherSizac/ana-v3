@@ -239,6 +239,7 @@ export async function sendBulkMessages(
     last_name?: string
     total_balanc?: string
     product?: string
+    [key: string]: string | undefined
   }>,
   messageTemplate: string,
   delay: number = 5

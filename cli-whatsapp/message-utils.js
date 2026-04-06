@@ -26,13 +26,44 @@ export function replaceVariables(template, contact) {
   });
 
   // Luego, reemplazar CUALQUIER otra variable que venga del CSV original
-  // Buscar todas las variables {{algo}} en el mensaje
+  // Buscar todas las variables {{algo}} en el mensaje (puede incluir expresiones matemáticas)
   const variablePattern = /\{\{([^}]+)\}\}/g;
-  message = message.replace(variablePattern, (match, varName) => {
-    // Si la variable existe en el objeto contact (del CSV), usarla
-    if (contact.hasOwnProperty(varName)) {
-      return contact[varName] || '';
+  message = message.replace(variablePattern, (match, varExpr) => {
+    const trimmed = varExpr.trim();
+
+    // Detectar si es una expresión matemática: contiene operadores o funciones
+    const hasMathOp = /[+\-*\/()^%]/.test(trimmed);
+
+    if (hasMathOp) {
+      // Reemplazar nombres de columnas por sus valores numéricos
+      let expr = trimmed.replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, (colName) => {
+        if (contact.hasOwnProperty(colName)) {
+          const val = parseFloat(String(contact[colName]).replace(/,/g, '.'));
+          if (!isNaN(val)) return val;
+        }
+        return colName;
+      });
+
+      try {
+        // Evaluar solo expresiones numéricas seguras
+        if (/^[0-9+\-*\/().\s%]+$/.test(expr)) {
+          // eslint-disable-next-line no-new-func
+          const result = Function('"use strict"; return (' + expr + ')')();
+          if (typeof result === 'number' && isFinite(result)) {
+            // Redondear a 2 decimales si tiene parte decimal
+            return Number.isInteger(result) ? String(result) : result.toFixed(2);
+          }
+        }
+      } catch (_) {
+        // Si falla la evaluación, continuar al fallback
+      }
     }
+
+    // Variable simple: si existe en el contacto, usarla
+    if (contact.hasOwnProperty(trimmed)) {
+      return contact[trimmed] || '';
+    }
+
     // Si no existe, dejar la variable sin reemplazar
     return match;
   });
