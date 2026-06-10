@@ -44,8 +44,14 @@ provider:
     # API de agentes del dashboard (imery) — agentes activos por campaña.
     DASHBOARD_BASE_PATH: ${param:dashboardBasePath, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}
     DASHBOARD_API_KEY: ${env:DASHBOARD_API_KEY, ''}
-    # PostgreSQL — campañas. DATABASE_URL secreto en backend/.env.
+    # PostgreSQL — campañas. DATABASE_URL secreto en backend/.env, o los
+    # campos sueltos estilo pgAdmin (PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE).
     DATABASE_URL: ${env:DATABASE_URL, ''}
+    PGHOST: ${env:PGHOST, ''}
+    PGPORT: ${env:PGPORT, ''}
+    PGUSER: ${env:PGUSER, ''}
+    PGPASSWORD: ${env:PGPASSWORD, ''}
+    PGDATABASE: ${env:PGDATABASE, ''}
     CAMPAIGNS_TABLE: ${param:campaignsTable, 'campaigns'}
     CAMPAIGNS_COLUMN: ${param:campaignsColumn, 'name'}
     # TLS Postgres: 'true' para no verificar CA (último recurso), o pon PGSSL_CA.

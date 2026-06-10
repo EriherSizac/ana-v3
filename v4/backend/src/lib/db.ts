@@ -26,8 +26,20 @@ let pool: Pool | null = null;
 
 export function db(): Pool {
   if (!pool) {
+    // Conexión: DATABASE_URL, o campos sueltos estilo pgAdmin (PGHOST, PGPORT,
+    // PGUSER, PGPASSWORD, PGDATABASE) si la URL no está definida.
+    const url = process.env.DATABASE_URL;
+    const conn = url
+      ? { connectionString: url }
+      : {
+          host: process.env.PGHOST,
+          port: Number(process.env.PGPORT || 5432),
+          user: process.env.PGUSER,
+          password: process.env.PGPASSWORD,
+          database: process.env.PGDATABASE,
+        };
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      ...conn,
       ssl: sslConfig(),
       max: 2, // Lambda: pocas conexiones por contenedor
       idleTimeoutMillis: 30_000,
