@@ -4,6 +4,7 @@
 // Author: Erick Hernández Silva
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * Store que RemoteAuth usa para persistir la sesión de WhatsApp como un zip.
@@ -60,17 +61,30 @@ export class S3SessionStore {
   }
 
   async save(opts: { session: string }): Promise<void> {
+    const zipPath = path.join(this.dataPath, `${opts.session}.zip`);
+    // RemoteAuth crea el zip antes de llamar save; si por una carrera no está,
+    // salta este respaldo en vez de tirar la sesión (ENOENT). El siguiente
+    // ciclo de backup lo recrea.
+    if (!fs.existsSync(zipPath)) {
+      console.warn('[wa] save: zip de sesión aún no existe, se omite este respaldo');
+      return;
+    }
     this.onStage('Respaldando sesión…');
-    const zipPath = `${this.dataPath}/${opts.session}.zip`;
     const url = await this.presign('put');
-    if (!url) throw new Error('No se pudo obtener presign PUT de la sesión');
+    if (!url) {
+      console.warn('[wa] save: sin presign PUT, respaldo omitido');
+      return;
+    }
     const body = fs.readFileSync(zipPath);
     const res = await fetch(url, {
       method: 'PUT',
       headers: { 'content-type': 'application/zip' },
       body,
     });
-    if (!res.ok) throw new Error(`Falló subir la sesión a S3 (${res.status})`);
+    if (!res.ok) {
+      console.warn(`[wa] save: subida a S3 falló (${res.status}), se omite`);
+      return;
+    }
     console.log('[wa] sesión respaldada en S3');
   }
 
@@ -81,6 +95,7 @@ export class S3SessionStore {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Falló bajar la sesión de S3 (${res.status})`);
     const buf = Buffer.from(await res.arrayBuffer());
+    fs.mkdirSync(path.dirname(opts.path), { recursive: true });
     fs.writeFileSync(opts.path, buf);
     this.onStage('Restaurando sesión…');
     console.log('[wa] sesión restaurada desde S3');
