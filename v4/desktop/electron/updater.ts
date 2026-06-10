@@ -16,7 +16,7 @@ import { autoUpdater } from 'electron-updater';
  *
  * En dev (no empaquetado) se omite (no hay feed) → la UI se desbloquea sola.
  */
-export function setupUpdater(win: BrowserWindow): void {
+export function setupUpdater(win: BrowserWindow, beforeInstall?: () => Promise<void>): void {
   const send = (s: Record<string, unknown>) => win.webContents.send('update:status', s);
 
   if (!app.isPackaged) {
@@ -34,10 +34,18 @@ export function setupUpdater(win: BrowserWindow): void {
   autoUpdater.on('download-progress', (p) =>
     send({ phase: 'downloading', percent: Math.round(p.percent) }),
   );
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('update-downloaded', async () => {
     send({ phase: 'installing' });
-    // isSilent=true, isForceRunAfter=true → reinstala y reabre sin clicks.
-    setTimeout(() => autoUpdater.quitAndInstall(true, true), 800);
+    // Cierra WhatsApp/Chromium ANTES de instalar: si sigue vivo, bloquea los
+    // archivos y el instalador NSIS se cuelga (la app queda en "Instalando…").
+    try {
+      await beforeInstall?.();
+    } catch {
+      /* aun así intentamos instalar */
+    }
+    // isSilent=false → el instalador NSIS es visible (no se queda invisible si
+    // el silent falla). isForceRunAfter=true → reabre la app al terminar.
+    setTimeout(() => autoUpdater.quitAndInstall(false, true), 500);
   });
   autoUpdater.on('update-not-available', () => send({ phase: 'none' }));
   // Un 404 del feed (latest.yml ausente) NO es un fallo bloqueante: significa

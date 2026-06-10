@@ -182,7 +182,8 @@ ipcMain.handle('auth:set-token', (_e, token: string | null) => {
 // El renderer dispara el check cuando ya tiene el listener montado (UpdateGate)
 // → evita la carrera de perder el evento 'none'/'available'.
 ipcMain.handle('update:check', () => {
-  if (mainWindow) setupUpdater(mainWindow);
+  // beforeInstall: cierra WhatsApp/Chromium para que el instalador no se cuelgue.
+  if (mainWindow) setupUpdater(mainWindow, () => wa.stop());
   return { ok: true };
 });
 ipcMain.handle('agent:register', (_e, campaign: string | null) => {
