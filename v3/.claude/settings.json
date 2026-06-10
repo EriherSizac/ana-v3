@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($root = \"d:\\\\Users\\\\herna\\\\Documents\\\\GitHub\\\\ana-v3\"; New-Item -ItemType Directory -Path \"$root\\\\v3\" | Out-Null; Get-ChildItem -Force $root | Where-Object { $_.Name -notin @\\('.git','v4','v3'\\) } | ForEach-Object { Move-Item -Force $_.FullName \"$root\\\\v3\\\\\" }; Get-ChildItem -Force $root | Select-Object Name)"
+    ]
+  }
+}

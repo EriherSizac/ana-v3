@@ -239,24 +239,24 @@ import {
   initWhatsApp,
   sendMessage,
   closeBrowser,
-  getPage
+  getPage,
 } from "./whatsapp.js";
 import {
   initManualWhatsApp,
   closeManualBrowser,
-  getManualPage
+  getManualPage,
 } from "./whatsapp-manual.js";
 import {
   initMonitorWhatsApp,
   closeMonitorBrowser,
-  getMonitorPage
+  getMonitorPage,
 } from "./whatsapp-monitor.js";
 import {
   hasAgentConfig,
   fetchAssignedChats,
   updatePendingContacts,
   loadAgentConfig,
-  insertInteractions
+  insertInteractions,
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
 
@@ -566,7 +566,7 @@ async function main() {
                 console.error(`   Error: ${interactionRes.error}`);
             }
 
-            if (result?.status === 'no_whatsapp' && creditId && phone10) {
+            if (result?.status === "no_whatsapp" && creditId && phone10) {
               try {
                 console.log(
                   `📵 Marcando teléfono sin WhatsApp en backend: ${phone10}`,
@@ -575,7 +575,11 @@ async function main() {
                   "https://7uj0qjoby9.execute-api.us-east-2.amazonaws.com/phone",
                   {
                     method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
+                    headers: {
+                      "Content-Type": "application/json",
+                      "X-Api-Key":
+                        "6706bb8ef958b3f12759c471855f9aa50b357f78e2d1eee0c533b94daec11a38",
+                    },
                     body: JSON.stringify({
                       credit_id: creditId,
                       campaign_name: String(campaignName || ""),

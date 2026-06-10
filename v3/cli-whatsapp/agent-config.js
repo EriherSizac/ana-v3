@@ -53,6 +53,7 @@ export async function searchClientInfoByPhone(campaignName, phoneE164) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          "X-Api-Key": "6706bb8ef958b3f12759c471855f9aa50b357f78e2d1eee0c533b94daec11a38"
         },
         body: JSON.stringify(payload),
       });
@@ -119,6 +120,7 @@ export async function insertInteractions(interactions) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          "X-Api-Key": "6706bb8ef958b3f12759c471855f9aa50b357f78e2d1eee0c533b94daec11a38"
         },
         body: JSON.stringify(payloadToSend),
       });
