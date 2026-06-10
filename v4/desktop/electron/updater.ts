@@ -59,12 +59,19 @@ export function setupUpdater(win: BrowserWindow, beforeInstall?: () => Promise<v
     send({ phase: 'error', message: msg });
   });
 
-  autoUpdater.checkForUpdates().catch((e) => {
-    const msg = String(e);
-    if (/404|latest\.yml|Not Found|ERR_FILE_NOT_FOUND/i.test(msg)) {
-      send({ phase: 'none' });
-      return;
-    }
-    send({ phase: 'error', message: msg });
-  });
+  const check = () =>
+    autoUpdater.checkForUpdates().catch((e) => {
+      const msg = String(e);
+      // 404 = sin feed → no es error bloqueante; en chequeos periódicos, ignora.
+      if (!/404|latest\.yml|Not Found|ERR_FILE_NOT_FOUND/i.test(msg)) {
+        send({ phase: 'error', message: msg });
+      }
+    });
+
+  check();
+  // Chequeo periódico: si el equipo nunca cierra la app, igual se actualiza.
+  // Al encontrar versión nueva descarga y el handler de 'update-downloaded'
+  // fuerza la instalación (cierra WhatsApp + reinicia).
+  const CHECK_EVERY_MS = 30 * 60 * 1000; // cada 30 min
+  setInterval(check, CHECK_EVERY_MS);
 }

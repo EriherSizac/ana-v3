@@ -5,6 +5,7 @@
 
 import { app, BrowserWindow, ipcMain, Menu, Notification } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { WaClient } from './whatsapp/client';
 import { interpolate } from './whatsapp/template';
 import { Backend } from './backend';
@@ -188,11 +189,36 @@ function usernameFromJwt(token: string): string {
   }
 }
 
+// Recuerda el último operador que usó WhatsApp en esta máquina (persiste entre
+// reinicios) → al entrar OTRO usuario se bota el auth local del anterior.
+const LAST_OP_FILE = path.join(app.getPath('userData'), '.ana-last-operator');
+const readLastOperator = (): string | null => {
+  try {
+    return fs.readFileSync(LAST_OP_FILE, 'utf-8').trim() || null;
+  } catch {
+    return null;
+  }
+};
+const writeLastOperator = (op: string) => {
+  try {
+    fs.writeFileSync(LAST_OP_FILE, op);
+  } catch (e) {
+    console.error('[wa] no se pudo guardar last-operator:', e);
+  }
+};
+
 ipcMain.handle('auth:set-token', async (_e, token: string | null) => {
   authToken = token;
   if (token) {
+    const op = usernameFromJwt(token);
+    // Usuario distinto al de la sesión guardada → bota el auth local previo.
+    if (readLastOperator() && readLastOperator() !== op) {
+      console.log('[wa] usuario distinto → borrando sesión local previa');
+      await wa.logoutLocal();
+    }
+    writeLastOperator(op);
     // Configura el respaldo de sesión a S3 (RemoteAuth) con el operador del JWT.
-    wa.configure(API_BASE, () => authToken, usernameFromJwt(token));
+    wa.configure(API_BASE, () => authToken, op);
     poller.start();
     // Reconecta WhatsApp restaurando la sesión remota (sin pedir QR si existe).
     if (!wa.isReady()) void wa.start();

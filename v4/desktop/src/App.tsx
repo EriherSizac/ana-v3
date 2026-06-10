@@ -14,6 +14,7 @@ import { FloatingProgress } from './ui/FloatingProgress';
 import { hasSession, logout, pushTokenToMain } from './lib/auth';
 import { getMe, type UserAccess } from './lib/api';
 import { can, ANA_PERMISSIONS } from './lib/permissions';
+import type { UpdateStatus } from './types/ana';
 
 type Tab = 'chats' | 'assignment' | 'campaigns' | 'admin';
 export type WaStatus = 'idle' | 'qr' | 'authenticated' | 'connected' | 'disconnected';
@@ -30,6 +31,17 @@ export function App() {
   // cambiar de tab. Chats lo recibe por props.
   const [waStatus, setWaStatus] = useState<WaStatus>('idle');
   const [qr, setQr] = useState<string | null>(null);
+  // Update encontrado a media sesión (chequeo periódico): overlay bloqueante.
+  const [midUpdate, setMidUpdate] = useState<UpdateStatus | null>(null);
+
+  useEffect(() => {
+    const off = window.ana.onUpdateStatus((s) => {
+      // Solo bloquea cuando ya hay algo en curso (descarga/instalación).
+      if (s.phase === 'downloading' || s.phase === 'installing') setMidUpdate(s);
+      else setMidUpdate(null);
+    });
+    return off;
+  }, []);
 
   useEffect(() => {
     // Tras refresh, recupera el estado vivo del main (no reconectar a ciegas).
@@ -80,6 +92,8 @@ export function App() {
     setAuthed(true);
   }
 
+  // Update encontrado a media sesión → overlay bloqueante mientras instala.
+  if (midUpdate) return <UpdatingOverlay st={midUpdate} />;
   // Antes que nada: forzar actualización.
   if (!updated) return <UpdateGate onReady={() => setUpdated(true)} />;
   if (authed === null) return <div className="min-h-screen bg-neutral-30" />;
@@ -151,6 +165,29 @@ export function App() {
 
       {/* Progreso del batch en curso, visible en cualquier tab. */}
       <FloatingProgress />
+    </div>
+  );
+}
+
+/** Overlay bloqueante cuando se actualiza a media sesión (chequeo periódico). */
+function UpdatingOverlay({ st }: { st: UpdateStatus }) {
+  return (
+    <div className="pernexium-gradient flex min-h-screen flex-col items-center justify-center px-4 text-center">
+      <span className="font-heading text-3xl font-black tracking-wide text-white">PERNEXIUM</span>
+      <span className="mt-1 rounded-full bg-white/15 px-3 py-0.5 text-sm text-white">ana</span>
+      <div className="mt-10 w-full max-w-sm">
+        <p className="text-sm font-semibold text-white">
+          {st.phase === 'installing'
+            ? 'Instalando actualización y reiniciando…'
+            : `Descargando actualización… ${st.percent ?? 0}%`}
+        </p>
+        {st.phase === 'downloading' && (
+          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white/20">
+            <div className="h-full bg-white transition-all" style={{ width: `${st.percent ?? 0}%` }} />
+          </div>
+        )}
+        <p className="mt-3 text-xs text-white/70">La app se reiniciará sola al terminar.</p>
+      </div>
     </div>
   );
 }
