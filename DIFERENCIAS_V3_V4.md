@@ -56,7 +56,7 @@
 ### v3
 1. Supervisor sube CSV **por agente** a S3 vía Lambda (`supervisors.ts` → `assignments/agents/{campaign}/{agent}-contacts-{ts}.csv`).
 2. Agente (CLI) descarga su assignment (consume-once) y reporta pendientes con `updatePendingContacts`.
-3. Plantilla con variables `{{first_name}}`, `{{credit}}` — soporta **expresiones matemáticas** (`{{credit*0.9}}`).
+3. Plantilla con variables `{{first_name}}`, `{{credit}}` — soporta **expresiones matemáticas** (`{{credit*0.9}}`). v4 también las soporta desde `72dfda1`+ con sintaxis `{credit*0.9}`, y además formatea MXN cuando la expresión usa columnas de dinero.
 4. Playwright navega WhatsApp Web, teclea y envía con delay aleatorio 30–120s; pausa de 20 min cada N mensajes.
 5. Backups de chats se suben a S3 como archivos.
 
@@ -163,7 +163,6 @@ Ambos caminos son llamadas async al mismo cliente; chats distintos = estados ind
 
 **Pérdidas / pendientes respecto a v3**
 - Ya no hay web UI ligera para uso casual (todo requiere instalar Electron).
-- v3 soportaba expresiones matemáticas en plantillas (`{{credit*0.9}}`); v4 no las migró aún.
 - Sin suite E2E (v3 tenía Playwright tests).
 - Pendientes documentados en v4: configuración de RDS, flag `PERMISSIONS_ENFORCED` apagado, mapeo `operatorId` → user del CRM, editor de pesos en la UI de upload (el backend ya lo soporta vía `assignments`).
 - La API key de interactions sigue expuesta en el historial de git de v3 (`agent-config.js`); en v4 vive en `.env`.
