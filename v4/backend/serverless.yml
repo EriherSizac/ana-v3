@@ -37,7 +37,9 @@ provider:
     ACCESS_CACHE_TABLE: ${self:service}-accesscache-${self:provider.stage}
     # API externa de Roles & Permisos (X-Api-Key). El secreto va en backend/.env
     # (ROLES_API_KEY=...); serverless v4 lo carga solo. NO se commitea.
-    ROLES_API_BASE: ${param:rolesApiBase, 'https://2egq6rek0a.execute-api.us-east-2.amazonaws.com'}
+    # Es la MISMA API del dashboard (roles + users + agents). PROD = 8emg4wx2t8
+    # (DEV sería 2egq6rek0a). Si se consulta DEV, los usuarios de prod no existen.
+    ROLES_API_BASE: ${param:rolesApiBase, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}
     ROLES_API_KEY: ${env:ROLES_API_KEY, ''}
     # Flag de enforcement (guía §8). 'false' = no bloquear hasta validar.
     PERMISSIONS_ENFORCED: ${param:permissionsEnforced, 'false'}
