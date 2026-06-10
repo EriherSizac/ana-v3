@@ -52,8 +52,6 @@ provider:
     PGUSER: ${env:PGUSER, ''}
     PGPASSWORD: ${env:PGPASSWORD, ''}
     PGDATABASE: ${env:PGDATABASE, ''}
-    CAMPAIGNS_TABLE: ${param:campaignsTable, 'campaigns'}
-    CAMPAIGNS_COLUMN: ${param:campaignsColumn, 'name'}
     # API de interactions del CRM (registro de envíos). Key en backend/.env.
     INTERACTIONS_API_BASE: ${param:interactionsApiBase, 'https://7uj0qjoby9.execute-api.us-east-2.amazonaws.com'}
     INTERACTIONS_API_KEY: ${env:INTERACTIONS_API_KEY, ''}
