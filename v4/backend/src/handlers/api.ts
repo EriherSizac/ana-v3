@@ -76,7 +76,14 @@ export const handler = async (
       case 'PUT /messages':
         return await putMessage(user, JSON.parse(event.body ?? '{}'));
       case 'POST /uploads/presign':
-        if (!can(access, ANA_PERMISSIONS.CONTACTS_UPLOAD)) return bad('sin permiso', 403);
+        // Hard check (no depende del flag de enforcement): subir CSV es solo
+        // para líderes/admin o roles con el grant explícito — nunca agentes.
+        if (
+          !access.isAdmin &&
+          !access.isLeader &&
+          !access.permissions.includes(ANA_PERMISSIONS.CONTACTS_UPLOAD)
+        )
+          return bad('sin permiso', 403);
         return await presignCsv(access, JSON.parse(event.body ?? '{}'));
       case 'POST /uploads/delete':
         return await deleteCsv(user, JSON.parse(event.body ?? '{}'));
