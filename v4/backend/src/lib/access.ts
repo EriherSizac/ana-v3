@@ -10,7 +10,7 @@ import {
   ANA_PERMISSIONS,
   DEFAULT_PERMISSIONS,
   SUPERADMIN_USERNAME,
-  LEADER_NAME_RE,
+  isLeaderRole,
   type AnaPermission,
 } from './permissions';
 
@@ -78,7 +78,7 @@ export async function resolveUserAccess(username: string): Promise<UserAccess> {
   // Aplica denies: quita lo desactivado salvo que algún rol lo otorgue explícito.
   for (const d of denied) if (!explicitGrants.has(d)) permissions.delete(d);
 
-  const isLeader = roles.some((r) => LEADER_NAME_RE.test(r.role_name));
+  const isLeader = roles.some((r) => isLeaderRole(r.role_name));
   if (isLeader) {
     // El líder siempre puede subir/repartir y ver a su equipo (override deny).
     permissions.add(ANA_PERMISSIONS.CONTACTS_UPLOAD);

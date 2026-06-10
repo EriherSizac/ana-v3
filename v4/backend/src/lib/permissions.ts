@@ -31,4 +31,12 @@ export const SUPERADMIN_USERNAME = 'erick.silva';
 
 // Un rol cuyo nombre contiene "líder/lider" obtiene capacidades de líder
 // (subir y repartir contactos) aunque su almacén local esté vacío.
-export const LEADER_NAME_RE = /l[ií]der/i;
+// Insensible a acentos: normaliza y quita diacríticos (maneja "Líder", "Lider",
+// y acentos descompuestos que algunas APIs devuelven → "Líder").
+export const isLeaderRole = (name?: string): boolean =>
+  /lider/.test(
+    (name ?? '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase(),
+  );
