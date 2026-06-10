@@ -32,7 +32,9 @@ export function Chats({
   waStatus: WaStatus; // estado WA en App (persiste entre tabs)
   qr: string | null;
 }) {
-  const canTeamView = can(access, ANA_PERMISSIONS.CHATS_TEAM_VIEW);
+  // Panel de equipo: admin (ver como + reasignar) o líder (solo reasignar).
+  // El "ver como" en sí queda restringido a admin dentro de TeamViewer.
+  const showTeamPanel = !!access?.isAdmin || !!access?.isLeader;
 
   const [convos, setConvos] = useState<Conversation[] | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -198,7 +200,7 @@ export function Chats({
           {!viewingOther && <WaBadge status={waStatus} />}
         </div>
 
-        {canTeamView && (
+        {showTeamPanel && (
           <TeamViewer access={access} value={viewOperator} onChange={setViewOperator} />
         )}
 

@@ -57,32 +57,34 @@ export function TeamViewer({
 
   return (
     <div className="space-y-2 border-b border-neutral-50 bg-neutral-30 p-3">
-      <div className="text-xs font-semibold uppercase tracking-wider text-text-light">
-        Ver como
-      </div>
-
+      {/* "Ver como" (ver conversaciones de otro agente): SOLO admins. */}
       {isAdmin && (
-        <SearchableSelect
-          value={campaign}
-          onChange={setCampaign}
-          options={campaigns}
-          placeholder="Buscar campaña…"
-        />
+        <>
+          <div className="text-xs font-semibold uppercase tracking-wider text-text-light">
+            Ver como
+          </div>
+          <SearchableSelect
+            value={campaign}
+            onChange={setCampaign}
+            options={campaigns}
+            placeholder="Buscar campaña…"
+          />
+          <select
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value || null)}
+            className="w-full rounded-xl border border-neutral-50 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+          >
+            <option value="">Mis conversaciones</option>
+            {agents.map((a) => (
+              <option key={a.operatorId} value={a.operatorId}>
+                {a.operatorId} {a.active ? '· activo' : '· offline'}
+              </option>
+            ))}
+          </select>
+        </>
       )}
 
-      <select
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value || null)}
-        className="w-full rounded-xl border border-neutral-50 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
-      >
-        <option value="">Mis conversaciones</option>
-        {agents.map((a) => (
-          <option key={a.operatorId} value={a.operatorId}>
-            {a.operatorId} {a.active ? '· activo' : '· offline'}
-          </option>
-        ))}
-      </select>
-
+      {/* Reasignación de envíos: admin y líder (no es "ver como"). */}
       {jobsCampaign && (access?.isAdmin || access?.isLeader) && (
         <JobsPanel campaign={jobsCampaign} agents={agents} />
       )}

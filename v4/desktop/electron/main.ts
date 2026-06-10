@@ -188,7 +188,7 @@ function usernameFromJwt(token: string): string {
   }
 }
 
-ipcMain.handle('auth:set-token', (_e, token: string | null) => {
+ipcMain.handle('auth:set-token', async (_e, token: string | null) => {
   authToken = token;
   if (token) {
     // Configura el respaldo de sesión a S3 (RemoteAuth) con el operador del JWT.
@@ -196,6 +196,13 @@ ipcMain.handle('auth:set-token', (_e, token: string | null) => {
     poller.start();
     // Reconecta WhatsApp restaurando la sesión remota (sin pedir QR si existe).
     if (!wa.isReady()) void wa.start();
+  } else {
+    // Logout (cambio de usuario): detén el poller y BORRA la sesión local de
+    // WhatsApp para que el siguiente usuario no entre al WhatsApp del anterior.
+    poller.stop();
+    agentCampaign = null;
+    await wa.logoutLocal();
+    send('wa:event', { type: 'status', status: 'disconnected' });
   }
   return { ok: true };
 });

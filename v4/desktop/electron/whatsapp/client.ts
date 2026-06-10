@@ -150,6 +150,22 @@ export class WaClient extends EventEmitter {
     }
   }
 
+  /**
+   * Logout de la app (cambio de usuario): detiene WhatsApp y BORRA la sesión
+   * LOCAL — pero conserva el respaldo en S3 para que cada usuario la restaure.
+   * Evita que el siguiente usuario se conecte al WhatsApp del anterior.
+   */
+  async logoutLocal() {
+    await this.reset();
+    this.operatorId = 'ana'; // olvida el operador anterior
+    try {
+      await fs.rm(AUTH_DIR, { recursive: true, force: true });
+      console.log('[wa] sesión local borrada (logout)');
+    } catch (e) {
+      console.error('[wa] no se pudo borrar sesión local:', e);
+    }
+  }
+
   /** Libera el cliente y BORRA la sesión local + el respaldo en S3 (logout). */
   async clearSession() {
     await this.reset();
@@ -276,7 +292,9 @@ export class WaClient extends EventEmitter {
   private normalize(m: Message): NormalizedMessage {
     return {
       id: m.id._serialized,
-      chatId: m.from,
+      // Conversación = SIEMPRE la otra parte. En salientes m.from es tu propio
+      // número; usar m.to evita un chat fantasma con tu propia línea (***1922).
+      chatId: m.fromMe ? m.to : m.from,
       from: m.from,
       to: m.to,
       body: m.body ?? '',

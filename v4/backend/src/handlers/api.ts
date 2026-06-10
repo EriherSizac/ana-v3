@@ -25,7 +25,6 @@ import { resolveUserAccess, can, type UserAccess } from '../lib/access';
 import { ANA_PERMISSIONS } from '../lib/permissions';
 import { setRolePermissions, getRolePermissions } from '../lib/rolePerms';
 import { invalidateByRole } from '../lib/accessCache';
-import { isAgentInCampaigns } from '../lib/agents';
 import { getEligibleAgents } from '../lib/dashboard';
 import { campaignExists } from '../lib/campaignsDb';
 import { listAllRoles } from '../lib/roles';
@@ -43,13 +42,8 @@ async function resolveViewTarget(
 ): Promise<string | null> {
   const target = requested ?? access.username;
   if (target === access.username) return target;
+  // "Ver como" (leer conversaciones de otro agente): SOLO admins.
   if (access.isAdmin) return target;
-  if (
-    can(access, ANA_PERMISSIONS.CHATS_TEAM_VIEW) &&
-    (await isAgentInCampaigns(target, access.campaigns))
-  ) {
-    return target;
-  }
   return null;
 }
 
