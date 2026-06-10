@@ -36,6 +36,10 @@ function send(channel: string, payload: unknown) {
 // En dev se dejan para depurar.
 const LOCKED = app.isPackaged;
 
+// DevTools habilitadas para depurar (F12 / Ctrl+Shift+I) aun en el build
+// instalado. Para re-bloquear, poner DEVTOOLS = false.
+const DEVTOOLS = true;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -44,26 +48,33 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      devTools: !LOCKED, // sin DevTools en el build instalado
+      devTools: !LOCKED || DEVTOOLS,
     },
   });
 
-  // Sin barra de menú (File/Edit/View…) ni sus atajos de DevTools.
+  // Sin barra de menú (File/Edit/View…).
   if (LOCKED) Menu.setApplicationMenu(null);
 
   const wc = mainWindow.webContents;
-  if (LOCKED) {
-    // Bloquea el menú contextual (clic derecho).
+  if (LOCKED && !DEVTOOLS) {
     wc.on('context-menu', (e) => e.preventDefault());
-    // Cierra DevTools si algo las abre, y bloquea sus atajos de teclado.
     wc.on('devtools-opened', () => wc.closeDevTools());
     wc.on('before-input-event', (event, input) => {
       const k = (input.key || '').toLowerCase();
       const devtools =
         k === 'f12' ||
         ((input.control || input.meta) && input.shift && (k === 'i' || k === 'j' || k === 'c')) ||
-        ((input.control || input.meta) && k === 'u'); // ver código fuente
+        ((input.control || input.meta) && k === 'u');
       if (devtools) event.preventDefault();
+    });
+  } else if (DEVTOOLS) {
+    // F12 abre/cierra DevTools (el menú está oculto).
+    wc.on('before-input-event', (_event, input) => {
+      const k = (input.key || '').toLowerCase();
+      if (k === 'f12') {
+        if (wc.isDevToolsOpened()) wc.closeDevTools();
+        else wc.openDevTools({ mode: 'detach' });
+      }
     });
   }
 
