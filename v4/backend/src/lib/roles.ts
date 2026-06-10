@@ -24,38 +24,56 @@ export interface RoleSummary {
 }
 
 /**
- * Lista todos los roles vía la jerarquía (GET /roles/hierarchy). No hay endpoint
- * "list all roles" plano; la jerarquía trae subordinate_role/superior_role.
- * Dedupe por id. (Roles 'unrelated' sin relación podrían no aparecer.)
+ * Lista TODOS los roles. El API no tiene endpoint plano: se unen dos fuentes
+ * para cubrir también roles sin relación de jerarquía (p.ej. "Líder Zendere"):
+ *  1. GET /roles/hierarchy → roles con superior/subordinado.
+ *  2. GET /users → roles asignados a cualquier usuario.
+ * Dedupe por id. (Un rol sin jerarquía y sin usuarios aún no aparecería.)
  */
 export async function listAllRoles(): Promise<RoleSummary[]> {
+  const byId = new Map<string, RoleSummary>();
+  const add = (id?: string, name?: string, campaign?: string) => {
+    if (id && !byId.has(id)) {
+      byId.set(id, { role_id: id, role_name: name ?? id, campaign_name: campaign ?? '*' });
+    }
+  };
+
+  // 1) Jerarquía.
   try {
     const res = await fetch(`${ROLES_API_BASE}/roles/hierarchy`, {
       headers: { 'X-Api-Key': ROLES_API_KEY },
     });
-    if (!res.ok) {
-      console.error('[roles] GET /roles/hierarchy falló', res.status);
-      return [];
-    }
-    const data = (await res.json()) as any;
-    const rows = data?.data?.hierarchy ?? [];
-    const byId = new Map<string, RoleSummary>();
-    for (const row of rows) {
-      for (const r of [row.subordinate_role, row.superior_role]) {
-        if (r?.id && !byId.has(r.id)) {
-          byId.set(r.id, {
-            role_id: r.id,
-            role_name: r.name,
-            campaign_name: r.campaign_name ?? '*',
-          });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      for (const row of data?.data?.hierarchy ?? []) {
+        for (const r of [row.subordinate_role, row.superior_role]) {
+          if (r) add(r.id, r.name, r.campaign_name);
         }
       }
+    } else {
+      console.error('[roles] GET /roles/hierarchy falló', res.status);
     }
-    return [...byId.values()].sort((a, b) => a.role_name.localeCompare(b.role_name));
   } catch (e) {
     console.error('[roles] error red /roles/hierarchy', e);
-    return [];
   }
+
+  // 2) Roles asignados a usuarios (cubre roles fuera de la jerarquía).
+  try {
+    const res = await fetch(`${ROLES_API_BASE}/users`, {
+      headers: { 'X-Api-Key': ROLES_API_KEY },
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { users?: { roles?: any[] }[] };
+      for (const u of data.users ?? [])
+        for (const r of u.roles ?? []) add(r.id, r.name, r.campaign ?? r.campaign_name);
+    } else {
+      console.error('[roles] GET /users falló', res.status);
+    }
+  } catch (e) {
+    console.error('[roles] error red /users', e);
+  }
+
+  return [...byId.values()].sort((a, b) => a.role_name.localeCompare(b.role_name));
 }
 
 /** GET /users/{username} → roles del usuario (con campaña). [] si falla. */
