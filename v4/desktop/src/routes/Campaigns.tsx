@@ -68,7 +68,7 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
         phoneColumn,
         campaignId: `${file.name}-${countryCode}`,
         distribute: distribute && canDistribute,
-        campaign: distribute ? campaign : undefined,
+        campaign, // siempre: necesaria para el registro CRM
       });
       setStatus(
         distribute && canDistribute
@@ -138,6 +138,22 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
         </div>
 
         <div>
+          <label className="block text-sm font-semibold text-text-muted">Campaña</label>
+          <div className="mt-1">
+            {/* Campañas desde la DB (filtradas por el rol); buscable y solo-elegir. */}
+            <SearchableSelect
+              value={campaign}
+              onChange={setCampaign}
+              options={campaignOptions}
+              placeholder="Buscar campaña…"
+            />
+          </div>
+          <p className="mt-1 text-xs text-text-light">
+            Necesaria para registrar la gestión en el CRM.
+          </p>
+        </div>
+
+        <div>
           <label className="block text-sm font-semibold text-text-muted">Plantilla</label>
           <div className="mt-1">
             <TemplateEditor
@@ -160,18 +176,9 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
               Repartir contactos entre los agentes (líder)
             </label>
             {distribute && (
-              <div className="mt-3">
-                <label className="block text-xs text-text-light">Campaña destino</label>
-                <div className="mt-1">
-                  {/* Buscable y solo-elegir: no se puede mandar una campaña inexistente. */}
-                  <SearchableSelect
-                    value={campaign}
-                    onChange={setCampaign}
-                    options={campaignOptions}
-                    placeholder="Buscar campaña…"
-                  />
-                </div>
-              </div>
+              <p className="mt-2 text-xs text-text-light">
+                Los contactos se repartirán entre los agentes activos de “{campaign || '—'}”.
+              </p>
             )}
           </div>
         )}
@@ -184,9 +191,12 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
           </div>
         )}
 
-        <Button onClick={upload} disabled={!file || sending || unknownVars.length > 0}>
+        <Button onClick={upload} disabled={!file || !campaign || sending || unknownVars.length > 0}>
           {sending ? 'Subiendo…' : 'Subir contactos'}
         </Button>
+        {!campaign && file && (
+          <p className="text-xs text-error-70">Selecciona una campaña antes de subir.</p>
+        )}
         <p className="text-xs text-text-light">
           Subir no envía nada: los contactos quedan en “Mi asignación” para revisarlos y
           enviarlos desde ahí.

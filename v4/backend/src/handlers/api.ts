@@ -252,10 +252,11 @@ async function presignCsv(
   const distribute = !!payload.distribute && can(access, ANA_PERMISSIONS.CONTACTS_DISTRIBUTE);
   if (payload.distribute && !distribute) return bad('sin permiso para repartir', 403);
 
-  // Campaña destino del reparto: debe ser propia (o admin/global).
+  // Campaña: siempre requerida (se usa para el registro CRM, no solo reparto).
   const campaign = payload.campaign ?? access.campaigns[0] ?? '';
+  if (!campaign) return bad('falta campaign');
+  // Debe ser propia (o admin/global).
   if (
-    distribute &&
     !access.isAdmin &&
     !access.campaigns.includes('*') &&
     !access.campaigns.includes(campaign)
@@ -263,7 +264,7 @@ async function presignCsv(
     return bad('campaña no permitida', 403);
   }
   // Y debe EXISTIR en la DB de campañas (typos no generan jobs huérfanos).
-  if (distribute && !(await campaignExists(campaign))) {
+  if (!(await campaignExists(campaign))) {
     return bad(`la campaña "${campaign}" no existe`, 400);
   }
 
