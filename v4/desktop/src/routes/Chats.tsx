@@ -19,6 +19,8 @@ import {
 } from '../lib/api';
 import { can, ANA_PERMISSIONS } from '../lib/permissions';
 import { TeamViewer } from './TeamViewer';
+import { SearchableSelect } from '../ui/SearchableSelect';
+import { Toggle } from '../ui/Toggle';
 import type { WaStatus } from '../App';
 
 export function Chats({
@@ -392,27 +394,20 @@ function InteractionModal({ chatId, onClose }: { chatId: string; onClose: () => 
 
         <div>
           <label className="block text-xs font-semibold text-text-muted">Resultado</label>
-          <select
-            value={subdictamen}
-            onChange={(e) => setSubdictamen(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-neutral-50 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
-          >
-            {SUBDICTAMENES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+          <div className="mt-1">
+            <SearchableSelect
+              value={subdictamen}
+              onChange={setSubdictamen}
+              options={SUBDICTAMENES}
+              placeholder="Buscar resultado…"
+            />
+          </div>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-text-muted">
-          <input
-            type="checkbox"
-            checked={contactable}
-            onChange={(e) => setContactable(e.target.checked)}
-          />
-          Se logró contacto
-        </label>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-text-muted">Se logró contacto</span>
+          <Toggle checked={contactable} onChange={setContactable} />
+        </div>
 
         {subdictamen === 'Promesa de pago' && (
           <div className="grid grid-cols-2 gap-3">
