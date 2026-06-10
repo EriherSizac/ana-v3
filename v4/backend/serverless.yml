@@ -54,9 +54,6 @@ provider:
     PGDATABASE: ${env:PGDATABASE, ''}
     CAMPAIGNS_TABLE: ${param:campaignsTable, 'campaigns'}
     CAMPAIGNS_COLUMN: ${param:campaignsColumn, 'name'}
-    # TLS Postgres: 'true' para no verificar CA (último recurso), o pon PGSSL_CA.
-    PGSSL_NO_VERIFY: ${env:PGSSL_NO_VERIFY, ''}
-    PGSSL_CA: ${env:PGSSL_CA, ''}
     # API de interactions del CRM (registro de envíos). Key en backend/.env.
     INTERACTIONS_API_BASE: ${param:interactionsApiBase, 'https://7uj0qjoby9.execute-api.us-east-2.amazonaws.com'}
     INTERACTIONS_API_KEY: ${env:INTERACTIONS_API_KEY, ''}
