@@ -63,9 +63,10 @@ export interface InteractionInput {
   campaign: string;
   phone10: string;
   contactable: boolean; // true = mensaje enviado
-  subdictamen: string; // "Se envía WhatsApp" | "No tiene Whatsapp"
+  subdictamen: string; // "Se envía WhatsApp" | "No tiene Whatsapp" | "Atención WhatsApp"
   comments: string;
   at: Date;
+  inoutbound?: 'inbound' | 'outbound'; // default outbound (envío de campaña)
 }
 
 /** Inserta la interacción outbound en el CRM (shape idéntico al de v3-cli). */
@@ -91,7 +92,7 @@ export async function insertInteraction(i: InteractionInput): Promise<boolean> {
     promise_date: null,
     promise_amount: null,
     promise_payment_plan: null,
-    inoutbound: 'outbound',
+    inoutbound: i.inoutbound ?? 'outbound',
     payment_made_date: null,
   };
 

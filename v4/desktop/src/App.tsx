@@ -10,6 +10,7 @@ import { Campaigns } from './routes/Campaigns';
 import { Assignment } from './routes/Assignment';
 import { AdminRolePerms } from './routes/AdminRolePerms';
 import { UpdateGate } from './routes/UpdateGate';
+import { FloatingProgress } from './ui/FloatingProgress';
 import { hasSession, logout, pushTokenToMain } from './lib/auth';
 import { getMe, type UserAccess } from './lib/api';
 import { can, ANA_PERMISSIONS } from './lib/permissions';
@@ -147,6 +148,9 @@ export function App() {
       ) : (
         <Chats access={access} waStatus={waStatus} qr={qr} />
       )}
+
+      {/* Progreso del batch en curso, visible en cualquier tab. */}
+      <FloatingProgress />
     </div>
   );
 }

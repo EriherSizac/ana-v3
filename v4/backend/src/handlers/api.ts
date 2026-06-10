@@ -76,6 +76,8 @@ export const handler = async (
       }
       case 'PUT /messages':
         return await putMessage(user, JSON.parse(event.body ?? '{}'));
+      case 'PUT /conversations/meta':
+        return await putConversationMeta(user, JSON.parse(event.body ?? '{}'));
       case 'POST /uploads/presign':
         // Hard check (no depende del flag de enforcement): subir CSV es solo
         // para líderes/admin o roles con el grant explícito — nunca agentes.
@@ -193,6 +195,38 @@ async function putMessage(user: string, msg: any): Promise<APIGatewayProxyResult
   );
 
   return created({ ok: true });
+}
+
+/**
+ * Guarda los datos del contacto en la conversación (PK=operatorId, SK=chatId):
+ * campaña + fila completa del CSV. Permite registrar interacciones al CRM al
+ * abrir el chat sin re-consultar nada. Merge (no pisa lastMessage).
+ */
+async function putConversationMeta(
+  user: string,
+  payload: { chatId?: string; campaign?: string; contact?: Record<string, string> },
+): Promise<APIGatewayProxyResultV2> {
+  const chatId = payload.chatId;
+  if (!chatId) return bad('falta chatId');
+  const contact = payload.contact ?? {};
+  const name =
+    contact.name || contact.nombre ||
+    `${contact.first_name ?? ''} ${contact.last_name ?? ''}`.trim();
+
+  await ddb.send(
+    new UpdateCommand({
+      TableName: CONVERSATIONS_TABLE,
+      Key: { operatorId: user, chatId: String(chatId) },
+      UpdateExpression:
+        'SET campaign = :c, contact = :ct' + (name ? ', contactName = :n' : ''),
+      ExpressionAttributeValues: {
+        ':c': String(payload.campaign ?? ''),
+        ':ct': contact,
+        ...(name ? { ':n': name } : {}),
+      },
+    }),
+  );
+  return ok({ ok: true });
 }
 
 async function presignCsv(

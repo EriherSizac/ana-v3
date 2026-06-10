@@ -11,6 +11,7 @@ import {
   getMessages,
   getMediaUrl,
   maskPhone,
+  reportChatOpen,
   type Conversation,
   type Message,
   type UserAccess,
@@ -118,6 +119,8 @@ export function Chats({
   async function openChat(chatId: string) {
     setActive(chatId);
     setMessages(null);
+    // Solo en mi sesión: registra atención en el CRM (como la ventana de v3).
+    if (!viewingOther) void reportChatOpen(chatId);
     try {
       setMessages(await getMessages(chatId, viewOperator ?? undefined));
     } catch {

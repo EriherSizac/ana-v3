@@ -84,6 +84,27 @@ export class Backend {
     }
   }
 
+  /**
+   * Guarda los datos del contacto (campaña + fila del CSV) en la conversación,
+   * para registrar interacciones al CRM al abrir el chat.
+   */
+  async putConversationMeta(
+    chatId: string,
+    campaign: string | undefined,
+    contact: Record<string, string>,
+  ): Promise<void> {
+    if (!this.getToken() || !campaign) return;
+    try {
+      await fetch(`${this.apiBase}/conversations/meta`, {
+        method: 'PUT',
+        headers: this.headers(),
+        body: JSON.stringify({ chatId, campaign, contact }),
+      });
+    } catch (e) {
+      console.error('[backend] putConversationMeta falló:', e);
+    }
+  }
+
   /** Registra este agente como activo en su campaña (para reparto del líder). */
   async heartbeat(campaign: string): Promise<void> {
     if (!this.getToken() || !campaign) return;

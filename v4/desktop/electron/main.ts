@@ -102,6 +102,8 @@ async function runJob(job: SendJob): Promise<{ success: boolean; error?: string 
     const body = interpolate(job.template, job.row);
     const msg = await wa.sendText(jid, body); // simula escritura antes de enviar
     await backend.putMessage(msg);
+    // Guarda los datos del contacto en la conversación (CRM al abrir chat).
+    await backend.putConversationMeta(jid, job.campaign, job.row);
     send('wa:sent', { success: true, phone: jid, campaignId: job.campaignId });
     report('sent');
     return { success: true };

@@ -120,6 +120,10 @@ functions:
           method: put
           authorizer: { name: cognitoJwt }
       - httpApi:
+          path: /conversations/meta
+          method: put
+          authorizer: { name: cognitoJwt }
+      - httpApi:
           path: /uploads/presign
           method: post
           authorizer: { name: cognitoJwt }
@@ -188,6 +192,10 @@ functions:
     events:
       - httpApi:
           path: /interactions/report
+          method: post
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /interactions/open
           method: post
           authorizer: { name: cognitoJwt }
 

@@ -82,6 +82,22 @@ export async function getAgents(campaign?: string): Promise<AgentEntry[]> {
   return (await res.json()).agents ?? [];
 }
 
+/**
+ * Registra en el CRM que el agente abrió/atendió este chat (como la ventana
+ * manual de v3). Idempotente por chat/día en el backend. Fire-and-forget.
+ */
+export async function reportChatOpen(chatId: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/interactions/open`, {
+      method: 'POST',
+      headers: await authHeaders(),
+      body: JSON.stringify({ chatId }),
+    });
+  } catch {
+    /* no crítico para la UI */
+  }
+}
+
 // --- Líder/admin: send-jobs por campaña ---
 export interface JobsOperatorSummary {
   operatorId: string;
