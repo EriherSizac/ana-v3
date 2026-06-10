@@ -32,7 +32,7 @@ Agente (Electron) ◀──GET /jobs/poll (~5s)───────────
 ## 3. Endpoint
 
 ```
-POST https://<api-id>.execute-api.us-east-2.amazonaws.com/send
+POST https://njpfef2qna.execute-api.us-east-2.amazonaws.com/send
 ```
 
 **Headers**
@@ -101,7 +101,7 @@ Sin `row`, el texto se envía literal (los `{placeholders}` no encontrados queda
 
 **curl**
 ```bash
-curl -X POST "https://<api-id>.execute-api.us-east-2.amazonaws.com/send" \
+curl -X POST "https://njpfef2qna.execute-api.us-east-2.amazonaws.com/send" \
   -H "Content-Type: application/json" \
   -H "X-Api-Key: $SEND_API_KEY" \
   -d '{
@@ -115,7 +115,7 @@ curl -X POST "https://<api-id>.execute-api.us-east-2.amazonaws.com/send" \
 
 **Node.js**
 ```js
-const res = await fetch('https://<api-id>.execute-api.us-east-2.amazonaws.com/send', {
+const res = await fetch('https://njpfef2qna.execute-api.us-east-2.amazonaws.com/send', {
   method: 'POST',
   headers: {
     'content-type': 'application/json',
@@ -137,7 +137,7 @@ const data = await res.json(); // { queued: true, jobId: ... }
 import requests, os
 
 r = requests.post(
-    "https://<api-id>.execute-api.us-east-2.amazonaws.com/send",
+    "https://njpfef2qna.execute-api.us-east-2.amazonaws.com/send",
     headers={"X-Api-Key": os.environ["SEND_API_KEY"]},
     json={
         "message": "Hola {nombre}, tu saldo es {saldo}.",
