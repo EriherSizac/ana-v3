@@ -1,0 +1,33 @@
+/*
+ * File: index
+ * Created: 2026-06-09
+ * Updated: 2026-06-09
+ * Author: Erick Hernández Silva
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-neutral-30 text-text font-sans;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-heading;
+  }
+}
+
+@layer components {
+  .pernexium-card {
+    @apply rounded-2xl bg-white border border-neutral-50 shadow-card;
+  }
+  .pernexium-gradient {
+    background: linear-gradient(135deg, #06417c 0%, #104a8f 55%, #145cb3 100%);
+  }
+}

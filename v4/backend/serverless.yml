@@ -1,0 +1,307 @@
+# File: serverless
+# Created: 2026-06-09
+# Updated: 2026-06-10
+# Author: Erick Hernández Silva
+
+service: ana-backend
+
+frameworkVersion: '4'
+
+# v4 compila TypeScript nativo (sin serverless-esbuild).
+plugins:
+  - serverless-prune-plugin
+
+custom:
+  # Borra versiones viejas de Lambda en cada deploy (deja las últimas 3).
+  prune:
+    automatic: true
+    number: 3
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${opt:region, 'us-east-2'}
+  stage: ${opt:stage, 'dev'}
+  profile: pernexium
+  memorySize: 256
+  timeout: 29
+  environment:
+    STAGE: ${self:provider.stage}
+    CONVERSATIONS_TABLE: ${self:service}-conversations-${self:provider.stage}
+    MESSAGES_TABLE: ${self:service}-messages-${self:provider.stage}
+    CSV_BUCKET: ${self:service}-csv-${self:provider.stage}
+    MEDIA_BUCKET: ${self:service}-media-${self:provider.stage}
+    JOBS_TABLE: ${self:service}-jobs-${self:provider.stage}
+    ROLEPERMS_TABLE: ${self:service}-roleperms-${self:provider.stage}
+    AGENTS_TABLE: ${self:service}-agents-${self:provider.stage}
+    ACCESS_CACHE_TABLE: ${self:service}-accesscache-${self:provider.stage}
+    # API externa de Roles & Permisos (X-Api-Key). El secreto va en backend/.env
+    # (ROLES_API_KEY=...); serverless v4 lo carga solo. NO se commitea.
+    ROLES_API_BASE: ${param:rolesApiBase, 'https://2egq6rek0a.execute-api.us-east-2.amazonaws.com'}
+    ROLES_API_KEY: ${env:ROLES_API_KEY, ''}
+    # Flag de enforcement (guía §8). 'false' = no bloquear hasta validar.
+    PERMISSIONS_ENFORCED: ${param:permissionsEnforced, 'false'}
+    # API de agentes del dashboard (imery) — agentes activos por campaña.
+    DASHBOARD_BASE_PATH: ${param:dashboardBasePath, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}
+    DASHBOARD_API_KEY: ${env:DASHBOARD_API_KEY, ''}
+    # PostgreSQL — campañas. DATABASE_URL secreto en backend/.env.
+    DATABASE_URL: ${env:DATABASE_URL, ''}
+    CAMPAIGNS_TABLE: ${param:campaignsTable, 'campaigns'}
+    CAMPAIGNS_COLUMN: ${param:campaignsColumn, 'name'}
+    # TLS Postgres: 'true' para no verificar CA (último recurso), o pon PGSSL_CA.
+    PGSSL_NO_VERIFY: ${env:PGSSL_NO_VERIFY, ''}
+    PGSSL_CA: ${env:PGSSL_CA, ''}
+  httpApi:
+    cors: true
+    authorizers:
+      cognitoJwt:
+        type: jwt
+        # Pool de Pernexium. Define en deploy: --param="issuer=..." y clientId.
+        identitySource: $request.header.Authorization
+        issuerUrl: ${param:issuer, 'https://cognito-idp.us-east-2.amazonaws.com/us-east-2_UepfOyKpd'}
+        audience:
+          - ${param:clientId, '1r6niimhkl2fmias6kk85n4ou4'}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:BatchGetItem
+            - dynamodb:PutItem
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:BatchWriteItem
+          Resource:
+            - !GetAtt ConversationsTable.Arn
+            - !GetAtt MessagesTable.Arn
+            - !GetAtt JobsTable.Arn
+            - !GetAtt RolePermsTable.Arn
+            - !GetAtt AgentsTable.Arn
+            - !GetAtt AccessCacheTable.Arn
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:DeleteObject
+          Resource:
+            - !Sub '${CsvBucket.Arn}/*'
+            - !Sub '${MediaBucket.Arn}/*'
+
+package:
+  individually: true
+
+functions:
+  api:
+    handler: src/handlers/api.handler
+    description: Conversaciones / mensajes CRUD + presigned CSV upload
+    events:
+      - httpApi:
+          path: /conversations
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /conversations/{chatId}/messages
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /messages
+          method: put
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /uploads/presign
+          method: post
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /uploads/delete
+          method: post
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /me
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/roles
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/role-permissions/{roleId}
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/role-permissions/{roleId}
+          method: put
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /media/presign
+          method: post
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /media/url
+          method: get
+          authorizer: { name: cognitoJwt }
+
+  agents:
+    handler: src/handlers/agents.handler
+    description: Heartbeat + roster de agentes y campañas (vista de líder/admin)
+    events:
+      - httpApi:
+          path: /agents/heartbeat
+          method: post
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /agents
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /agents/campaigns
+          method: get
+          authorizer: { name: cognitoJwt }
+
+  jobsPoll:
+    handler: src/handlers/jobsPoll.handler
+    description: Entrega/ack de send-jobs por operador (DynamoDB con lease)
+    events:
+      - httpApi:
+          path: /jobs/poll
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /jobs/ack
+          method: post
+          authorizer: { name: cognitoJwt }
+
+  csvTrigger:
+    handler: src/handlers/csvTrigger.handler
+    description: S3 ObjectCreated en csv-uploads → parsea → escribe jobs en DynamoDB
+    events:
+      - s3:
+          bucket: !Ref CsvBucket
+          event: s3:ObjectCreated:*
+          existing: true
+          rules:
+            - prefix: csv-uploads/
+            - suffix: .csv
+
+resources:
+  Resources:
+    # Aislamiento multi-operador: operatorId en la PK → un operador solo
+    # puede Query su propia partición. Sin GSI, sin Scan cross-tenant.
+    ConversationsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.CONVERSATIONS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: operatorId, AttributeType: S }
+          - { AttributeName: chatId, AttributeType: S }
+        KeySchema:
+          - { AttributeName: operatorId, KeyType: HASH }
+          - { AttributeName: chatId, KeyType: RANGE }
+
+    MessagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.MESSAGES_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: convKey, AttributeType: S } # `${operatorId}#${chatId}`
+          - { AttributeName: sk, AttributeType: S } # `${timestamp}#${msgId}`
+        KeySchema:
+          - { AttributeName: convKey, KeyType: HASH }
+          - { AttributeName: sk, KeyType: RANGE }
+
+    CsvBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.CSV_BUCKET}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        # CORS: el navegador sube por presigned PUT (la firma es la seguridad).
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: [GET, PUT]
+              AllowedHeaders: ['*']
+              ExposedHeaders: [ETag]
+              MaxAge: 3000
+
+    MediaBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.MEDIA_BUCKET}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins: ['*']
+              AllowedMethods: [GET, PUT]
+              AllowedHeaders: ['*']
+              ExposedHeaders: [ETag]
+              MaxAge: 3000
+
+    # Cola de send-jobs por operador. PK=operatorId aísla el pull;
+    # status/leaseUntil dan semántica de lease (visibility) sin SQS.
+    JobsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.JOBS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: operatorId, AttributeType: S }
+          - { AttributeName: jobId, AttributeType: S }
+        KeySchema:
+          - { AttributeName: operatorId, KeyType: HASH }
+          - { AttributeName: jobId, KeyType: RANGE }
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+    # Almacén local rol→permisos (patrón guía §5). Single-table.
+    RolePermsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.ROLEPERMS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: PK, AttributeType: S }
+          - { AttributeName: SK, AttributeType: S }
+        KeySchema:
+          - { AttributeName: PK, KeyType: HASH }
+          - { AttributeName: SK, KeyType: RANGE }
+
+    # Roster de agentes por campaña (heartbeat). Persistente: el líder/admin
+    # ven a sus agentes aunque estén offline. `lastSeen` marca actividad.
+    AgentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.AGENTS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: campaign, AttributeType: S }
+          - { AttributeName: operatorId, AttributeType: S }
+        KeySchema:
+          - { AttributeName: campaign, KeyType: HASH }
+          - { AttributeName: operatorId, KeyType: RANGE }
+
+    # Caché L2 de acceso resuelto (guía §6). TTL ~15 min; PK=username.
+    AccessCacheTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.ACCESS_CACHE_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: username, AttributeType: S }
+        KeySchema:
+          - { AttributeName: username, KeyType: HASH }
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
