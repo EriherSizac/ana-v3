@@ -38,7 +38,7 @@ const LOCKED = app.isPackaged;
 
 // DevTools habilitadas para depurar (F12 / Ctrl+Shift+I) aun en el build
 // instalado. Para re-bloquear, poner DEVTOOLS = false.
-const DEVTOOLS = true;
+const DEVTOOLS = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
