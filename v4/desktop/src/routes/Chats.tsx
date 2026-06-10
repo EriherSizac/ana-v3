@@ -50,7 +50,7 @@ export function Chats({
   useEffect(() => {
     const off = window.ana.onWaEvent((d) => {
       if (d.type === 'qr' || d.type === 'status') setConnecting(false);
-      else if (d.type === 'error') {
+      else if (d.type === 'error' || d.type === 'conflict') {
         setWaError(d.error);
         setConnecting(false);
       }

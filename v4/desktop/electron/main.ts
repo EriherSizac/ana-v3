@@ -3,7 +3,7 @@
 // Updated: 2026-06-10
 // Author: Erick Hernández Silva
 
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Notification } from 'electron';
 import path from 'node:path';
 import { WaClient } from './whatsapp/client';
 import { interpolate } from './whatsapp/template';
@@ -84,6 +84,24 @@ wa.on('status', (status) => {
   if (status === 'connected' && agentCampaign) void backend.heartbeat(agentCampaign);
 });
 wa.on('error', (error) => send('wa:event', { type: 'error', error }));
+// Sesión desplazada por otro equipo → notificación del sistema + aviso a la UI.
+wa.on('conflict', (message) => {
+  send('wa:event', { type: 'conflict', error: message });
+  try {
+    if (Notification.isSupported()) {
+      const n = new Notification({ title: 'ana — WhatsApp', body: message });
+      n.on('click', () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.focus();
+        }
+      });
+      n.show();
+    }
+  } catch (e) {
+    console.error('[wa] notificación de conflicto falló:', e);
+  }
+});
 wa.on('message', async (msg) => {
   // Media entrante → backup a S3, guarda solo el puntero (no los bytes).
   if (msg._media) {

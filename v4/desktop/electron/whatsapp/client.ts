@@ -27,6 +27,7 @@ export interface WaEvents {
   status: (s: 'authenticated' | 'connected' | 'disconnected' | 'auth_failure') => void;
   message: (msg: NormalizedMessage) => void;
   error: (e: string) => void;
+  conflict: (msg: string) => void; // sesión abierta en otro equipo
 }
 
 export interface NormalizedMessage {
@@ -215,15 +216,26 @@ export class WaClient extends EventEmitter {
       this.lastState = 'disconnected';
       this.lastQr = null;
       this.emit('status', 'disconnected');
-      // LOGOUT = sesión cerrada desde el teléfono o número bloqueado; el resto
-      // suele ser red/navegación. En ambos casos guiar al re-escaneo.
-      const blocked = String(reason).toUpperCase().includes('LOGOUT');
+      const r = String(reason).toUpperCase();
+      // CONFLICT = la sesión se abrió en OTRO dispositivo/máquina y desplazó a
+      // esta. LOGOUT = cierre desde el teléfono o número bloqueado.
+      const conflict = r.includes('CONFLICT');
+      const blocked = r.includes('LOGOUT');
+      if (conflict) {
+        this.emit(
+          'conflict',
+          'Tu sesión de WhatsApp se abrió en otra computadora y se cerró aquí. ' +
+            'Solo puede estar activa en un equipo a la vez. Vuelve a conectar para retomarla aquí.',
+        );
+      }
       this.emit(
         'error',
-        blocked
-          ? 'WhatsApp cerró la sesión (cierre desde el teléfono o bloqueo del número). ' +
+        conflict
+          ? 'Sesión abierta en otro equipo: WhatsApp se cerró en esta computadora.'
+          : blocked
+            ? 'WhatsApp cerró la sesión (cierre desde el teléfono o bloqueo del número). ' +
               'Limpia la sesión y reescanea el QR; tus conversaciones respaldadas se recargan solas.'
-          : `WhatsApp se desconectó (${String(reason)}). Reintenta conectar; si persiste, limpia la sesión y reescanea.`,
+            : `WhatsApp se desconectó (${String(reason)}). Reintenta conectar; si persiste, limpia la sesión y reescanea.`,
       );
       // Libera el cliente para poder reconectar (cerró sesión / cayó la red).
       void this.reset();
