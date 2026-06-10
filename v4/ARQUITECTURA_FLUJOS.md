@@ -1,6 +1,6 @@
 # ana v4 — Arquitectura y flujos
 
-> Estado al 2026-06-10 (incluye: aprobación de asignación, envío directo, registro CRM, compat CSV v3, reparto/reasignación por agente). Complementa `ARCHITECTURE.md` y `CONTEXT.md`; este documento describe **cómo fluye todo de punta a punta**.
+> Estado al 2026-06-10 (incluye: aprobación de asignación, envío directo, registro CRM, compat CSV v3, reparto/reasignación por agente). Complementa `ARCHITECTURE.md` y `CONTEXT.md`; este documento describe **cómo fluye todo de punta a punta**. Diagramas en Mermaid.
 
 ---
 
@@ -8,29 +8,61 @@
 
 Híbrido: WhatsApp vive **local** en la PC del agente (la sesión de Chromium no sobrevive Lambdas); AWS solo guarda datos, permisos y orquesta trabajo.
 
-```
-┌────────────────────── PC del agente ──────────────────────┐      ┌───────────────── AWS us-east-2 ─────────────────┐
-│ Electron                                                  │      │                                                  │
-│ ├─ main process (Node)                                    │      │ Cognito User Pool (Pernexium)                    │
-│ │   ├─ WaClient: whatsapp-web.js + Chromium headless      │      │   └─ JWT id token (aud) → authorizer             │
-│ │   ├─ JobPoller: GET /jobs/poll cada ~5s                 │ HTTPS│                                                  │
-│ │   ├─ runJob: envía + reporta CRM                        │◀────▶│ HTTP API Gateway (njpfef2qna)                    │
-│ │   ├─ auto-update (electron-updater ← S3)                │      │   ├─ Lambda api          (conversaciones, presign│
-│ │   └─ IPC ◀──▶ renderer                                  │      │   │                       roles, media)          │
-│ └─ renderer (React + Vite)                                │      │   ├─ Lambda jobsPoll     (poll/ack de jobs)      │
-│     ├─ Login (Cognito PKCE)                               │      │   ├─ Lambda jobsAdmin    (summary/reassign)      │
-│     ├─ Chats (manual, tiempo real)                        │      │   ├─ Lambda interactions (registro CRM)          │
-│     ├─ Mi asignación (aprobar envíos)                     │      │   ├─ Lambda directSend   (POST /send, X-Api-Key) │
-│     ├─ Campañas (subir CSV, líder)                        │      │   ├─ Lambda agents       (heartbeat/roster)      │
-│     ├─ Vista de equipo (líder/admin)                      │      │   └─ Lambda csvTrigger   (evento S3, no HTTP)    │
-│     └─ Admin (permisos por rol)                           │      │                                                  │
-└───────────────────────────────────────────────────────────┘      │ DynamoDB: conversations, messages, jobs(+GSI),   │
-                                                                   │           roleperms, agents, accesscache         │
-        WhatsApp Web (web.whatsapp.com)                            │ S3: ana-backend-csv-* (csv-uploads/)             │
-                ▲ sesión LocalAuth                                 │     ana-backend-media-* (media/)                 │
-                └── Chromium headless del main                     │ PostgreSQL (RDS): tabla campaigns                │
-                                                                   │ APIs externas: Roles, Dashboard (imery), CRM     │
-                                                                   └──────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+  subgraph PC["PC del agente (Electron)"]
+    direction TB
+    subgraph MAIN["main process (Node)"]
+      WA["WaClient<br/>whatsapp-web.js + Chromium headless"]
+      POLLER["JobPoller<br/>GET /jobs/poll cada ~5s"]
+      RUNJOB["runJob<br/>envía + reporta CRM"]
+      UPD["auto-update<br/>electron-updater"]
+    end
+    subgraph REND["renderer (React + Vite)"]
+      LOGIN["Login (Cognito PKCE)"]
+      CHATS["Chats (manual)"]
+      ASIG["Mi asignación<br/>(aprobar envíos)"]
+      CAMP["Campañas (subir CSV)"]
+      TEAM["Vista de equipo"]
+      ADMIN["Admin (permisos)"]
+    end
+    MAIN <-->|IPC| REND
+  end
+
+  subgraph AWS["AWS us-east-2"]
+    COG["Cognito User Pool<br/>JWT id token"]
+    APIGW["HTTP API Gateway<br/>njpfef2qna"]
+    LAPI["λ api<br/>conversaciones, presign, roles, media"]
+    LPOLL["λ jobsPoll<br/>poll/ack"]
+    LADMIN["λ jobsAdmin<br/>summary/reassign"]
+    LINT["λ interactions<br/>registro CRM"]
+    LSEND["λ directSend<br/>POST /send (X-Api-Key)"]
+    LAGENTS["λ agents<br/>heartbeat/roster"]
+    LCSV["λ csvTrigger<br/>evento S3"]
+    DDB[("DynamoDB<br/>conversations · messages · jobs+GSI<br/>roleperms · agents · accesscache")]
+    S3CSV[("S3 csv-uploads/")]
+    S3MEDIA[("S3 media/")]
+    PG[("PostgreSQL RDS<br/>tabla campaigns")]
+  end
+
+  EXT["APIs externas<br/>Roles · Dashboard imery · CRM interactions"]
+  WAWEB["WhatsApp Web"]
+
+  REND -->|HTTPS + JWT| APIGW
+  MAIN -->|HTTPS + JWT| APIGW
+  LOGIN --> COG
+  APIGW --> LAPI & LPOLL & LADMIN & LINT & LAGENTS
+  APIGW -->|X-Api-Key| LSEND
+  S3CSV -. "ObjectCreated" .-> LCSV
+  LAPI --> DDB & S3CSV & S3MEDIA & PG
+  LCSV --> DDB
+  LPOLL --> DDB
+  LADMIN --> DDB
+  LSEND --> DDB & PG
+  LINT --> DDB & EXT
+  LAPI --> EXT
+  WA <--> WAWEB
+  UPD -.->|feed releases| S3MEDIA
 ```
 
 ## 2. Identidad y permisos
@@ -40,126 +72,209 @@ Híbrido: WhatsApp vive **local** en la PC del agente (la sesión de Chromium no
 3. Especiales: superadmin `erick.silva` (todo); rol con nombre ~ `/l[ií]der/` → upload, distribute, team view, jobs view/manage automáticos.
 4. **Hard checks** (no dependen del flag `PERMISSIONS_ENFORCED`): consola admin, subir CSV (solo líder/admin/grant explícito), summary/reassign de jobs.
 
+```mermaid
+flowchart LR
+  U["Usuario"] --> HUI["Cognito hosted UI<br/>PKCE + MFA"] --> TOK["id token<br/>operatorId = cognito:username"]
+  TOK --> ME["GET /me"]
+  ME --> RA["resolveUserAccess()"]
+  RA --> ROLES["API externa de Roles<br/>GET /users/username"]
+  RA --> RP[("roleperms<br/>grants/denies ana:*")]
+  RA --> CACHE[("accesscache L2 15min<br/>+ L1 memoria 15s")]
+  RA --> OUT["permisos efectivos<br/>isAdmin · isLeader · campañas"]
+```
+
 ## 3. Flujo: campaña masiva (CSV → asignación → envío)
 
-### 3.1 Subida (líder, tab Campañas)
-
-```
-Renderer ──POST /uploads/presign {filename, template, phoneColumn, campaign, distribute, assignments?}──▶ Lambda api
-   ◀── { url (presigned PUT), key, metadata, eligibleAgents? }
-Renderer ──PUT CSV──▶ S3 csv-uploads/<usuario>/<ts>_<archivo>.csv
-```
+### 3.1 Subida y trigger (líder, tab Campañas)
 
 - La **config viaja firmada** en la metadata del objeto S3 (`x-amz-meta-*`): el cliente no puede alterarla después del presign.
-- Validaciones del presign: solo líder/admin puede subir; `distribute` requiere permiso; campaña debe ser propia **y existir** en la DB de campañas (si no → `400 la campaña "X" no existe`).
-- `eligibleAgents` en la respuesta = preview de a quiénes se repartiría (misma fuente que usará el trigger).
+- Validaciones del presign: solo líder/admin sube; `distribute` requiere permiso; la campaña debe ser propia **y existir** en la DB (si no → `400 la campaña "X" no existe`).
+- `eligibleAgents` en la respuesta = preview del reparto (misma fuente que usará el trigger).
 
-### 3.2 Trigger (S3 → jobs)
+```mermaid
+sequenceDiagram
+  participant L as Líder (renderer)
+  participant API as λ api
+  participant S3 as S3 csv-uploads/
+  participant TRG as λ csvTrigger
+  participant DASH as Dashboard (imery)
+  participant J as DynamoDB jobs
 
-```
-S3 ObjectCreated(csv-uploads/*.csv) ──▶ Lambda csvTrigger
-  1. lee objeto + metadata firmada
-  2. parsea CSV (máx 10 MB / 50,000 filas)
-  3. normalizeContactRow() por fila  ← alias estándar v3 ↔ español v4
-     (phone_number↔telefono, total_balance↔saldo, message↔mensaje, …)
-  4. destinatarios:
-     · default: el propio uploader
-     · distribute=1: round-robin entre agentes activos (API dashboard imery)
-     · assignments={op:peso}: reparto ponderado explícito
-  5. un SendJob por fila → BatchWrite a tabla jobs
-     PK=operatorId (aísla por agente), SK=jobId=`<campaignId>#<i>`
-     atributos: campaign (GSI), phone, template, row, srcKey, ttl 7 días
-```
-
-### 3.3 Poll y aprobación (agente, tab Mi asignación)
-
-```
-main JobPoller (cada ~5s, con token):
-  GET /jobs/poll ──▶ Lambda jobsPoll ──▶ Query jobs WHERE operatorId = <yo>
-  ◀── todos mis jobs pendientes
-  ├─ jobs auto:true (envío directo §4)  → se procesan SOLOS
-  └─ resto → IPC 'jobs:assignment' → renderer (vista Mi asignación)
-```
-
-- **Nada se envía sin aprobación**: el agente ve la tabla (nombre, teléfono enmascarado, archivo), selecciona contactos, opcionalmente cambia la plantilla (editor con preview usando el mismo motor) y pulsa Enviar → IPC `jobs:approve(jobIds, template?)`.
-- Lo no seleccionado queda pendiente en DynamoDB y reaparece en cada poll.
-- La vista se hidrata al montar con `jobs:get-assignment` (no espera al siguiente poll).
-
-### 3.4 Envío (main process)
-
-Por cada job aprobado, agrupado por archivo (`srcKey`), uno a la vez:
-
-```
-rateLimitWait()      máx 7 msgs/20 min + gap ≥2 min (countdown a la UI)
-resolveJid(phone)    getNumberId → ¿tiene WhatsApp? (normaliza lada MX)
-interpolate()        plantilla {campo}/{{campo}}, expresiones {saldo*0.9},
-                     modificadores :dinero/:num, segunda pasada si la
-                     plantilla es {message} (columna por contacto de v3)
-sendText(jid, body)  typing simulado 2–9s → client.sendMessage
-PUT /messages        respaldo en DynamoDB (aparece en Chats y vista de equipo)
-POST /jobs/ack       borra el job de la cola
-POST /interactions/report   registro CRM (fire-and-forget, §6)
+  L->>API: POST /uploads/presign<br/>(template, phoneColumn, campaign, distribute, assignments?)
+  API->>API: valida líder/admin + campaña existe (PG)
+  API-->>L: presigned URL + metadata firmada + eligibleAgents
+  L->>S3: PUT CSV → csv-uploads/usuario/ts_archivo.csv
+  S3--)TRG: evento ObjectCreated
+  TRG->>TRG: parsea CSV (máx 10MB / 50k filas)<br/>normalizeContactRow() ← alias v3↔v4
+  alt assignments (pesos explícitos)
+    TRG->>TRG: reparto ponderado
+  else distribute=1
+    TRG->>DASH: agentes activos de la campaña
+    TRG->>TRG: round-robin
+  else default
+    TRG->>TRG: todo al uploader
+  end
+  TRG->>J: BatchWrite: 1 SendJob por fila<br/>PK=operatorId · campaign (GSI) · TTL 7d
 ```
 
-- CSV de S3 se borra (`POST /uploads/delete`) solo cuando **no quedan jobs** de ese archivo (aprobación parcial no borra nada).
-- Progreso (`sending/waiting/fileDone`, enviados/fallidos, countdown) → IPC `wa:progress` → barra en Campañas y Mi asignación.
+### 3.2 Poll, aprobación y envío (agente)
+
+- **Nada se envía sin aprobación** (excepto los directos `auto:true`, §4). Lo no seleccionado queda pendiente y reaparece en cada poll.
+- La vista "Mi asignación" se hidrata al montar (`jobs:get-assignment`), no espera al siguiente poll.
+- CSV de S3 se borra solo cuando **no quedan jobs** de ese archivo.
+
+```mermaid
+sequenceDiagram
+  participant P as JobPoller (main)
+  participant JP as λ jobsPoll
+  participant J as DynamoDB jobs
+  participant R as Renderer (Mi asignación)
+  participant WA as WaClient → WhatsApp
+  participant API as λ api
+  participant INT as λ interactions
+
+  loop cada ~5s
+    P->>JP: GET /jobs/poll
+    JP->>J: Query PK=operatorId
+    JP-->>P: jobs pendientes
+    P->>P: separa auto:true (van solos)
+    P--)R: IPC jobs:assignment (resto)
+  end
+  R->>R: agente selecciona contactos<br/>+ edita plantilla (preview en vivo)
+  R->>P: IPC jobs:approve(jobIds, template?)
+  loop por job aprobado (agrupado por archivo)
+    P->>P: rateLimitWait()<br/>7 msgs/20min · gap ≥2min
+    P->>WA: resolveJid(phone) ¿tiene WhatsApp?
+    P->>P: interpolate(plantilla, row)
+    P->>WA: sendText (typing 2–9s)
+    P->>API: PUT /messages (respaldo)
+    P->>JP: POST /jobs/ack (borra job)
+    P--)INT: POST /interactions/report (CRM)
+    P--)R: IPC wa:progress (barra)
+  end
+  P->>API: POST /uploads/delete (si no quedan jobs del archivo)
+```
 
 ## 4. Flujo: envío directo (sistema-a-sistema)
 
-Ver `ENVIO_DIRECTO.md` para la guía de integración completa.
+Ver `ENVIO_DIRECTO.md` para la guía de integración. Único camino que envía **sin aprobación**; las campañas del líder siempre pasan por Mi asignación.
 
-```
-CRM/automatización ──POST /send {message, username, phone, campaign} + X-Api-Key──▶ Lambda directSend
-  1. valida key (SEND_API_KEY) y campos; campaña debe existir en la DB
-  2. Put SendJob auto:true en la partición del agente (jobId direct#<ts>#<tel>)
-Agente: el poller lo detecta en ≤5s y lo envía SIN aprobación manual
-  (mismo rate limit, mismo registro CRM, visible en sus Chats)
-```
+```mermaid
+sequenceDiagram
+  participant EXT as CRM / automatización
+  participant DS as λ directSend
+  participant PG as PostgreSQL campaigns
+  participant J as DynamoDB jobs
+  participant P as JobPoller (agente)
+  participant WA as WhatsApp
 
-Único camino que envía sin aprobación; las campañas del líder siempre pasan por Mi asignación.
+  EXT->>DS: POST /send + X-Api-Key<br/>(message, username, phone, campaign)
+  DS->>DS: valida SEND_API_KEY y campos
+  DS->>PG: ¿campaña existe? (caché 10 min)
+  alt campaña no existe
+    DS-->>EXT: 400 la campaña no existe
+  else OK
+    DS->>J: Put SendJob auto:true<br/>PK=username · jobId=direct#ts#tel
+    DS-->>EXT: 200 queued:true + jobId
+    P->>J: poll (≤5s)
+    P->>WA: envía SIN aprobación<br/>(mismo rate limit + registro CRM)
+  end
+```
 
 ## 5. Flujo: chat manual + entrantes (conviven con la automatización)
 
-Una sola sesión `whatsapp-web.js` headless; el bot y el humano no compiten por ninguna ventana (envíos van por API interna, no por DOM como en v3):
+Una sola sesión `whatsapp-web.js` headless; bot y humano no compiten por ninguna ventana (envíos por API interna, no por DOM como en v3). Manual **no cuenta** al rate limit de campaña.
 
-- **Saliente manual**: renderer → IPC `wa:send-reply` → `sendText(jid, body, sinTyping)` (el "escribiendo…" ya se mostró en vivo con `wa:typing`). Inmediato, **no cuenta** al rate limit. `PUT /messages` lo respalda.
-- **Media manual**: IPC `wa:send-media` → envía + sube bytes a S3 (`POST /media/presign` → PUT) + puntero `mediaKey` en DynamoDB.
-- **Entrante**: evento `message` del WaClient → si trae media: descarga → presign → S3 `media/<op>/...` (DynamoDB guarda solo el puntero) → `PUT /messages` → IPC `wa:message` → la UI hace append en sitio (sin recargar/parpadear).
-- **Lectura**: `GET /conversations` y `GET /conversations/{chatId}/messages` (partición del propio operador; líder/admin pueden pedir `?operatorId=` de un agente de sus campañas — solo lectura).
+```mermaid
+sequenceDiagram
+  participant R as Renderer (Chats)
+  participant M as main (WaClient)
+  participant WA as WhatsApp
+  participant API as λ api
+  participant S3 as S3 media/
+  participant D as DynamoDB
+
+  Note over R,M: saliente manual
+  R->>M: IPC wa:typing (escribiendo… en vivo)
+  R->>M: IPC wa:send-reply(jid, texto)
+  M->>WA: sendText sin delay
+  M->>API: PUT /messages
+  M-->>R: mensaje → append en sitio (sin parpadeo)
+
+  Note over WA,D: entrante
+  WA--)M: evento message (+media?)
+  opt trae media
+    M->>API: POST /media/presign
+    M->>S3: PUT bytes
+  end
+  M->>API: PUT /messages (puntero mediaKey, no bytes)
+  API->>D: persiste + actualiza conversación
+  M--)R: IPC wa:message → append en vivo
+```
+
+Lectura: `GET /conversations` y `GET /conversations/{chatId}/messages` (partición propia; líder/admin pueden pedir `?operatorId=` de un agente de sus campañas — solo lectura).
 
 ## 6. Flujo: registro CRM
 
-```
-desktop runJob ──POST /interactions/report {jobId, campaign, phone, status, row}──▶ Lambda interactions
-  1. idempotencia: marcador (REPORT#<op>, jobId) en tabla jobs; repetido → no-op
-  2. credit_id: columnas del CSV (credit/credito/credit_id/id_credito)
-     o lookup /client-info por teléfono (retry sin +52)
-  3. insert interacción outbound (subdictamen "Se envía WhatsApp" / "No tiene Whatsapp")
-  4. status no_whatsapp → PATCH /phone (has_whatsapp=false)
-```
+API key del CRM solo en backend; fire-and-forget (CRM caído no frena envíos).
 
-- API key del CRM (`INTERACTIONS_API_KEY`) vive solo en el backend — el desktop nunca la toca.
-- Fire-and-forget: CRM caído no frena el ritmo de envío.
+```mermaid
+sequenceDiagram
+  participant P as desktop runJob
+  participant INT as λ interactions
+  participant J as DynamoDB jobs
+  participant CRM as API CRM (interactions)
+
+  P--)INT: POST /interactions/report<br/>(jobId, campaign, phone, status, row)
+  INT->>J: marcador REPORT#op + jobId (condicional)
+  alt ya reportado
+    INT-->>P: no-op (idempotente)
+  else primera vez
+    alt credit_id en columnas del CSV
+      INT->>INT: usa credit/credito/credit_id/id_credito
+    else lookup
+      INT->>CRM: POST /client-info por teléfono<br/>(retry sin +52)
+    end
+    INT->>CRM: POST /interactions (outbound,<br/>subdictamen según status)
+    opt status = no_whatsapp
+      INT->>CRM: PATCH /phone (has_whatsapp=false)
+    end
+  end
+```
 
 ## 7. Flujo: supervisión y reasignación (líder/admin)
 
-```
-Vista de equipo:
-  GET /jobs/summary?campaign=X ──▶ Lambda jobsAdmin ──▶ Query GSI campaign-index
-     ◀── pendientes / en-lease por operatorId (filtra TTL expirado)
-  POST /jobs/reassign {campaign, from, to} ──▶ por cada job pendiente de `from`:
-     TransactWrite [Delete(from) + Put(to)]  ← atómico, respeta leases activos
-```
+Reemplazo del consume-once de v3: agente caído a media campaña → el líder mueve sus pendientes sin re-subir CSVs. Panel en TeamViewer (refresh 30s). Heartbeat: el desktop avisa al conectar WA y cada 5 min → tabla `agents`; activo = visto en <10 min.
 
-- Es el reemplazo del consume-once de v3: agente caído a media campaña → el líder mueve sus pendientes a otro sin re-subir CSVs.
-- Panel en TeamViewer: pendientes por agente, refresh 30s, botón Mover.
-- Heartbeat: el desktop hace `POST /agents/heartbeat` al conectar WA y cada 5 min → tabla `agents` (PK=campaign); activo = visto en <10 min.
+```mermaid
+sequenceDiagram
+  participant T as TeamViewer (líder/admin)
+  participant JA as λ jobsAdmin
+  participant J as DynamoDB jobs (GSI campaign-index)
+
+  T->>JA: GET /jobs/summary?campaign=X
+  JA->>J: Query GSI campaign=X
+  JA-->>T: pendientes/en-lease por agente (filtra TTL)
+  T->>JA: POST /jobs/reassign (campaign, from, to)
+  loop por job pendiente de `from`
+    JA->>J: TransactWrite [Delete(from) + Put(to)]<br/>atómico · respeta leases activos
+  end
+  JA-->>T: moved · skippedLeased
+```
 
 ## 8. Campañas (PostgreSQL)
 
-- Fuente: `SELECT name FROM campaigns` en RDS; conexión por `DATABASE_URL` o campos sueltos `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE` (estilo pgAdmin), TLS cifrado sin verificación de CA.
-- **Caché de 10 min** en memoria del Lambda caliente; si la DB falla se sirve lo último (stale > vacío).
-- Consumo: dropdowns buscables (`SearchableSelect`) en Campañas y Vista de equipo — solo se puede elegir una opción existente; el backend además valida existencia en presign y `POST /send`.
+```mermaid
+flowchart LR
+  PG[("RDS PostgreSQL<br/>SELECT name FROM campaigns")] --> CACHE["caché 10 min<br/>en Lambda caliente<br/>(stale si DB cae)"]
+  CACHE --> DD1["SearchableSelect<br/>tab Campañas"]
+  CACHE --> DD2["SearchableSelect<br/>Vista de equipo"]
+  CACHE --> V1["validación presign<br/>400 si no existe"]
+  CACHE --> V2["validación POST /send<br/>400 si no existe"]
+```
+
+- Conexión: `DATABASE_URL` o campos sueltos `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE` (estilo pgAdmin); TLS cifrado sin verificación de CA.
+- Dropdowns solo permiten **elegir** opciones existentes (escribir filtra, no setea).
 
 ## 9. Tablas DynamoDB
 
@@ -174,9 +289,21 @@ Vista de equipo:
 
 ## 10. Sesión de WhatsApp y salud
 
-- Sesión LocalAuth en `userData/wwebjs_auth` → reconexión automática al abrir la app.
+```mermaid
+stateDiagram-v2
+  [*] --> idle
+  idle --> qr: start() sin sesión guardada
+  idle --> connected: sesión LocalAuth guardada<br/>(auto-reconexión)
+  qr --> authenticated: escaneo
+  authenticated --> connected: ready
+  connected --> disconnected: red caída / NAVIGATION
+  connected --> disconnected: LOGOUT (cierre remoto<br/>o número BLOQUEADO)
+  disconnected --> qr: "Limpiar sesión y reconectar"<br/>borra wwebjs_auth → QR nuevo
+  disconnected --> connected: reintento simple
+```
+
 - Watchdog 60s al iniciar (sin señal → aviso de Chromium/red).
-- `auth_failure` o `disconnected(LOGOUT)` = cierre remoto o **número bloqueado** → la UI lo explica y ofrece "Limpiar sesión y reconectar" (`wa:reset`: borra `wwebjs_auth` + relanza → QR nuevo). Las conversaciones no se pierden: viven en DynamoDB y se recargan solas.
+- En `LOGOUT`/`auth_failure` la UI explica el posible bloqueo y ofrece el reset. Las conversaciones **no se pierden**: viven en DynamoDB y se recargan solas tras reescanear.
 
 ## 11. Distribución y updates
 
