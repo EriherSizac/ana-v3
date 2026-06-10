@@ -247,7 +247,7 @@ export function Chats({
                 messages.map((m) => (
                   <div
                     key={m.id}
-                    className={`max-w-[75%] whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm ${
+                    className={`w-fit max-w-[75%] whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-sm ${
                       m.fromMe
                         ? 'ml-auto bg-primary text-primary-foreground'
                         : 'bg-white border border-neutral-50'
