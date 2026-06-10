@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
+import { TemplateEditor, parseCsvPreview } from '../ui/TemplateEditor';
 import { uploadCsv, getCampaigns, type UserAccess } from '../lib/api';
 import { can, ANA_PERMISSIONS } from '../lib/permissions';
 import type { SendProgress } from '../types/ana';
@@ -25,6 +26,9 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
   }, []);
 
   const [file, setFile] = useState<File | null>(null);
+  // Columnas + primera fila del CSV (chips y preview del editor de plantilla).
+  const [csvColumns, setCsvColumns] = useState<string[]>([]);
+  const [csvSampleRow, setCsvSampleRow] = useState<Record<string, string> | null>(null);
   const [template, setTemplate] = useState(
     'Hola {nombre}, tu saldo es {saldo}. Realiza tu pago hoy.',
   );
@@ -87,7 +91,23 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
           <input
             type="file"
             accept=".csv"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              setFile(f);
+              setCsvColumns([]);
+              setCsvSampleRow(null);
+              // Solo el inicio del archivo: alcanza para encabezados + 1 fila.
+              if (f)
+                void f
+                  .slice(0, 64 * 1024)
+                  .text()
+                  .then((text) => {
+                    const { columns, sampleRow } = parseCsvPreview(text);
+                    setCsvColumns(columns);
+                    setCsvSampleRow(sampleRow);
+                  })
+                  .catch(() => {});
+            }}
             className="mt-1 block w-full text-sm"
           />
         </div>
@@ -113,12 +133,14 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
 
         <div>
           <label className="block text-sm font-semibold text-text-muted">Plantilla</label>
-          <textarea
-            value={template}
-            onChange={(e) => setTemplate(e.target.value)}
-            rows={3}
-            className="mt-1 w-full rounded-xl border border-neutral-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
-          />
+          <div className="mt-1">
+            <TemplateEditor
+              value={template}
+              onChange={setTemplate}
+              columns={csvColumns}
+              sampleRow={csvSampleRow}
+            />
+          </div>
         </div>
 
         {canDistribute && (

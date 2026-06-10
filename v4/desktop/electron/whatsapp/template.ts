@@ -3,25 +3,41 @@
 // Updated: 2026-06-10
 // Author: Erick Hernández Silva
 
-// Columnas "de dinero": el resultado se formatea como MXN.
+// Columnas "de dinero": el resultado se formatea como MXN (heurística).
 const MONEY_RE = /balance|amount|saldo|monto/i;
 
+// Modificador explícito al final del placeholder: fuerza u omite el formato
+// de moneda sin depender del nombre de la columna.
+//   {descuento:dinero}  → $1,234.00   (también :money, :$)
+//   {saldo:num}         → 1234.5      (también :numero, :plain)
+const MODIFIER_RE = /^(.*?)\s*:\s*(dinero|money|\$|num|numero|plain)$/i;
+const MONEY_MODS = new Set(['dinero', 'money', '$']);
+
 /**
- * Interpola `{campo}` con datos de la fila. Formatea MXN en balance/amount.
- * Soporta expresiones matemáticas entre llaves (paridad con v3-cli):
- * `{total_balance*0.9}`, `{saldo - descuento}`, `{monto/12}` — los nombres de
- * columna se sustituyen por su valor numérico y se evalúa la aritmética.
- * Si la expresión referencia una columna de dinero, el resultado sale en MXN.
+ * Interpola `{campo}` con datos de la fila.
+ * - Formato MXN: automático en balance/amount/saldo/monto, o explícito con
+ *   `{campo:dinero}`; se desactiva con `{campo:num}`.
+ * - Expresiones matemáticas (paridad con v3-cli): `{total_balance*0.9}`,
+ *   `{saldo - descuento}` — los nombres de columna se sustituyen por su valor
+ *   numérico y se evalúa la aritmética. Combinables: `{saldo*0.9:dinero}`.
  */
 export function interpolate(tpl: string, data: Record<string, any>): string {
   return tpl.replace(/\{([^{}]+)\}/g, (match, raw: string) => {
-    const key = raw.trim();
+    let key = raw.trim();
+
+    // Modificador explícito de formato (null = decidir por heurística).
+    let asMoney: boolean | null = null;
+    const mod = key.match(MODIFIER_RE);
+    if (mod) {
+      key = mod[1].trim();
+      asMoney = MONEY_MODS.has(mod[2].toLowerCase());
+    }
 
     // Campo simple: comportamiento original (ausente → '').
     if (/^\w+$/.test(key)) {
       const v = data?.[key];
       if (v === undefined || v === null) return '';
-      if (MONEY_RE.test(key)) return formatMoney(v);
+      if (asMoney ?? MONEY_RE.test(key)) return formatMoney(v);
       return String(v);
     }
 
@@ -29,7 +45,7 @@ export function interpolate(tpl: string, data: Record<string, any>): string {
     if (/[+\-*/()%]/.test(key)) {
       const result = evalMathExpr(key, data);
       if (result !== null) {
-        if (MONEY_RE.test(key)) return formatMoney(result);
+        if (asMoney ?? MONEY_RE.test(key)) return formatMoney(result);
         return Number.isInteger(result) ? String(result) : result.toFixed(2);
       }
     }
@@ -71,7 +87,9 @@ function evalMathExpr(expr: string, data: Record<string, any>): number | null {
 }
 
 export function formatMoney(value: string | number): string {
-  const num = Number(String(value).replace(/[^\d.-]/g, ''));
-  if (Number.isNaN(num)) return String(value);
+  const stripped = String(value).replace(/[^\d.-]/g, '');
+  const num = Number(stripped);
+  // Valor sin dígitos (p.ej. {nombre:dinero}) → devolver tal cual, no "$0.00".
+  if (!stripped || Number.isNaN(num)) return String(value);
   return num.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 }
