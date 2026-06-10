@@ -97,6 +97,11 @@ export class WaClient extends EventEmitter {
     console.log('[wa] start: lanzando cliente…');
     try {
       const store = new S3SessionStore(this.apiBase, this.getToken, AUTH_DIR);
+      // En el build instalado, Chromium va bundleado en resources/chrome (en dev
+      // puppeteer usa el de su caché). Sin esto el exe no encuentra Chrome.
+      const executablePath = app.isPackaged
+        ? path.join(process.resourcesPath, 'chrome', 'chrome.exe')
+        : undefined;
       this.client = new Client({
         authStrategy: new RemoteAuth({
           clientId: this.operatorId,
@@ -106,6 +111,7 @@ export class WaClient extends EventEmitter {
         }),
         puppeteer: {
           headless: true,
+          ...(executablePath ? { executablePath } : {}),
           args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
         },
       });

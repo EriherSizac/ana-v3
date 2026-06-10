@@ -1,0 +1,3 @@
+
+# Chromium bundleado para puppeteer (se copia de ~/.cache/puppeteer)
+build/chrome/
