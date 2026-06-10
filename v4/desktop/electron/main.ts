@@ -82,20 +82,33 @@ wa.on('message', async (msg) => {
 
 // ---- Ejecuta UN job (el poller controla orden, rate limit y progreso) ----
 async function runJob(job: SendJob): Promise<{ success: boolean; error?: string }> {
+  // El resultado se registra en el CRM vía backend (interacción outbound +
+  // marcado de teléfonos sin WhatsApp), sin bloquear el ritmo de envío.
+  const report = (status: 'sent' | 'no_whatsapp' | 'error') =>
+    void backend.reportInteraction({
+      jobId: job.jobId,
+      campaign: job.campaign,
+      phone: job.phone,
+      status,
+      row: job.row,
+    });
   try {
     const jid = await wa.resolveJid(job.phone, job.countryCode);
     if (!jid) {
       send('wa:sent', { success: false, phone: job.phone, error: 'No tiene WhatsApp' });
+      report('no_whatsapp');
       return { success: false, error: 'No tiene WhatsApp' };
     }
     const body = interpolate(job.template, job.row);
     const msg = await wa.sendText(jid, body); // simula escritura antes de enviar
     await backend.putMessage(msg);
     send('wa:sent', { success: true, phone: jid, campaignId: job.campaignId });
+    report('sent');
     return { success: true };
   } catch (e: any) {
     const error = e?.message ?? String(e);
     send('wa:sent', { success: false, phone: job.phone, error });
+    report('error');
     return { success: false, error };
   }
 }

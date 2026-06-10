@@ -13,6 +13,8 @@ export const ANA_PERMISSIONS = {
   CHATS_TEAM_VIEW: 'ana:chats:team:view', // ver conversaciones de los agentes
   CHATS_REPLY: 'ana:chats:message:reply',
   CAMPAIGN_SEND: 'ana:campaign:message:send',
+  TEAM_JOBS_VIEW: 'ana:team:jobs:view', // ver pendientes por agente de la campaña
+  TEAM_JOBS_MANAGE: 'ana:team:jobs:manage', // reasignar pendientes entre agentes
 } as const;
 
 export type AnaPermission = (typeof ANA_PERMISSIONS)[keyof typeof ANA_PERMISSIONS];

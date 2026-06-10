@@ -16,6 +16,24 @@ const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_ROWS = 50_000;
 
 /**
+ * `{"op1":2,"op2":1}` → ['op1','op1','op2']: lista expandida para que el
+ * round-robin por índice respete los pesos relativos del reparto explícito.
+ */
+function expandWeights(json: string): string[] {
+  try {
+    const weights = JSON.parse(json) as Record<string, number>;
+    const out: string[] = [];
+    for (const [op, w] of Object.entries(weights)) {
+      const n = Math.max(0, Math.floor(Number(w)));
+      for (let i = 0; i < n; i++) out.push(op);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Dispara al subir un CSV a csv-uploads/. Parsea filas y encola un SendJob por
  * fila en SQS. El agente local los recoge vía /jobs/poll.
  *
@@ -60,10 +78,17 @@ export const handler = async (event: S3Event): Promise<void> => {
       continue;
     }
 
-    // Destinatarios de los jobs: el propio uploader, o reparto round-robin
-    // entre los agentes activos de la campaña (si distribute + hay agentes).
+    // Destinatarios de los jobs: el propio uploader, reparto explícito por
+    // pesos (meta.assignments, firmada en el presign), o round-robin entre los
+    // agentes activos de la campaña (si distribute + hay agentes).
     let targets = [operatorId];
-    if (distribute) {
+    if (meta.assignments) {
+      targets = expandWeights(meta.assignments);
+      if (targets.length === 0) {
+        console.warn(`csvTrigger: assignments inválido en ${key}, jobs al uploader`);
+        targets = [operatorId];
+      }
+    } else if (distribute) {
       // Agentes activos elegibles desde la API del dashboard (api-agentes.md).
       const agents = await getEligibleAgents(campaign);
       if (agents.length > 0) targets = agents;
@@ -76,6 +101,8 @@ export const handler = async (event: S3Event): Promise<void> => {
       operatorId: targets[i % targets.length], // round-robin
       jobId: `${campaignId}#${i}`,
       campaignId,
+      // sparse: el GSI campaign-index no acepta '' como key.
+      ...(campaign ? { campaign } : {}),
       phone: row[phoneColumn],
       template,
       row,

@@ -82,6 +82,41 @@ export async function getAgents(campaign?: string): Promise<AgentEntry[]> {
   return (await res.json()).agents ?? [];
 }
 
+// --- Líder/admin: send-jobs por campaña ---
+export interface JobsOperatorSummary {
+  operatorId: string;
+  pending: number;
+  leased: number;
+  files: string[];
+}
+
+/** Pendientes por agente de una campaña (vista del líder). */
+export async function getJobsSummary(
+  campaign: string,
+): Promise<{ total: number; operators: JobsOperatorSummary[] }> {
+  const res = await fetch(
+    `${API_BASE}/jobs/summary?campaign=${encodeURIComponent(campaign)}`,
+    { headers: await authHeaders() },
+  );
+  if (!res.ok) throw new Error('no se pudo cargar el resumen de envíos');
+  return await res.json();
+}
+
+/** Mueve los jobs pendientes de un agente a otro (agente desconectado, etc.). */
+export async function reassignJobs(
+  campaign: string,
+  from: string,
+  to: string,
+): Promise<{ moved: number; skippedLeased: number }> {
+  const res = await fetch(`${API_BASE}/jobs/reassign`, {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({ campaign, from, to }),
+  });
+  if (!res.ok) throw new Error('no se pudieron reasignar los envíos');
+  return await res.json();
+}
+
 // --- Admin: permisos por rol ---
 export interface RoleSummary {
   role_id: string;
@@ -136,6 +171,8 @@ export interface CampaignConfig {
   campaignId: string;
   campaign?: string;
   distribute?: boolean;
+  // Reparto explícito por pesos {operatorId: peso}; requiere distribute.
+  assignments?: Record<string, number>;
 }
 
 /** Pide presign, sube el CSV a S3 (dispara csvTrigger → tabla jobs). */

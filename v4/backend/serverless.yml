@@ -51,6 +51,11 @@ provider:
     # TLS Postgres: 'true' para no verificar CA (último recurso), o pon PGSSL_CA.
     PGSSL_NO_VERIFY: ${env:PGSSL_NO_VERIFY, ''}
     PGSSL_CA: ${env:PGSSL_CA, ''}
+    # API de interactions del CRM (registro de envíos). Key en backend/.env.
+    INTERACTIONS_API_BASE: ${param:interactionsApiBase, 'https://7uj0qjoby9.execute-api.us-east-2.amazonaws.com'}
+    INTERACTIONS_API_KEY: ${env:INTERACTIONS_API_KEY, ''}
+    # user_id del CRM con el que se registran las interacciones.
+    INTERACTIONS_USER_ID: ${env:INTERACTIONS_USER_ID, ''}
   httpApi:
     cors: true
     authorizers:
@@ -78,6 +83,7 @@ provider:
             - !GetAtt ConversationsTable.Arn
             - !GetAtt MessagesTable.Arn
             - !GetAtt JobsTable.Arn
+            - !Sub '${JobsTable.Arn}/index/*'
             - !GetAtt RolePermsTable.Arn
             - !GetAtt AgentsTable.Arn
             - !GetAtt AccessCacheTable.Arn
@@ -173,6 +179,28 @@ functions:
           method: post
           authorizer: { name: cognitoJwt }
 
+  interactions:
+    handler: src/handlers/interactions.handler
+    description: Registra en el CRM el resultado de cada envío de campaña
+    events:
+      - httpApi:
+          path: /interactions/report
+          method: post
+          authorizer: { name: cognitoJwt }
+
+  jobsAdmin:
+    handler: src/handlers/jobsAdmin.handler
+    description: Vista y reasignación de send-jobs por campaña (líder/admin)
+    events:
+      - httpApi:
+          path: /jobs/summary
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /jobs/reassign
+          method: post
+          authorizer: { name: cognitoJwt }
+
   csvTrigger:
     handler: src/handlers/csvTrigger.handler
     description: S3 ObjectCreated en csv-uploads → parsea → escribe jobs en DynamoDB
@@ -258,9 +286,20 @@ resources:
         AttributeDefinitions:
           - { AttributeName: operatorId, AttributeType: S }
           - { AttributeName: jobId, AttributeType: S }
+          - { AttributeName: campaign, AttributeType: S }
         KeySchema:
           - { AttributeName: operatorId, KeyType: HASH }
           - { AttributeName: jobId, KeyType: RANGE }
+        # GSI sparse por campaña (vista del líder: pendientes por agente).
+        # Solo jobs con `campaign` aparecen; los uploads sin campaña no indexan.
+        GlobalSecondaryIndexes:
+          - IndexName: campaign-index
+            KeySchema:
+              - { AttributeName: campaign, KeyType: HASH }
+              - { AttributeName: operatorId, KeyType: RANGE }
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes: [campaignId, leaseUntil, ttl]
         TimeToLiveSpecification:
           AttributeName: ttl
           Enabled: true

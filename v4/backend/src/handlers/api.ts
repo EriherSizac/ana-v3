@@ -21,6 +21,7 @@ import { ANA_PERMISSIONS } from '../lib/permissions';
 import { setRolePermissions, getRolePermissions } from '../lib/rolePerms';
 import { invalidateByRole } from '../lib/accessCache';
 import { isAgentInCampaigns } from '../lib/agents';
+import { getEligibleAgents } from '../lib/dashboard';
 import { listAllRoles } from '../lib/roles';
 
 /**
@@ -196,6 +197,8 @@ async function presignCsv(
     campaignId?: string;
     campaign?: string;
     distribute?: boolean;
+    // Reparto explícito por pesos {operatorId: peso}. Requiere distribute.
+    assignments?: Record<string, number>;
   },
 ): Promise<APIGatewayProxyResultV2> {
   const user = access.username;
@@ -218,6 +221,21 @@ async function presignCsv(
     return bad('campaña no permitida', 403);
   }
 
+  // Reparto explícito por pesos: solo con permiso de distribución y pesos sanos.
+  let assignments = '';
+  if (payload.assignments && Object.keys(payload.assignments).length > 0) {
+    if (!distribute) return bad('assignments requiere distribute', 403);
+    const clean: Record<string, number> = {};
+    for (const [op, w] of Object.entries(payload.assignments)) {
+      const n = Math.floor(Number(w));
+      if (op && Number.isFinite(n) && n > 0) clean[op] = n;
+    }
+    if (Object.keys(clean).length === 0) return bad('assignments sin pesos válidos');
+    assignments = JSON.stringify(clean);
+    // Metadata S3 cabe en ~2KB total: acotar el tamaño del reparto.
+    if (assignments.length > 1500) return bad('assignments demasiado grande');
+  }
+
   // Config fijada server-side en metadata firmada → el cliente no la altera.
   const key = `csv-uploads/${safeUser}/${Date.now()}_${filename}`;
   const metadata: Record<string, string> = {
@@ -228,6 +246,7 @@ async function presignCsv(
     campaignid: payload.campaignId ?? key,
     distribute: distribute ? '1' : '0',
     campaign,
+    ...(assignments ? { assignments } : {}),
   };
 
   const url = await getSignedUrl(
@@ -240,7 +259,11 @@ async function presignCsv(
     }),
     { expiresIn: 300 },
   );
-  return ok({ url, key, maxBytes: MAX_CSV_BYTES, metadata });
+  // Preview del reparto: a quién irían los jobs (misma fuente que csvTrigger),
+  // para que la UI lo muestre ANTES de subir el archivo.
+  const eligibleAgents =
+    distribute && !assignments ? await getEligibleAgents(campaign) : undefined;
+  return ok({ url, key, maxBytes: MAX_CSV_BYTES, metadata, eligibleAgents });
 }
 
 async function setRolePerms(

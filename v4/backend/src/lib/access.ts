@@ -85,6 +85,8 @@ export async function resolveUserAccess(username: string): Promise<UserAccess> {
     permissions.add(ANA_PERMISSIONS.CONTACTS_DISTRIBUTE);
     permissions.add(ANA_PERMISSIONS.CHATS_VIEW);
     permissions.add(ANA_PERMISSIONS.CHATS_TEAM_VIEW);
+    permissions.add(ANA_PERMISSIONS.TEAM_JOBS_VIEW);
+    permissions.add(ANA_PERMISSIONS.TEAM_JOBS_MANAGE);
   }
 
   const isAdmin = explicitGrants.has(ANA_PERMISSIONS.ADMIN_CONSOLE);

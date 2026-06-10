@@ -60,6 +60,30 @@ export class Backend {
     }
   }
 
+  /**
+   * Reporta al backend el resultado de un envío de campaña; el Lambda lo
+   * registra en el CRM (interacción + teléfono sin WhatsApp). Fire-and-forget:
+   * un fallo del CRM no frena el ritmo de envío (igual que en v3).
+   */
+  async reportInteraction(r: {
+    jobId: string;
+    campaign?: string;
+    phone: string;
+    status: 'sent' | 'no_whatsapp' | 'error';
+    row: Record<string, string>;
+  }): Promise<void> {
+    if (!this.getToken()) return;
+    try {
+      await fetch(`${this.apiBase}/interactions/report`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(r),
+      });
+    } catch (e) {
+      console.error('[backend] reportInteraction falló:', e);
+    }
+  }
+
   /** Registra este agente como activo en su campaña (para reparto del líder). */
   async heartbeat(campaign: string): Promise<void> {
     if (!this.getToken() || !campaign) return;

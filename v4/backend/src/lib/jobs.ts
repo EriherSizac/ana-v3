@@ -10,6 +10,8 @@ export interface SendJob {
   operatorId: string; // dueño — PK, aísla el pull
   jobId: string; // SK, único por job
   campaignId: string;
+  campaign?: string; // nombre de campaña — PK del GSI campaign-index (sparse:
+  // ausente en uploads sin campaña; un GSI no acepta '' como key)
   phone: string; // crudo, tal cual del CSV
   template: string; // plantilla con {campos}
   row: Record<string, string>; // datos de la fila

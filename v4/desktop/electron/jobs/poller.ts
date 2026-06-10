@@ -16,6 +16,7 @@
 export interface SendJob {
   jobId: string;
   campaignId: string;
+  campaign?: string; // nombre de campaña del CRM (para registrar interacciones)
   phone: string;
   template: string;
   row: Record<string, string>;
