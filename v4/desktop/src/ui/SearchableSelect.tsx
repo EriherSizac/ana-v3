@@ -23,7 +23,21 @@ export function SearchableSelect({
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false); // sin espacio abajo → abre arriba
   const rootRef = useRef<HTMLDivElement>(null);
+
+  const LIST_MAX_PX = 224; // max-h-56
+
+  const openList = () => {
+    setQuery('');
+    // Decide dirección con el espacio real en viewport al momento de abrir.
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (rect) {
+      const below = window.innerHeight - rect.bottom;
+      setDropUp(below < LIST_MAX_PX && rect.top > below);
+    }
+    setOpen(true);
+  };
 
   // Cierra al hacer clic fuera.
   useEffect(() => {
@@ -42,15 +56,16 @@ export function SearchableSelect({
       <input
         value={open ? query : value}
         placeholder={value || placeholder}
-        onFocus={() => {
-          setQuery('');
-          setOpen(true);
-        }}
+        onFocus={openList}
         onChange={(e) => setQuery(e.target.value)}
         className="w-full rounded-xl border border-neutral-50 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
       />
       {open && (
-        <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-neutral-50 bg-white shadow-lg">
+        <ul
+          className={`absolute z-20 max-h-56 w-full overflow-y-auto rounded-xl border border-neutral-50 bg-white shadow-lg ${
+            dropUp ? 'bottom-full mb-1' : 'mt-1'
+          }`}
+        >
           {filtered.length === 0 && (
             <li className="px-3 py-2 text-xs text-text-light">Sin coincidencias.</li>
           )}
