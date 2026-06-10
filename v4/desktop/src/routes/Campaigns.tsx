@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { TemplateEditor, parseCsvPreview } from '../ui/TemplateEditor';
+import { SearchableSelect } from '../ui/SearchableSelect';
 import { normalizeContactRow } from '../../electron/whatsapp/template';
 import { uploadCsv, getCampaigns, type UserAccess } from '../lib/api';
 import { can, ANA_PERMISSIONS } from '../lib/permissions';
@@ -158,26 +159,15 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
             {distribute && (
               <div className="mt-3">
                 <label className="block text-xs text-text-light">Campaña destino</label>
-                {campaignOptions.length > 0 ? (
-                  <select
+                <div className="mt-1">
+                  {/* Buscable y solo-elegir: no se puede mandar una campaña inexistente. */}
+                  <SearchableSelect
                     value={campaign}
-                    onChange={(e) => setCampaign(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-neutral-50 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
-                  >
-                    {campaignOptions.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    value={campaign}
-                    onChange={(e) => setCampaign(e.target.value)}
-                    placeholder="nombre de campaña"
-                    className="mt-1 w-full rounded-xl border border-neutral-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+                    onChange={setCampaign}
+                    options={campaignOptions}
+                    placeholder="Buscar campaña…"
                   />
-                )}
+                </div>
               </div>
             )}
           </div>

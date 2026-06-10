@@ -8,6 +8,7 @@ import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb } from '../lib/dynamo';
 import { JOBS_TABLE, JOB_TTL_DAYS, type SendJob } from '../lib/jobs';
 import { ok, bad } from '../lib/http';
+import { campaignExists } from '../lib/campaignsDb';
 
 // Endpoint sistema-a-sistema (sin Cognito): autentica por X-Api-Key contra
 // SEND_API_KEY (backend/.env). Pensado para que el CRM u otra automatización
@@ -44,6 +45,9 @@ export const handler = async (
     const { message, username, phone, campaign } = p;
     if (!message || !username || !phone || !campaign)
       return bad('faltan message/username/phone/campaign');
+    // La campaña debe existir en la DB (validada contra SELECT name FROM campaigns).
+    if (!(await campaignExists(campaign)))
+      return bad(`la campaña "${campaign}" no existe`, 400);
 
     const now = Date.now();
     const job: SendJob & { auto: boolean } = {

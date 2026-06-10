@@ -22,6 +22,7 @@ import { setRolePermissions, getRolePermissions } from '../lib/rolePerms';
 import { invalidateByRole } from '../lib/accessCache';
 import { isAgentInCampaigns } from '../lib/agents';
 import { getEligibleAgents } from '../lib/dashboard';
+import { campaignExists } from '../lib/campaignsDb';
 import { listAllRoles } from '../lib/roles';
 
 /**
@@ -226,6 +227,10 @@ async function presignCsv(
     !access.campaigns.includes(campaign)
   ) {
     return bad('campaña no permitida', 403);
+  }
+  // Y debe EXISTIR en la DB de campañas (typos no generan jobs huérfanos).
+  if (distribute && !(await campaignExists(campaign))) {
+    return bad(`la campaña "${campaign}" no existe`, 400);
   }
 
   // Reparto explícito por pesos: solo con permiso de distribución y pesos sanos.

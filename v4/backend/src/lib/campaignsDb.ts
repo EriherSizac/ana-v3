@@ -12,6 +12,17 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 let cached: string[] | null = null;
 let cachedAt = 0;
 
+/**
+ * ¿Existe la campaña? Valida contra la lista de la DB (cacheada). Si la DB no
+ * devuelve nada (caída o sin configurar), NO bloquea: un outage no debe
+ * convertir todos los envíos en error.
+ */
+export async function campaignExists(name: string): Promise<boolean> {
+  const all = await listCampaignsDb();
+  if (all.length === 0) return true;
+  return all.includes(name);
+}
+
 /** Nombres de campañas desde PostgreSQL (con caché de 10 min). [] si falla. */
 export async function listCampaignsDb(): Promise<string[]> {
   if (cached && Date.now() - cachedAt < CACHE_TTL_MS) return cached;

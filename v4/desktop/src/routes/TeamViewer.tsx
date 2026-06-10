@@ -13,6 +13,7 @@ import {
   type JobsOperatorSummary,
   type UserAccess,
 } from '../lib/api';
+import { SearchableSelect } from '../ui/SearchableSelect';
 
 /**
  * Selector para ver conversaciones de agentes.
@@ -61,18 +62,12 @@ export function TeamViewer({
       </div>
 
       {isAdmin && (
-        <select
+        <SearchableSelect
           value={campaign}
-          onChange={(e) => setCampaign(e.target.value)}
-          className="w-full rounded-xl border border-neutral-50 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
-        >
-          <option value="">Campaña…</option>
-          {campaigns.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
+          onChange={setCampaign}
+          options={campaigns}
+          placeholder="Buscar campaña…"
+        />
       )}
 
       <select
