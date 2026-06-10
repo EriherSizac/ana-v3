@@ -117,7 +117,9 @@ export function AdminRolePerms() {
               {rolesError}
             </div>
           )}
-          <ul className="max-h-[60vh] space-y-1 overflow-y-auto">
+          {/* Alto acotado al viewport (header+título ~15rem) → la lista scrollea
+              internamente y todos los roles quedan alcanzables sin mover la página. */}
+          <ul className="max-h-[calc(100vh-15rem)] min-h-40 space-y-1 overflow-y-auto">
             {roles === null
               ? Array.from({ length: 8 }).map((_, i) => (
                   <li key={i}>

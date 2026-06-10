@@ -56,6 +56,8 @@ provider:
     INTERACTIONS_API_KEY: ${env:INTERACTIONS_API_KEY, ''}
     # user_id del CRM con el que se registran las interacciones.
     INTERACTIONS_USER_ID: ${env:INTERACTIONS_USER_ID, ''}
+    # Key del endpoint sistema-a-sistema POST /send (backend/.env).
+    SEND_API_KEY: ${env:SEND_API_KEY, ''}
   httpApi:
     cors: true
     authorizers:
@@ -200,6 +202,15 @@ functions:
           path: /jobs/reassign
           method: post
           authorizer: { name: cognitoJwt }
+
+  directSend:
+    handler: src/handlers/directSend.handler
+    description: Encola un mensaje directo (sistema-a-sistema, X-Api-Key)
+    events:
+      - httpApi:
+          path: /send
+          method: post
+          # Sin authorizer Cognito: autentica por X-Api-Key dentro del handler.
 
   csvTrigger:
     handler: src/handlers/csvTrigger.handler

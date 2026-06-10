@@ -118,9 +118,17 @@ const poller = new JobPoller({
   getToken: () => authToken,
   runJob,
   onProgress: (p) => send('wa:progress', p),
+  // Asignación pendiente del agente → vista "Mi asignación" en el renderer.
+  onAssignment: (jobs) => send('jobs:assignment', jobs),
 });
 
 // ---- IPC desde el renderer ----
+// El agente aprueba qué enviar (y con qué plantilla) desde "Mi asignación".
+ipcMain.handle('jobs:approve', (_e, jobIds: string[], template?: string) =>
+  poller.approve(jobIds, template),
+);
+// Hidrata la vista al montarse (sin esperar al próximo poll).
+ipcMain.handle('jobs:get-assignment', () => poller.getAssignment());
 ipcMain.handle('auth:set-token', (_e, token: string | null) => {
   authToken = token;
   if (token) poller.start();

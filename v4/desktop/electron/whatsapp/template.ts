@@ -22,8 +22,9 @@ const MONEY_MODS = new Set(['dinero', 'money', '$']);
  *   numérico y se evalúa la aritmética. Combinables: `{saldo*0.9:dinero}`.
  */
 export function interpolate(tpl: string, data: Record<string, any>): string {
-  return tpl.replace(/\{([^{}]+)\}/g, (match, raw: string) => {
-    let key = raw.trim();
+  // Acepta `{var}` (v4) y `{{var}}` (plantillas heredadas de v3).
+  return tpl.replace(/\{\{([^{}]+)\}\}|\{([^{}]+)\}/g, (match, rawV3: string, rawV4: string) => {
+    let key = (rawV3 ?? rawV4).trim();
 
     // Modificador explícito de formato (null = decidir por heurística).
     let asMoney: boolean | null = null;
@@ -84,6 +85,38 @@ function evalMathExpr(expr: string, data: Record<string, any>): number | null {
   } catch {
     return null;
   }
+}
+
+// Grupos de alias de columnas (formato CSV de v3 ↔ nombres en español de v4).
+// Mantener en sync con backend/src/lib/contacts.ts (misma lógica, repo separado).
+const ALIAS_GROUPS: string[][] = [
+  ['phone', 'phone_number', 'contact_phone', 'contact_pho', 'telefono'],
+  ['name', 'nombre', 'contact_name'],
+  ['first_name', 'nombre_pila'],
+  ['last_name', 'apellido'],
+  ['credit', 'credito', 'credit_id', 'id_credito'],
+  ['discount', 'descuento'],
+  ['total_balance', 'total_balanc', 'balance', 'saldo'],
+  ['product', 'producto'],
+  ['message', 'mensaje'],
+];
+
+/**
+ * Normaliza una fila de CSV al formato de contacto de v3: cada grupo de alias
+ * se rellena con el primer valor presente, así `{saldo}` funciona sobre un CSV
+ * con `total_balance` y viceversa. Construye `name` desde first/last si falta.
+ */
+export function normalizeContactRow(row: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = { ...row };
+  for (const group of ALIAS_GROUPS) {
+    const value = group.map((k) => out[k]).find((v) => v !== undefined && v !== '');
+    if (value === undefined) continue;
+    for (const k of group) if (!out[k]) out[k] = value;
+  }
+  if (!out.name && (out.first_name || out.last_name))
+    out.name = `${out.first_name ?? ''} ${out.last_name ?? ''}`.trim();
+  if (out.name && !out.nombre) out.nombre = out.name;
+  return out;
 }
 
 export function formatMoney(value: string | number): string {

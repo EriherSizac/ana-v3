@@ -6,12 +6,15 @@
 /**
  * Worker de envío. Corre en el main process.
  *
- * - Pide TODOS los jobs pendientes del operador (GET /jobs/poll).
- * - Los agrupa por archivo (srcKey) y procesa **un archivo a la vez**.
- * - Rate limit humano: máx 7 mensajes / 20 min, con ≥2 min entre cada uno.
- * - Al terminar un archivo, borra el CSV de S3 (POST /uploads/delete) y pasa
- *   al siguiente.
- * - Emite progreso para la barra (onProgress).
+ * Flujo con aprobación (como la asignación de v3): el poller consulta los jobs
+ * pendientes del operador (~5s) y los PUBLICA al renderer (onAssignment); NO
+ * envía nada hasta que el agente aprueba una selección (approve), opcionalmente
+ * con otra plantilla. Lo no aprobado queda pendiente en el backend y reaparece
+ * en el siguiente poll.
+ *
+ * Al enviar: agrupa por archivo (srcKey), un archivo a la vez, rate limit
+ * humano (máx 7 mensajes / 20 min, ≥2 min entre cada uno) y ack por job.
+ * El CSV de S3 se borra solo cuando ya no quedan jobs de ese archivo.
  */
 export interface SendJob {
   jobId: string;
@@ -22,6 +25,8 @@ export interface SendJob {
   row: Record<string, string>;
   countryCode: string;
   srcKey: string;
+  // true = envío directo (POST /send del backend): se manda sin aprobación.
+  auto?: boolean;
 }
 
 export interface Progress {
@@ -40,6 +45,8 @@ export interface PollerDeps {
   getToken: () => string | null;
   runJob: (job: SendJob) => Promise<{ success: boolean; error?: string }>;
   onProgress: (p: Progress) => void;
+  /** Asignación pendiente del operador (cada poll). El renderer la muestra. */
+  onAssignment: (jobs: SendJob[]) => void;
 }
 
 const POLL_INTERVAL_MS = 5000;
@@ -51,9 +58,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class JobPoller {
   private running = false;
+  private sending = false;
   private sentAt: number[] = []; // timestamps de envíos recientes (rate limit)
+  private known = new Map<string, SendJob>(); // jobId → job (último poll)
+  private lastAssignment: SendJob[] = []; // última asignación manual publicada
 
   constructor(private deps: PollerDeps) {}
+
+  /** Asignación manual vigente (para hidratar la vista al montarse). */
+  getAssignment(): SendJob[] {
+    return this.lastAssignment;
+  }
 
   start() {
     if (this.running) return;
@@ -65,28 +80,68 @@ export class JobPoller {
     this.running = false;
   }
 
+  /**
+   * Envía los jobs seleccionados (en orden de asignación), opcionalmente con
+   * una plantilla distinta a la del upload. Los no seleccionados no se tocan.
+   */
+  async approve(
+    jobIds: string[],
+    templateOverride?: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (this.sending) return { ok: false, error: 'Ya hay un envío en curso' };
+    const token = this.deps.getToken();
+    if (!token) return { ok: false, error: 'Sin sesión' };
+
+    const wanted = new Set(jobIds);
+    const selected = [...this.known.values()].filter((j) => wanted.has(j.jobId));
+    if (selected.length === 0) return { ok: false, error: 'Sin envíos seleccionados' };
+
+    this.sending = true;
+    try {
+      for (const group of groupByFile(selected)) {
+        if (!this.running) break;
+        await this.processFile(group, token, templateOverride);
+      }
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? String(e) };
+    } finally {
+      this.sending = false;
+    }
+  }
+
   private async loop() {
     while (this.running) {
       const token = this.deps.getToken();
-      if (!token) {
+      if (!token || this.sending) {
         await sleep(2000);
         continue;
       }
       try {
         const jobs = await this.fetchJobs(token);
-        if (jobs.length === 0) {
-          this.deps.onProgress({ phase: 'idle' });
-          await sleep(POLL_INTERVAL_MS);
-          continue;
-        }
-        // Agrupa por archivo, procesa uno a la vez.
-        for (const group of groupByFile(jobs)) {
-          if (!this.running) break;
-          await this.processFile(group, token);
+        this.known = new Map(jobs.map((j) => [j.jobId, j]));
+
+        // Directos (POST /send): se envían solos. El resto espera aprobación.
+        const autos = jobs.filter((j) => j.auto);
+        this.lastAssignment = jobs.filter((j) => !j.auto);
+        this.deps.onAssignment(this.lastAssignment);
+        if (jobs.length === 0) this.deps.onProgress({ phase: 'idle' });
+
+        if (autos.length > 0) {
+          this.sending = true;
+          try {
+            for (const group of groupByFile(autos)) {
+              if (!this.running) break;
+              await this.processFile(group, token);
+            }
+          } finally {
+            this.sending = false;
+          }
         }
       } catch {
-        await sleep(POLL_INTERVAL_MS);
+        /* red caída: reintenta en el próximo poll */
       }
+      await sleep(POLL_INTERVAL_MS);
     }
   }
 
@@ -99,7 +154,7 @@ export class JobPoller {
     return jobs.map((j) => j.job);
   }
 
-  private async processFile(group: SendJob[], token: string) {
+  private async processFile(group: SendJob[], token: string, templateOverride?: string) {
     const total = group.length;
     let done = 0;
     let sent = 0;
@@ -113,11 +168,13 @@ export class JobPoller {
       await this.rateLimitWait(campaignId, total, done, sent, failed);
       if (!this.running) return;
 
-      const r = await this.deps.runJob(job);
+      const effective = templateOverride ? { ...job, template: templateOverride } : job;
+      const r = await this.deps.runJob(effective);
       this.sentAt.push(Date.now());
       done += 1;
       r.success ? (sent += 1) : (failed += 1);
       await this.ack(token, [job.jobId]);
+      this.known.delete(job.jobId);
       this.deps.onProgress({
         phase: 'sending',
         campaignId,
@@ -129,8 +186,10 @@ export class JobPoller {
       });
     }
 
-    // Archivo terminado → borra el CSV de S3.
-    if (srcKey) await this.deleteFile(token, srcKey);
+    // Borra el CSV de S3 solo si ya no quedan jobs pendientes de ese archivo
+    // (con aprobación parcial el resto sigue pendiente y reaparece en el poll).
+    const remaining = [...this.known.values()].some((j) => j.srcKey === srcKey);
+    if (srcKey && !remaining) await this.deleteFile(token, srcKey);
     this.deps.onProgress({ phase: 'fileDone', campaignId, total, done, sent, failed });
   }
 

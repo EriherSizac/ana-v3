@@ -11,6 +11,7 @@ import { s3 } from '../lib/s3';
 import { ddb } from '../lib/dynamo';
 import { JOBS_TABLE, JOB_TTL_DAYS, type SendJob } from '../lib/jobs';
 import { getEligibleAgents } from '../lib/dashboard';
+import { normalizeContactRow } from '../lib/contacts';
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_ROWS = 50_000;
@@ -68,11 +69,15 @@ export const handler = async (event: S3Event): Promise<void> => {
     const distribute = meta.distribute === '1';
     const campaign = meta.campaign ?? '';
 
-    const rows: Record<string, string>[] = parse(csv, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    });
+    // Filas normalizadas con los alias de v3: un CSV con phone_number /
+    // total_balance / message funciona con plantillas {telefono}/{saldo}/{mensaje}.
+    const rows: Record<string, string>[] = (
+      parse(csv, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      }) as Record<string, string>[]
+    ).map(normalizeContactRow);
     if (rows.length > MAX_ROWS) {
       console.warn(`csvTrigger: ${key} con ${rows.length} filas excede ${MAX_ROWS}, ignorado`);
       continue;
@@ -96,14 +101,17 @@ export const handler = async (event: S3Event): Promise<void> => {
     }
 
     const ttl = Math.floor(Date.now() / 1000) + JOB_TTL_DAYS * 86400;
-    const valid = rows.filter((r) => r[phoneColumn]);
+    // Teléfono: la columna configurada, con fallback al alias normalizado
+    // (CSV de v3 con phone_number aunque la config diga 'telefono').
+    const phoneOf = (r: Record<string, string>) => r[phoneColumn] || r.phone || '';
+    const valid = rows.filter((r) => phoneOf(r));
     const jobs: SendJob[] = valid.map((row, i) => ({
       operatorId: targets[i % targets.length], // round-robin
       jobId: `${campaignId}#${i}`,
       campaignId,
       // sparse: el GSI campaign-index no acepta '' como key.
       ...(campaign ? { campaign } : {}),
-      phone: row[phoneColumn],
+      phone: phoneOf(row),
       template,
       row,
       countryCode,

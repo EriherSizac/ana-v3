@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { TemplateEditor, parseCsvPreview } from '../ui/TemplateEditor';
+import { normalizeContactRow } from '../../electron/whatsapp/template';
 import { uploadCsv, getCampaigns, type UserAccess } from '../lib/api';
 import { can, ANA_PERMISSIONS } from '../lib/permissions';
 import type { SendProgress } from '../types/ana';
@@ -104,7 +105,8 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
                   .then((text) => {
                     const { columns, sampleRow } = parseCsvPreview(text);
                     setCsvColumns(columns);
-                    setCsvSampleRow(sampleRow);
+                    // Misma normalización de alias que el envío real (CSV v3 OK).
+                    setCsvSampleRow(sampleRow ? normalizeContactRow(sampleRow) : null);
                   })
                   .catch(() => {});
             }}
@@ -199,7 +201,7 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
   );
 }
 
-function ProgressBar({ p }: { p: SendProgress }) {
+export function ProgressBar({ p }: { p: SendProgress }) {
   const total = p.total ?? 0;
   const done = p.done ?? 0;
   const pct = total ? Math.round((done / total) * 100) : 0;

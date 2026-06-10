@@ -7,13 +7,14 @@ import { useEffect, useState } from 'react';
 import { Login } from './routes/Login';
 import { Chats } from './routes/Chats';
 import { Campaigns } from './routes/Campaigns';
+import { Assignment } from './routes/Assignment';
 import { AdminRolePerms } from './routes/AdminRolePerms';
 import { UpdateGate } from './routes/UpdateGate';
 import { hasSession, logout, pushTokenToMain } from './lib/auth';
 import { getMe, type UserAccess } from './lib/api';
 import { can, ANA_PERMISSIONS } from './lib/permissions';
 
-type Tab = 'chats' | 'campaigns' | 'admin';
+type Tab = 'chats' | 'assignment' | 'campaigns' | 'admin';
 export type WaStatus = 'idle' | 'qr' | 'authenticated' | 'connected' | 'disconnected';
 
 export function App() {
@@ -112,6 +113,9 @@ export function App() {
           <NavPill active={tab === 'chats'} onClick={() => setTab('chats')}>
             Chats
           </NavPill>
+          <NavPill active={tab === 'assignment'} onClick={() => setTab('assignment')}>
+            Mi asignación
+          </NavPill>
           {canUpload && (
             <NavPill active={tab === 'campaigns'} onClick={() => setTab('campaigns')}>
               Campañas
@@ -138,6 +142,8 @@ export function App() {
         <AdminRolePerms />
       ) : tab === 'campaigns' && canUpload ? (
         <Campaigns access={access} />
+      ) : tab === 'assignment' ? (
+        <Assignment />
       ) : (
         <Chats access={access} waStatus={waStatus} qr={qr} />
       )}

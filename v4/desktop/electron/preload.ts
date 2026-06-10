@@ -45,6 +45,16 @@ const api = {
     return () => ipcRenderer.removeListener('wa:progress', fn);
   },
 
+  // Asignación de envíos pendientes (vista "Mi asignación")
+  onJobsAssignment: (cb: (jobs: any[]) => void) => {
+    const fn = (_: unknown, d: any[]) => cb(d);
+    ipcRenderer.on('jobs:assignment', fn);
+    return () => ipcRenderer.removeListener('jobs:assignment', fn);
+  },
+  approveJobs: (jobIds: string[], template?: string) =>
+    ipcRenderer.invoke('jobs:approve', jobIds, template),
+  getAssignment: () => ipcRenderer.invoke('jobs:get-assignment'),
+
   // Dispara el chequeo de update (el renderer lo llama tras montar el listener)
   checkUpdates: () => ipcRenderer.invoke('update:check'),
 

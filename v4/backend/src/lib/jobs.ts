@@ -21,6 +21,8 @@ export interface SendJob {
   leaseUntil: number; // epoch ms; 0 si pending
   attempts: number;
   ttl: number; // epoch s — autolimpieza DynamoDB
+  // true = envío directo (POST /send): el desktop lo manda sin aprobación.
+  auto?: boolean;
 }
 
 export const LEASE_MS = 60_000;

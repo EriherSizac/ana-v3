@@ -162,6 +162,12 @@ export class WaClient extends EventEmitter {
       this.lastState = 'disconnected';
       this.lastQr = null;
       this.emit('status', 'auth_failure');
+      this.emit(
+        'error',
+        'WhatsApp rechazó la sesión (posible cierre remoto o bloqueo del número). ' +
+          'Usa "Limpiar sesión y reconectar" para reescanear el QR; tus ' +
+          'conversaciones respaldadas se recargan solas.',
+      );
       void this.reset(); // sesión inválida → liberar para reintentar con QR
     });
     c.on('ready', () => {
@@ -170,10 +176,20 @@ export class WaClient extends EventEmitter {
       this.lastQr = null;
       this.emit('status', 'connected');
     });
-    c.on('disconnected', () => {
+    c.on('disconnected', (reason) => {
       this.lastState = 'disconnected';
       this.lastQr = null;
       this.emit('status', 'disconnected');
+      // LOGOUT = sesión cerrada desde el teléfono o número bloqueado; el resto
+      // suele ser red/navegación. En ambos casos guiar al re-escaneo.
+      const blocked = String(reason).toUpperCase().includes('LOGOUT');
+      this.emit(
+        'error',
+        blocked
+          ? 'WhatsApp cerró la sesión (cierre desde el teléfono o bloqueo del número). ' +
+              'Limpia la sesión y reescanea el QR; tus conversaciones respaldadas se recargan solas.'
+          : `WhatsApp se desconectó (${String(reason)}). Reintenta conectar; si persiste, limpia la sesión y reescanea.`,
+      );
       // Libera el cliente para poder reconectar (cerró sesión / cayó la red).
       void this.reset();
     });

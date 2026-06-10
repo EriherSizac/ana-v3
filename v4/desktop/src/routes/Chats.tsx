@@ -69,16 +69,35 @@ export function Chats({
     activeRef.current = active;
   }, [active]);
 
-  // Mensaje entrante → refresca la lista y, si es del chat abierto, el hilo.
+  // Mensaje entrante → actualiza lista e hilo EN SITIO (sin pasar por null:
+  // eso vaciaba toda la UI a skeletons y se veía como un refresh completo).
   useEffect(() => {
     const off = window.ana.onWaMessage((d) => {
-      void loadConvos();
+      void refreshConvosSilent();
       if (!viewOperator && d?.chatId && d.chatId === activeRef.current) {
-        void openChat(d.chatId); // recarga el hilo en vivo
+        appendMessage(d);
       }
     });
     return off;
   }, [viewOperator]);
+
+  /** Re-consulta la lista sin vaciarla (nada de skeletons al recibir algo). */
+  async function refreshConvosSilent() {
+    try {
+      setConvos(await getConversations(viewOperator ?? undefined));
+    } catch {
+      /* conserva lo que ya se ve */
+    }
+  }
+
+  /** Agrega un mensaje al hilo abierto (dedupe por id). */
+  function appendMessage(m: Message) {
+    setMessages((prev) => {
+      if (!prev) return prev;
+      if (prev.some((x) => x.id === m.id)) return prev;
+      return [...prev, m];
+    });
+  }
 
   // Recarga al cambiar de operador visto (yo / un agente)
   useEffect(() => {
@@ -111,8 +130,10 @@ export function Chats({
     const body = reply.trim();
     setReply('');
     stopTyping();
-    await window.ana.sendReply(active, body);
-    await openChat(active);
+    const res = await window.ana.sendReply(active, body);
+    // Append en sitio (sin recargar el hilo → sin parpadeo de skeletons).
+    if (res.ok && res.message) appendMessage(res.message);
+    void refreshConvosSilent();
   }
 
   // Typing en vivo: el contacto ve "escribiendo…" mientras compones.
@@ -139,14 +160,15 @@ export function Chats({
   async function sendFile(file: File) {
     if (!active || viewingOther) return;
     const dataBase64 = await fileToBase64(file);
-    await window.ana.sendMedia(active, {
+    const res = await window.ana.sendMedia(active, {
       dataBase64,
       mimetype: file.type || 'application/octet-stream',
       filename: file.name,
       caption: reply.trim() || undefined,
     });
     setReply('');
-    await openChat(active);
+    if (res.ok && res.message) appendMessage(res.message);
+    void refreshConvosSilent();
   }
 
   return (

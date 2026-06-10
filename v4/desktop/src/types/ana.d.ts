@@ -21,8 +21,26 @@ export interface AnaBridge {
   onWaMessage: (cb: (data: any) => void) => () => void;
   onWaSent: (cb: (data: any) => void) => () => void;
   onWaProgress: (cb: (data: SendProgress) => void) => () => void;
+  onJobsAssignment: (cb: (jobs: AssignedJob[]) => void) => () => void;
+  approveJobs: (
+    jobIds: string[],
+    template?: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  getAssignment: () => Promise<AssignedJob[]>;
   checkUpdates: () => Promise<{ ok: boolean }>;
   onUpdateStatus: (cb: (data: UpdateStatus) => void) => () => void;
+}
+
+// Job pendiente asignado al agente (lo publica el poller del main).
+export interface AssignedJob {
+  jobId: string;
+  campaignId: string;
+  campaign?: string;
+  phone: string;
+  template: string;
+  row: Record<string, string>;
+  countryCode: string;
+  srcKey: string;
 }
 
 export interface SendProgress {
