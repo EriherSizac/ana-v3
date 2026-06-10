@@ -25,7 +25,7 @@ Agente (Electron) ◀──GET /jobs/poll (~5s)───────────
 | Requisito | Detalle |
 |---|---|
 | Backend desplegado | `serverless deploy` con `SEND_API_KEY` definida en `backend/.env` |
-| API key | Valor de `SEND_API_KEY`. Se manda en el header `X-Api-Key`. Sin ella → `401` |
+| API key | `04a272bf69f7fe01e3a53b7728ff061b17827411b04c109dd67bedffc5b42c75` — se manda en el header `X-Api-Key`. Sin ella → `401` |
 | Agente con sesión activa | El `username` indicado debe tener la app de escritorio **abierta y con WhatsApp conectado**. Si está offline, el job queda en cola hasta 7 días (TTL) y se envía cuando vuelva |
 | Teléfono MX o E.164 | Ver normalización en §4 |
 
@@ -40,7 +40,7 @@ POST https://njpfef2qna.execute-api.us-east-2.amazonaws.com/send
 | Header | Valor |
 |---|---|
 | `Content-Type` | `application/json` |
-| `X-Api-Key` | el valor de `SEND_API_KEY` |
+| `X-Api-Key` | `04a272bf69f7fe01e3a53b7728ff061b17827411b04c109dd67bedffc5b42c75` |
 
 **Body**
 
@@ -103,7 +103,7 @@ Sin `row`, el texto se envía literal (los `{placeholders}` no encontrados queda
 ```bash
 curl -X POST "https://njpfef2qna.execute-api.us-east-2.amazonaws.com/send" \
   -H "Content-Type: application/json" \
-  -H "X-Api-Key: $SEND_API_KEY" \
+  -H "X-Api-Key: 04a272bf69f7fe01e3a53b7728ff061b17827411b04c109dd67bedffc5b42c75" \
   -d '{
     "message": "Hola {nombre}, tienes un pago pendiente de {saldo:dinero}. ¿Te apoyo?",
     "username": "erick.silva",
