@@ -1,0 +1,2 @@
+phone_number,first_name,last_name,credit,discount,total_balance,product,message
+525513023544,Erick,Hernández,CR-00123,15,12450.50,Tarjeta Oro,Hola {{first_name}} tu saldo de {{product}} es {{total_balance}}. Con {{discount}}% de descuento pagas {{total_balance*0.85:dinero}} hoy.

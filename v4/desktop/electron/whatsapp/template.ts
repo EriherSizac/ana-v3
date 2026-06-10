@@ -38,6 +38,13 @@ export function interpolate(tpl: string, data: Record<string, any>): string {
     if (/^\w+$/.test(key)) {
       const v = data?.[key];
       if (v === undefined || v === null) return '';
+      // Columna message/mensaje de v3: trae SU PROPIA plantilla por contacto
+      // ({{first_name}}…) → una pasada extra para resolverla. Se quita a sí
+      // misma de los datos para no recursar infinito.
+      if ((key === 'message' || key === 'mensaje') && /\{/.test(String(v))) {
+        const { message: _m, mensaje: _me, ...rest } = data ?? {};
+        return interpolate(String(v), rest);
+      }
       if (asMoney ?? MONEY_RE.test(key)) return formatMoney(v);
       return String(v);
     }
