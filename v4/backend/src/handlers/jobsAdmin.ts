@@ -51,7 +51,7 @@ function canManageCampaign(access: UserAccess, campaign: string): boolean {
 async function queryCampaignJobs(
   campaign: string,
   operatorId?: string,
-): Promise<Pick<SendJob, 'operatorId' | 'jobId' | 'campaignId' | 'leaseUntil' | 'ttl'>[]> {
+): Promise<Pick<SendJob, 'operatorId' | 'jobId' | 'campaignId' | 'leaseUntil' | 'ttl' | 'status'>[]> {
   const items: any[] = [];
   let ExclusiveStartKey: Record<string, any> | undefined;
   do {
@@ -66,8 +66,8 @@ async function queryCampaignJobs(
           ':c': campaign,
           ...(operatorId ? { ':o': operatorId } : {}),
         },
-        ProjectionExpression: 'operatorId, jobId, campaignId, leaseUntil, #ttl',
-        ExpressionAttributeNames: { '#ttl': 'ttl' },
+        ProjectionExpression: 'operatorId, jobId, campaignId, leaseUntil, #ttl, #s',
+        ExpressionAttributeNames: { '#ttl': 'ttl', '#s': 'status' },
         ExclusiveStartKey,
       }),
     );
@@ -75,9 +75,11 @@ async function queryCampaignJobs(
     ExclusiveStartKey = res.LastEvaluatedKey;
   } while (ExclusiveStartKey);
 
-  // El TTL de DynamoDB borra con retraso → filtrar expirados a mano.
+  // TTL borra con retraso → filtra expirados. Solo POR ENVIAR: los procesados
+  // (sent/no_whatsapp/error) son historial, no cuentan como pendientes.
   const nowS = Math.floor(Date.now() / 1000);
-  return items.filter((i) => !i.ttl || i.ttl > nowS);
+  const PENDING = new Set(['pending', 'leased', undefined]);
+  return items.filter((i) => (!i.ttl || i.ttl > nowS) && PENDING.has(i.status));
 }
 
 async function summary(

@@ -81,7 +81,9 @@ wa.on('message', async (msg) => {
 });
 
 // ---- Ejecuta UN job (el poller controla orden, rate limit y progreso) ----
-async function runJob(job: SendJob): Promise<{ success: boolean; error?: string }> {
+async function runJob(
+  job: SendJob,
+): Promise<{ success: boolean; error?: string; noWhatsapp?: boolean }> {
   // El resultado se registra en el CRM vía backend (interacción outbound +
   // marcado de teléfonos sin WhatsApp), sin bloquear el ritmo de envío.
   const report = (status: 'sent' | 'no_whatsapp' | 'error') =>
@@ -97,7 +99,7 @@ async function runJob(job: SendJob): Promise<{ success: boolean; error?: string 
     if (!jid) {
       send('wa:sent', { success: false, phone: job.phone, error: 'No tiene WhatsApp' });
       report('no_whatsapp');
-      return { success: false, error: 'No tiene WhatsApp' };
+      return { success: false, error: 'No tiene WhatsApp', noWhatsapp: true };
     }
     const body = interpolate(job.template, job.row);
     const msg = await wa.sendText(jid, body); // simula escritura antes de enviar
@@ -131,9 +133,26 @@ ipcMain.handle('jobs:approve', (_e, jobIds: string[], template?: string) =>
 );
 // Hidrata la vista al montarse (sin esperar al próximo poll).
 ipcMain.handle('jobs:get-assignment', () => poller.getAssignment());
+/** cognito:username del id token (operatorId), sin verificar firma (ya validada
+ *  por el authorizer en cada request; aquí solo lo leemos para nombrar la sesión). */
+function usernameFromJwt(token: string): string {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
+    return payload['cognito:username'] ?? payload.sub ?? 'ana';
+  } catch {
+    return 'ana';
+  }
+}
+
 ipcMain.handle('auth:set-token', (_e, token: string | null) => {
   authToken = token;
-  if (token) poller.start();
+  if (token) {
+    // Configura el respaldo de sesión a S3 (RemoteAuth) con el operador del JWT.
+    wa.configure(API_BASE, () => authToken, usernameFromJwt(token));
+    poller.start();
+    // Reconecta WhatsApp restaurando la sesión remota (sin pedir QR si existe).
+    if (!wa.isReady()) void wa.start();
+  }
   return { ok: true };
 });
 // El renderer dispara el check cuando ya tiene el listener montado (UpdateGate)
@@ -203,11 +222,8 @@ ipcMain.handle(
 
 app.whenReady().then(() => {
   createWindow();
-  // Si hay sesión WhatsApp guardada, reconecta solo (sin pedir QR de nuevo).
-  if (wa.hasSavedSession()) {
-    console.log('[wa] sesión guardada → auto-reconectando');
-    void wa.start();
-  }
+  // La reconexión de WhatsApp ocurre tras el login (auth:set-token): la sesión
+  // se restaura desde S3 con el token del operador, no antes.
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();

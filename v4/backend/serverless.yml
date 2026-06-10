@@ -155,6 +155,18 @@ functions:
           path: /media/url
           method: get
           authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /wa-session/presign
+          method: post
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /wa-session/exists
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /wa-session/delete
+          method: post
+          authorizer: { name: cognitoJwt }
 
   agents:
     handler: src/handlers/agents.handler

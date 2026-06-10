@@ -40,7 +40,23 @@ export function setupUpdater(win: BrowserWindow): void {
     setTimeout(() => autoUpdater.quitAndInstall(true, true), 800);
   });
   autoUpdater.on('update-not-available', () => send({ phase: 'none' }));
-  autoUpdater.on('error', (e) => send({ phase: 'error', message: String(e) }));
+  // Un 404 del feed (latest.yml ausente) NO es un fallo bloqueante: significa
+  // "no hay canal de updates publicado aún" → continuar como si estuviera al día.
+  autoUpdater.on('error', (e) => {
+    const msg = String(e);
+    if (/404|latest\.yml|Not Found|ERR_FILE_NOT_FOUND/i.test(msg)) {
+      send({ phase: 'none' });
+      return;
+    }
+    send({ phase: 'error', message: msg });
+  });
 
-  autoUpdater.checkForUpdates().catch((e) => send({ phase: 'error', message: String(e) }));
+  autoUpdater.checkForUpdates().catch((e) => {
+    const msg = String(e);
+    if (/404|latest\.yml|Not Found|ERR_FILE_NOT_FOUND/i.test(msg)) {
+      send({ phase: 'none' });
+      return;
+    }
+    send({ phase: 'error', message: msg });
+  });
 }

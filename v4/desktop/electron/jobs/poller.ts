@@ -25,6 +25,9 @@ export interface SendJob {
   row: Record<string, string>;
   countryCode: string;
   srcKey: string;
+  // pending/leased = por enviar; sent/no_whatsapp/error = historial.
+  status?: 'pending' | 'leased' | 'sent' | 'no_whatsapp' | 'error';
+  sentAt?: number;
   // true = envío directo (POST /send del backend): se manda sin aprobación.
   auto?: boolean;
 }
@@ -43,9 +46,9 @@ export interface Progress {
 export interface PollerDeps {
   apiBase: string;
   getToken: () => string | null;
-  runJob: (job: SendJob) => Promise<{ success: boolean; error?: string }>;
+  runJob: (job: SendJob) => Promise<{ success: boolean; error?: string; noWhatsapp?: boolean }>;
   onProgress: (p: Progress) => void;
-  /** Asignación pendiente del operador (cada poll). El renderer la muestra. */
+  /** Jobs del operador (pendientes + historial). El renderer los separa. */
   onAssignment: (jobs: SendJob[]) => void;
 }
 
@@ -93,7 +96,10 @@ export class JobPoller {
     if (!token) return { ok: false, error: 'Sin sesión' };
 
     const wanted = new Set(jobIds);
-    const selected = [...this.known.values()].filter((j) => wanted.has(j.jobId));
+    // Solo lo que sigue pendiente (nunca reenvía algo ya procesado).
+    const selected = [...this.known.values()].filter(
+      (j) => wanted.has(j.jobId) && (!j.status || j.status === 'pending' || j.status === 'leased'),
+    );
     if (selected.length === 0) return { ok: false, error: 'Sin envíos seleccionados' };
 
     this.sending = true;
@@ -121,12 +127,14 @@ export class JobPoller {
         const jobs = await this.fetchJobs(token);
         this.known = new Map(jobs.map((j) => [j.jobId, j]));
 
-        // Directos (POST /send): se envían solos. El resto espera aprobación.
-        const autos = jobs.filter((j) => j.auto);
-        this.lastAssignment = jobs.filter((j) => !j.auto);
-        this.deps.onAssignment(this.lastAssignment);
+        // Publica TODO (pendientes + historial): el renderer los separa en tabs.
+        this.lastAssignment = jobs;
+        this.deps.onAssignment(jobs);
         if (jobs.length === 0) this.deps.onProgress({ phase: 'idle' });
 
+        // Directos (POST /send) AÚN pendientes: se envían solos, sin aprobación.
+        const isPending = (j: SendJob) => !j.status || j.status === 'pending' || j.status === 'leased';
+        const autos = jobs.filter((j) => j.auto && isPending(j));
         if (autos.length > 0) {
           this.sending = true;
           try {
@@ -173,8 +181,12 @@ export class JobPoller {
       this.sentAt.push(Date.now());
       done += 1;
       r.success ? (sent += 1) : (failed += 1);
-      await this.ack(token, [job.jobId]);
-      this.known.delete(job.jobId);
+      // Marca el job (no lo borra): queda en el historial con su resultado.
+      const status = r.success ? 'sent' : r.noWhatsapp ? 'no_whatsapp' : 'error';
+      await this.ack(token, [{ jobId: job.jobId, status }]);
+      // Refleja el nuevo estado en memoria (para la próxima publicación).
+      const k = this.known.get(job.jobId);
+      if (k) k.status = status;
       this.deps.onProgress({
         phase: 'sending',
         campaignId,
@@ -186,9 +198,10 @@ export class JobPoller {
       });
     }
 
-    // Borra el CSV de S3 solo si ya no quedan jobs pendientes de ese archivo
-    // (con aprobación parcial el resto sigue pendiente y reaparece en el poll).
-    const remaining = [...this.known.values()].some((j) => j.srcKey === srcKey);
+    // Borra el CSV de S3 solo si ya no quedan jobs PENDIENTES de ese archivo.
+    const remaining = [...this.known.values()].some(
+      (j) => j.srcKey === srcKey && (!j.status || j.status === 'pending' || j.status === 'leased'),
+    );
     if (srcKey && !remaining) await this.deleteFile(token, srcKey);
     this.deps.onProgress({ phase: 'fileDone', campaignId, total, done, sent, failed });
   }
@@ -221,12 +234,12 @@ export class JobPoller {
     }
   }
 
-  private async ack(token: string, ids: string[]) {
+  private async ack(token: string, acks: { jobId: string; status: string }[]) {
     try {
       await fetch(`${this.deps.apiBase}/jobs/ack`, {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ acks }),
       });
     } catch {
       /* reintenta en el próximo poll */

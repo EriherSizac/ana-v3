@@ -31,7 +31,8 @@ export interface AnaBridge {
   onUpdateStatus: (cb: (data: UpdateStatus) => void) => () => void;
 }
 
-// Job pendiente asignado al agente (lo publica el poller del main).
+// Job asignado al agente (lo publica el poller del main). status separa
+// pendientes (por enviar) de historial (sent/no_whatsapp/error).
 export interface AssignedJob {
   jobId: string;
   campaignId: string;
@@ -41,6 +42,9 @@ export interface AssignedJob {
   row: Record<string, string>;
   countryCode: string;
   srcKey: string;
+  status?: 'pending' | 'leased' | 'sent' | 'no_whatsapp' | 'error';
+  sentAt?: number;
+  auto?: boolean;
 }
 
 export interface SendProgress {

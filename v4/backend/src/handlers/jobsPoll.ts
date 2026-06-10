@@ -4,17 +4,18 @@
 // Author: Erick Hernández Silva
 
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
-import { QueryCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb } from '../lib/dynamo';
 import { JOBS_TABLE, type SendJob } from '../lib/jobs';
 import { ok, bad, claimUser } from '../lib/http';
 
 /**
- * GET /jobs/poll  → TODOS los jobs pendientes del PROPIO operador (sin lease).
- *                   Solo hay un agente por operador (su Electron), así que no
- *                   hay carrera; el agente procesa local (1 archivo a la vez,
- *                   rate-limited) y hace ack de cada uno al enviarlo.
- * POST /jobs/ack  → borra jobs procesados (body: { ids: string[] }).
+ * GET /jobs/poll  → TODOS los jobs del PROPIO operador (pendientes + historial).
+ *                   El desktop separa pendientes (por enviar) de procesados
+ *                   (sent/no_whatsapp/error). El historial vive hasta el TTL (7d).
+ * POST /jobs/ack  → marca jobs como procesados (NO los borra): body
+ *                   { acks: [{ jobId, status }] } con status sent|no_whatsapp|error.
+ *                   (Compat: { ids: [...] } los marca como 'sent'.)
  *
  * Aislamiento: la PK es operatorId = claim del JWT.
  */
@@ -56,17 +57,36 @@ async function poll(user: string): Promise<APIGatewayProxyResultV2> {
   return ok({ jobs: jobs.map((job) => ({ id: job.jobId, job })) });
 }
 
+type AckStatus = 'sent' | 'no_whatsapp' | 'error';
+const VALID: AckStatus[] = ['sent', 'no_whatsapp', 'error'];
+
 async function ack(
   user: string,
-  payload: { ids?: string[] },
+  payload: { acks?: { jobId: string; status?: AckStatus }[]; ids?: string[] },
 ): Promise<APIGatewayProxyResultV2> {
-  const ids = payload.ids ?? [];
+  // Normaliza ambos formatos: {acks:[{jobId,status}]} o {ids:[...]} (→ sent).
+  const acks =
+    payload.acks ?? (payload.ids ?? []).map((jobId) => ({ jobId, status: 'sent' as AckStatus }));
+  const now = Date.now();
+
   await Promise.all(
-    ids.map((jobId) =>
-      ddb.send(
-        new DeleteCommand({ TableName: JOBS_TABLE, Key: { operatorId: user, jobId } }),
-      ),
-    ),
+    acks.map(({ jobId, status }) => {
+      const s: AckStatus = status && VALID.includes(status) ? status : 'sent';
+      return ddb
+        .send(
+          new UpdateCommand({
+            TableName: JOBS_TABLE,
+            Key: { operatorId: user, jobId },
+            UpdateExpression: 'SET #s = :s, sentAt = :t REMOVE leaseUntil',
+            ExpressionAttributeNames: { '#s': 'status' },
+            ExpressionAttributeValues: { ':s': s, ':t': now },
+            ConditionExpression: 'attribute_exists(jobId)', // no recrear borrados
+          }),
+        )
+        .catch((e) => {
+          if (e?.name !== 'ConditionalCheckFailedException') throw e;
+        });
+    }),
   );
-  return ok({ deleted: ids.length });
+  return ok({ acked: acks.length });
 }

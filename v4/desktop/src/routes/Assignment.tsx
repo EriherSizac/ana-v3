@@ -23,6 +23,7 @@ export function Assignment() {
   const [status, setStatus] = useState<string | null>(null);
   const [progress, setProgress] = useState<SendProgress>({ phase: 'idle' });
   const [query, setQuery] = useState('');
+  const [tab, setTab] = useState<'pending' | 'sent'>('pending');
 
   useEffect(() => {
     const apply = (next: AssignedJob[]) => {
@@ -51,7 +52,21 @@ export function Assignment() {
   }, [templateTouched]);
 
   const sendingNow = progress.phase === 'sending' || progress.phase === 'waiting';
-  const firstSelected = jobs.find((j) => selected.has(j.jobId)) ?? jobs[0];
+
+  const isPending = (j: AssignedJob) =>
+    !j.status || j.status === 'pending' || j.status === 'leased';
+  const isDone = (j: AssignedJob) =>
+    j.status === 'sent' || j.status === 'no_whatsapp' || j.status === 'error';
+
+  // Pendientes: por aprobar (manual). Enviados: historial, más reciente arriba.
+  const pendingJobs = useMemo(() => jobs.filter((j) => !j.auto && isPending(j)), [jobs]);
+  const sentJobs = useMemo(
+    () => jobs.filter(isDone).sort((a, b) => (b.sentAt ?? 0) - (a.sentAt ?? 0)),
+    [jobs],
+  );
+  const list = tab === 'pending' ? pendingJobs : sentJobs;
+
+  const firstSelected = pendingJobs.find((j) => selected.has(j.jobId)) ?? pendingJobs[0];
   const columns = useMemo(
     () => (firstSelected ? Object.keys(firstSelected.row) : []),
     [firstSelected],
@@ -64,9 +79,9 @@ export function Assignment() {
     j.row.credit || j.row.credito || j.row.credit_id || j.row.id_credito || '';
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return jobs;
+    if (!q) return list;
     const qDigits = q.replace(/\D/g, '');
-    return jobs.filter((j) => {
+    return list.filter((j) => {
       const phone = j.phone.replace(/\D/g, '');
       return (
         jobName(j).toLowerCase().includes(q) ||
@@ -74,7 +89,7 @@ export function Assignment() {
         (qDigits.length >= 2 && phone.includes(qDigits))
       );
     });
-  }, [jobs, query]);
+  }, [list, query]);
 
   const toggle = (id: string) =>
     setSelected((s) => {
@@ -108,21 +123,38 @@ export function Assignment() {
         plantilla; lo no seleccionado queda pendiente para después.
       </p>
 
-      {jobs.length === 0 ? (
-        <div className="pernexium-card mt-6 p-6 text-sm text-text-light">
-          Sin contactos asignados por ahora. Cuando tu líder reparta una campaña (o
-          subas un CSV propio), aparecerán aquí.
+      {/* Tabs: pendientes (por enviar) / enviados (historial). */}
+      <div className="mt-4 flex gap-1 border-b border-neutral-50">
+        <TabBtn active={tab === 'pending'} onClick={() => setTab('pending')}>
+          Pendientes ({pendingJobs.length})
+        </TabBtn>
+        <TabBtn active={tab === 'sent'} onClick={() => setTab('sent')}>
+          Enviados ({sentJobs.length})
+        </TabBtn>
+      </div>
+
+      {list.length === 0 ? (
+        <div className="pernexium-card mt-4 p-6 text-sm text-text-light">
+          {tab === 'pending'
+            ? 'Sin contactos pendientes. Cuando tu líder reparta una campaña (o subas un CSV propio), aparecerán aquí.'
+            : 'Aún no hay envíos. El historial muestra los contactos ya procesados.'}
         </div>
       ) : (
-        <div className="pernexium-card mt-6 space-y-4 p-6">
+        <div className="pernexium-card mt-4 space-y-4 p-6">
           <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-sm font-semibold text-text-muted">
-              <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} />
-              {selected.size}/{jobs.length} seleccionados
-            </label>
-            {firstSelected?.campaign && (
+            {tab === 'pending' ? (
+              <label className="flex items-center gap-2 text-sm font-semibold text-text-muted">
+                <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} />
+                {selected.size}/{pendingJobs.length} seleccionados
+              </label>
+            ) : (
+              <span className="text-sm font-semibold text-text-muted">
+                {sentJobs.length} en el historial
+              </span>
+            )}
+            {list[0]?.campaign && (
               <span className="rounded-full bg-primary-light-90 px-2 py-0.5 text-xs text-primary">
-                {firstSelected.campaign}
+                {list[0].campaign}
               </span>
             )}
           </div>
@@ -138,16 +170,17 @@ export function Assignment() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-neutral-30 text-left text-xs uppercase tracking-wider text-text-light">
                 <tr>
-                  <th className="w-8 px-3 py-2" />
+                  {tab === 'pending' && <th className="w-8 px-3 py-2" />}
                   <th className="px-3 py-2">Nombre</th>
                   <th className="px-3 py-2">Crédito</th>
                   <th className="px-3 py-2">Teléfono</th>
+                  {tab === 'sent' && <th className="px-3 py-2">Resultado</th>}
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-3 py-4 text-center text-xs text-text-light">
+                    <td colSpan={5} className="px-3 py-4 text-center text-xs text-text-light">
                       Sin coincidencias para “{query}”.
                     </td>
                   </tr>
@@ -155,49 +188,62 @@ export function Assignment() {
                 {filtered.map((j) => (
                   <tr
                     key={j.jobId}
-                    onClick={() => toggle(j.jobId)}
-                    className="cursor-pointer border-t border-neutral-50 hover:bg-neutral-30"
+                    onClick={tab === 'pending' ? () => toggle(j.jobId) : undefined}
+                    className={`border-t border-neutral-50 ${
+                      tab === 'pending' ? 'cursor-pointer hover:bg-neutral-30' : ''
+                    }`}
                   >
-                    <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(j.jobId)}
-                        onChange={() => toggle(j.jobId)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </td>
+                    {tab === 'pending' && (
+                      <td className="px-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(j.jobId)}
+                          onChange={() => toggle(j.jobId)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
+                    )}
                     <td className="px-3 py-2">{jobName(j) || '—'}</td>
                     <td className="px-3 py-2 font-mono text-xs">{jobCredit(j) || '—'}</td>
                     <td className="px-3 py-2 font-mono text-xs">{maskPhone(j.phone)}</td>
+                    {tab === 'sent' && (
+                      <td className="px-3 py-2">
+                        <StatusBadge status={j.status} />
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <div>
-            <label className="block text-sm font-semibold text-text-muted">Plantilla</label>
-            <div className="mt-1">
-              <TemplateEditor
-                value={template}
-                onChange={(t) => {
-                  setTemplate(t);
-                  setTemplateTouched(true);
-                }}
-                columns={columns}
-                sampleRow={firstSelected?.row ?? null}
-              />
-            </div>
-          </div>
+          {tab === 'pending' && (
+            <>
+              <div>
+                <label className="block text-sm font-semibold text-text-muted">Plantilla</label>
+                <div className="mt-1">
+                  <TemplateEditor
+                    value={template}
+                    onChange={(t) => {
+                      setTemplate(t);
+                      setTemplateTouched(true);
+                    }}
+                    columns={columns}
+                    sampleRow={firstSelected?.row ?? null}
+                  />
+                </div>
+              </div>
 
-          <Button onClick={send} disabled={selected.size === 0 || sendingNow}>
-            {sendingNow ? 'Enviando…' : `Enviar a ${selected.size} contacto(s)`}
-          </Button>
+              <Button onClick={send} disabled={selected.size === 0 || sendingNow}>
+                {sendingNow ? 'Enviando…' : `Enviar a ${selected.size} contacto(s)`}
+              </Button>
 
-          {status && (
-            <div className="rounded-xl bg-primary-light-90 px-4 py-2 text-sm text-text-muted">
-              {status}
-            </div>
+              {status && (
+                <div className="rounded-xl bg-primary-light-90 px-4 py-2 text-sm text-text-muted">
+                  {status}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -208,5 +254,40 @@ export function Assignment() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function TabBtn({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
+        active
+          ? 'border-primary text-primary'
+          : 'border-transparent text-text-light hover:text-text-muted'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StatusBadge({ status }: { status?: AssignedJob['status'] }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    sent: { label: 'Enviado', cls: 'bg-secondary/15 text-secondary' },
+    no_whatsapp: { label: 'Sin WhatsApp', cls: 'bg-neutral-50 text-text-muted' },
+    error: { label: 'Error', cls: 'bg-error-10 text-error-70' },
+  };
+  const s = map[status ?? ''] ?? { label: status ?? '—', cls: 'bg-neutral-30 text-text-light' };
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${s.cls}`}>{s.label}</span>
   );
 }

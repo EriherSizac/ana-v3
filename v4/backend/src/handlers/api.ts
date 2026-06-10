@@ -5,7 +5,12 @@
 
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   ddb,
@@ -106,6 +111,13 @@ export const handler = async (
       case 'GET /media/url':
         if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
         return await presignMediaGet(access, event.queryStringParameters?.key);
+      // --- Sesión de WhatsApp respaldada en S3 (RemoteAuth) ---
+      case 'POST /wa-session/presign':
+        return await presignWaSession(user, JSON.parse(event.body ?? '{}'));
+      case 'GET /wa-session/exists':
+        return await waSessionExists(user);
+      case 'POST /wa-session/delete':
+        return await deleteWaSession(user);
       default:
         return bad(`ruta no manejada: ${route}`, 404);
     }
@@ -227,6 +239,44 @@ async function putConversationMeta(
     }),
   );
   return ok({ ok: true });
+}
+
+// Key de la sesión WhatsApp del operador (un zip por usuario). El scope por
+// username del JWT aísla: un agente solo lee/escribe SU sesión.
+const waSessionKey = (user: string) =>
+  `wa-sessions/${user.replace(/[^\w.\-]/g, '_')}/session.zip`;
+
+/** Presigned PUT/GET para el zip de sesión de WhatsApp (RemoteAuth). */
+async function presignWaSession(
+  user: string,
+  payload: { op?: 'put' | 'get' },
+): Promise<APIGatewayProxyResultV2> {
+  const key = waSessionKey(user);
+  const op = payload.op === 'put' ? 'put' : 'get';
+  const cmd =
+    op === 'put'
+      ? new PutObjectCommand({ Bucket: MEDIA_BUCKET, Key: key, ContentType: 'application/zip' })
+      : new GetObjectCommand({ Bucket: MEDIA_BUCKET, Key: key });
+  const url = await getSignedUrl(s3, cmd, { expiresIn: 300 });
+  return ok({ url, key });
+}
+
+/** ¿Existe el zip de sesión del operador? (HeadObject). */
+async function waSessionExists(user: string): Promise<APIGatewayProxyResultV2> {
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: MEDIA_BUCKET, Key: waSessionKey(user) }));
+    return ok({ exists: true });
+  } catch {
+    return ok({ exists: false });
+  }
+}
+
+/** Borra el zip de sesión (logout / sesión muerta). */
+async function deleteWaSession(user: string): Promise<APIGatewayProxyResultV2> {
+  await s3
+    .send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: waSessionKey(user) }))
+    .catch(() => {});
+  return ok({ deleted: true });
 }
 
 async function presignCsv(

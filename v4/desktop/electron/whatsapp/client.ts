@@ -3,17 +3,21 @@
 // Updated: 2026-06-10
 // Author: Erick Hernández Silva
 
-import { Client, LocalAuth, MessageMedia, type Message } from 'whatsapp-web.js';
+import { Client, RemoteAuth, MessageMedia, type Message } from 'whatsapp-web.js';
 import QRCode from 'qrcode';
 import { EventEmitter } from 'node:events';
 import { app } from 'electron';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { S3SessionStore } from './s3Store';
 
 // Sesión en una ruta estable de la app (no en cwd) → clearable y consistente
 // entre dev y empaquetado.
 const AUTH_DIR = path.join(app.getPath('userData'), 'wwebjs_auth');
+// Respaldo de la sesión a S3 cada 2 min → restaurable en otra máquina del
+// mismo agente sin reescanear el QR.
+const BACKUP_SYNC_MS = 2 * 60 * 1000;
 import { normalizeDigits, toJid } from './phone';
 
 export type WaState = 'idle' | 'qr' | 'authenticated' | 'connected' | 'disconnected';
@@ -52,6 +56,19 @@ export class WaClient extends EventEmitter {
   private sawSignal = false; // hubo qr/ready/loading → no está colgado
   private lastState: WaState = 'idle';
   private lastQr: string | null = null;
+  // Respaldo remoto de sesión (RemoteAuth + S3). Se configura tras el login.
+  private apiBase = '';
+  private getToken: () => string | null = () => null;
+  private operatorId = 'ana';
+
+  /** Inyecta el backend + token + operador (tras login) para el respaldo S3. */
+  configure(apiBase: string, getToken: () => string | null, operatorId: string) {
+    this.apiBase = apiBase;
+    this.getToken = getToken;
+    // clientId de RemoteAuth solo acepta [-_\w]; el aislamiento real lo da el
+    // JWT en el backend (key por usuario), esto es solo el nombre local.
+    this.operatorId = (operatorId || 'ana').replace(/[^\w-]/g, '_');
+  }
 
   isReady() {
     return !!this.client;
@@ -62,19 +79,30 @@ export class WaClient extends EventEmitter {
     return { status: this.lastState, qr: this.lastQr };
   }
 
-  /** ¿Hay una sesión LocalAuth guardada en disco? (para auto-reconectar) */
+  /** ¿Hay sesión local guardada? (RemoteAuth deja la carpeta del perfil). */
   hasSavedSession(): boolean {
-    return existsSync(path.join(AUTH_DIR, 'session-ana'));
+    return existsSync(path.join(AUTH_DIR, `RemoteAuth-${this.operatorId}`));
   }
 
   async start() {
     if (this.client || this.starting) return;
+    if (!this.getToken()) {
+      // Sin token aún no se puede restaurar/respaldar la sesión en S3.
+      this.emit('error', 'Inicia sesión antes de conectar WhatsApp.');
+      return;
+    }
     this.starting = true;
     this.sawSignal = false;
     console.log('[wa] start: lanzando cliente…');
     try {
+      const store = new S3SessionStore(this.apiBase, this.getToken, AUTH_DIR);
       this.client = new Client({
-        authStrategy: new LocalAuth({ clientId: 'ana', dataPath: AUTH_DIR }),
+        authStrategy: new RemoteAuth({
+          clientId: this.operatorId,
+          dataPath: AUTH_DIR,
+          store,
+          backupSyncIntervalMs: BACKUP_SYNC_MS,
+        }),
         puppeteer: {
           headless: true,
           args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
@@ -111,9 +139,16 @@ export class WaClient extends EventEmitter {
     }
   }
 
-  /** Libera el cliente y BORRA la sesión en disco (sesión muerta / logout). */
+  /** Libera el cliente y BORRA la sesión local + el respaldo en S3 (logout). */
   async clearSession() {
     await this.reset();
+    // Borra el respaldo remoto para que no se restaure una sesión muerta.
+    try {
+      const store = new S3SessionStore(this.apiBase, this.getToken, AUTH_DIR);
+      await store.delete({ session: `RemoteAuth-${this.operatorId}` });
+    } catch (e) {
+      console.error('[wa] no se pudo borrar la sesión remota:', e);
+    }
     try {
       await fs.rm(AUTH_DIR, { recursive: true, force: true });
       console.log('[wa] sesión borrada:', AUTH_DIR);
