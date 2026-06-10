@@ -71,7 +71,8 @@
         "provider": "s3",
         "bucket": "ana-desktop-updates",
         "region": "us-east-2",
-        "path": "updates"
+        "path": "updates",
+        "acl": null
       }
     ]
   }
