@@ -12,6 +12,7 @@ import {
   getMediaUrl,
   maskPhone,
   reportChatOpen,
+  reportManualInteraction,
   type Conversation,
   type Message,
   type UserAccess,
@@ -41,6 +42,7 @@ export function Chats({
   // null = mis propias conversaciones; un operatorId = ver a ese agente.
   const [viewOperator, setViewOperator] = useState<string | null>(null);
   const viewingOther = viewOperator !== null;
+  const [showInteraction, setShowInteraction] = useState(false);
 
   // qr/status llegan por props (App). Aquí solo errores + apagar "conectando".
   useEffect(() => {
@@ -119,6 +121,7 @@ export function Chats({
   async function openChat(chatId: string) {
     setActive(chatId);
     setMessages(null);
+    setShowInteraction(false); // cierra el modal de gestión al cambiar de chat
     // Solo en mi sesión: registra atención en el CRM (como la ventana de v3).
     if (!viewingOther) void reportChatOpen(chatId);
     try {
@@ -262,8 +265,16 @@ export function Chats({
           </div>
         ) : (
           <>
-            <header className="border-b border-neutral-50 bg-white px-5 py-3 text-sm font-semibold">
-              {maskPhone(active)}
+            <header className="flex items-center justify-between border-b border-neutral-50 bg-white px-5 py-3">
+              <span className="text-sm font-semibold">{maskPhone(active)}</span>
+              {!viewingOther && (
+                <button
+                  onClick={() => setShowInteraction(true)}
+                  className="rounded-lg border border-neutral-50 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary-light-90"
+                >
+                  Registrar gestión
+                </button>
+              )}
             </header>
             <div className="flex-1 space-y-2 overflow-y-auto p-5">
               {messages === null ? (
@@ -320,6 +331,138 @@ export function Chats({
           </>
         )}
       </section>
+
+      {showInteraction && active && (
+        <InteractionModal chatId={active} onClose={() => setShowInteraction(false)} />
+      )}
+    </div>
+  );
+}
+
+/** Modal para registrar una gestión manual en el CRM (resultado + promesa). */
+function InteractionModal({ chatId, onClose }: { chatId: string; onClose: () => void }) {
+  const [subdictamen, setSubdictamen] = useState('Promesa de pago');
+  const [contactable, setContactable] = useState(true);
+  const [comments, setComments] = useState('');
+  const [promiseDate, setPromiseDate] = useState('');
+  const [promiseAmount, setPromiseAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const SUBDICTAMENES = [
+    'Promesa de pago',
+    'Negociación',
+    'No contactado',
+    'Número equivocado',
+    'Se niega a pagar',
+    'Ya pagó',
+    'Otro',
+  ];
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await reportManualInteraction({
+        chatId,
+        subdictamen,
+        contactable,
+        comments: comments.trim() || undefined,
+        promiseDate: promiseDate || undefined,
+        promiseAmount: promiseAmount ? Number(promiseAmount) : undefined,
+      });
+      onClose();
+    } catch (e: any) {
+      setErr(e?.message ?? 'Error al registrar');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md space-y-3 rounded-2xl bg-white p-5 shadow-xl"
+      >
+        <h2 className="text-base font-bold">Registrar gestión</h2>
+
+        <div>
+          <label className="block text-xs font-semibold text-text-muted">Resultado</label>
+          <select
+            value={subdictamen}
+            onChange={(e) => setSubdictamen(e.target.value)}
+            className="mt-1 w-full rounded-xl border border-neutral-50 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+          >
+            {SUBDICTAMENES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm text-text-muted">
+          <input
+            type="checkbox"
+            checked={contactable}
+            onChange={(e) => setContactable(e.target.checked)}
+          />
+          Se logró contacto
+        </label>
+
+        {subdictamen === 'Promesa de pago' && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-text-muted">Fecha promesa</label>
+              <input
+                type="date"
+                value={promiseDate}
+                onChange={(e) => setPromiseDate(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-text-muted">Monto</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={promiseAmount}
+                onChange={(e) => setPromiseAmount(e.target.value)}
+                placeholder="0.00"
+                className="mt-1 w-full rounded-xl border border-neutral-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+              />
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-semibold text-text-muted">Comentarios</label>
+          <textarea
+            value={comments}
+            onChange={(e) => setComments(e.target.value)}
+            rows={3}
+            className="mt-1 w-full rounded-xl border border-neutral-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+          />
+        </div>
+
+        {err && <div className="rounded-xl bg-error-10 px-3 py-2 text-xs text-error-70">{err}</div>}
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-xl px-4 py-2 text-sm text-text-light hover:bg-neutral-30"
+          >
+            Cancelar
+          </button>
+          <Button onClick={save} disabled={busy}>
+            {busy ? 'Guardando…' : 'Registrar'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

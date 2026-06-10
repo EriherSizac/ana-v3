@@ -98,6 +98,31 @@ export async function reportChatOpen(chatId: string): Promise<void> {
   }
 }
 
+export interface ManualInteraction {
+  chatId: string;
+  subdictamen: string;
+  comments?: string;
+  contactable?: boolean;
+  promiseDate?: string;
+  promiseAmount?: number;
+}
+
+/** Registra una gestión manual en el CRM desde el chat. */
+export async function reportManualInteraction(
+  i: ManualInteraction,
+): Promise<{ reported: boolean; creditId?: string }> {
+  const res = await fetch(`${API_BASE}/interactions/manual`, {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify(i),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? 'no se pudo registrar la gestión');
+  }
+  return await res.json();
+}
+
 // --- Líder/admin: send-jobs por campaña ---
 export interface JobsOperatorSummary {
   operatorId: string;

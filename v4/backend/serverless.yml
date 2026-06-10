@@ -198,6 +198,10 @@ functions:
           path: /interactions/open
           method: post
           authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /interactions/manual
+          method: post
+          authorizer: { name: cognitoJwt }
 
   jobsAdmin:
     handler: src/handlers/jobsAdmin.handler

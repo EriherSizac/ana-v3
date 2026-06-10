@@ -56,6 +56,8 @@ export const handler = async (
   try {
     if (event.routeKey === 'POST /interactions/open')
       return await reportOpen(user, JSON.parse(event.body ?? '{}'));
+    if (event.routeKey === 'POST /interactions/manual')
+      return await reportManual(user, JSON.parse(event.body ?? '{}'));
     if (event.routeKey !== 'POST /interactions/report')
       return bad(`ruta no manejada: ${event.routeKey}`, 404);
 
@@ -165,6 +167,54 @@ async function reportOpen(
     comments: `product=${row.product ?? ''}; discount=${row.discount ?? ''}; total_balance=${row.total_balance ?? ''}`,
     at: new Date(),
     inoutbound: 'inbound',
+  });
+  return ok({ reported: inserted, creditId });
+}
+
+interface ManualPayload {
+  chatId?: string;
+  subdictamen?: string; // resultado de la gestión
+  comments?: string;
+  contactable?: boolean; // ¿se logró contacto?
+  promiseDate?: string; // YYYY-MM-DD
+  promiseAmount?: number;
+}
+
+/**
+ * Interacción MANUAL que el agente registra desde el chat (botón "Registrar
+ * gestión"): resultado, comentarios y promesa de pago opcional. Toma campaña y
+ * credit_id de la conversación guardada (o lookup por teléfono). No idempotente
+ * — cada gestión es un registro nuevo, como en v3.
+ */
+async function reportManual(
+  user: string,
+  p: ManualPayload,
+): Promise<APIGatewayProxyResultV2> {
+  if (!p.chatId) return bad('falta chatId');
+  if (!p.subdictamen) return bad('falta subdictamen (resultado)');
+
+  const res = await ddb.send(
+    new GetCommand({ TableName: CONVERSATIONS_TABLE, Key: { operatorId: user, chatId: p.chatId } }),
+  );
+  const conv = res.Item;
+  const campaign = String(conv?.campaign ?? '');
+  if (!campaign) return bad('conversación sin campaña; no se puede registrar', 409);
+
+  const row = (conv?.contact ?? {}) as Record<string, string>;
+  const phone = row.phone || row.telefono || p.chatId.replace(/\D/g, '');
+  const creditId = await resolveCreditId(row, campaign, phone);
+
+  const inserted = await insertInteraction({
+    creditId,
+    campaign,
+    phone10: toPhone10(phone),
+    contactable: p.contactable ?? true,
+    subdictamen: p.subdictamen,
+    comments: p.comments ?? '',
+    at: new Date(),
+    inoutbound: 'inbound',
+    promiseDate: p.promiseDate ?? null,
+    promiseAmount: p.promiseAmount ?? null,
   });
   return ok({ reported: inserted, creditId });
 }

@@ -67,6 +67,8 @@ export interface InteractionInput {
   comments: string;
   at: Date;
   inoutbound?: 'inbound' | 'outbound'; // default outbound (envío de campaña)
+  promiseDate?: string | null; // YYYY-MM-DD (promesa de pago)
+  promiseAmount?: number | null;
 }
 
 /** Inserta la interacción outbound en el CRM (shape idéntico al de v3-cli). */
@@ -89,8 +91,8 @@ export async function insertInteraction(i: InteractionInput): Promise<boolean> {
     email_address: null,
     template_used: null,
     comments: i.comments,
-    promise_date: null,
-    promise_amount: null,
+    promise_date: i.promiseDate ?? null,
+    promise_amount: i.promiseAmount ?? null,
     promise_payment_plan: null,
     inoutbound: i.inoutbound ?? 'outbound',
     payment_made_date: null,
