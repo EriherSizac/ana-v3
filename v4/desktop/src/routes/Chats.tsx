@@ -39,6 +39,7 @@ export function Chats({
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [reply, setReply] = useState('');
   const [waError, setWaError] = useState<string | null>(null);
+  const [waLoading, setWaLoading] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [elapsed, setElapsed] = useState(0); // seg desde que se inició la conexión
   // null = mis propias conversaciones; un operatorId = ver a ese agente.
@@ -49,9 +50,18 @@ export function Chats({
   // qr/status llegan por props (App). Aquí solo errores + apagar "conectando".
   useEffect(() => {
     const off = window.ana.onWaEvent((d) => {
-      if (d.type === 'qr' || d.type === 'status') setConnecting(false);
-      else if (d.type === 'error' || d.type === 'conflict') {
+      if (d.type === 'qr') {
+        setConnecting(false);
+        setWaLoading(null);
+      } else if (d.type === 'status') {
+        setConnecting(false);
+        if (d.status === 'connected' || d.status === 'disconnected') setWaLoading(null);
+      } else if (d.type === 'loading') {
+        setWaLoading(d.message ?? null);
+        setWaError(null);
+      } else if (d.type === 'error' || d.type === 'conflict') {
         setWaError(d.error);
+        setWaLoading(null);
         setConnecting(false);
       }
     });
@@ -209,7 +219,13 @@ export function Chats({
                 {connecting ? `Iniciando… ${elapsed}s` : 'Conectar WhatsApp'}
               </Button>
             )}
-            {connecting && !qr && (
+            {waLoading && !qr && (
+              <div className="flex items-center justify-center gap-2 text-xs text-text-muted">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-neutral-50 border-t-secondary" />
+                {waLoading}
+              </div>
+            )}
+            {connecting && !qr && !waLoading && (
               <p className="text-center text-xs text-text-light">
                 Puede tardar unos segundos…
               </p>

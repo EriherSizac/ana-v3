@@ -84,6 +84,8 @@ wa.on('status', (status) => {
   if (status === 'connected' && agentCampaign) void backend.heartbeat(agentCampaign);
 });
 wa.on('error', (error) => send('wa:event', { type: 'error', error }));
+// Progreso del arranque (obteniendo/restaurando sesión, cargando chats).
+wa.on('loading', (message) => send('wa:event', { type: 'loading', message }));
 // Sesión desplazada por otro equipo → notificación del sistema + aviso a la UI.
 wa.on('conflict', (message) => {
   send('wa:event', { type: 'conflict', error: message });

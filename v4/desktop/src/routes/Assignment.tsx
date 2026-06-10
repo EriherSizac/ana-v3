@@ -67,6 +67,8 @@ export function Assignment() {
   const list = tab === 'pending' ? pendingJobs : sentJobs;
 
   const firstSelected = pendingJobs.find((j) => selected.has(j.jobId)) ?? pendingJobs[0];
+  // El líder no fijó plantilla → el agente debe escribir el mensaje.
+  const templateRequired = !firstSelected?.template?.trim();
   const columns = useMemo(
     () => (firstSelected ? Object.keys(firstSelected.row) : []),
     [firstSelected],
@@ -220,7 +222,14 @@ export function Assignment() {
           {tab === 'pending' && (
             <>
               <div>
-                <label className="block text-sm font-semibold text-text-muted">Plantilla</label>
+                <label className="block text-sm font-semibold text-text-muted">
+                  Mensaje
+                  {templateRequired ? (
+                    <span className="ml-1 text-error-70">(obligatorio: el líder no fijó uno)</span>
+                  ) : (
+                    <span className="ml-1 font-normal text-text-light">(puedes editarlo)</span>
+                  )}
+                </label>
                 <div className="mt-1">
                   <TemplateEditor
                     value={template}
@@ -234,9 +243,15 @@ export function Assignment() {
                 </div>
               </div>
 
-              <Button onClick={send} disabled={selected.size === 0 || sendingNow}>
+              <Button
+                onClick={send}
+                disabled={selected.size === 0 || sendingNow || !template.trim()}
+              >
                 {sendingNow ? 'Enviando…' : `Enviar a ${selected.size} contacto(s)`}
               </Button>
+              {!template.trim() && (
+                <p className="text-xs text-error-70">Escribe el mensaje antes de enviar.</p>
+              )}
 
               {status && (
                 <div className="rounded-xl bg-primary-light-90 px-4 py-2 text-sm text-text-muted">

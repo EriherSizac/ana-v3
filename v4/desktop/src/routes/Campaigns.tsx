@@ -154,7 +154,20 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-text-muted">Plantilla</label>
+          <div className="flex items-center justify-between">
+            <label className="block text-sm font-semibold text-text-muted">
+              Plantilla <span className="font-normal text-text-light">(opcional)</span>
+            </label>
+            {template.trim() && (
+              <button
+                type="button"
+                onClick={() => setTemplate('')}
+                className="text-xs text-text-light hover:underline"
+              >
+                Dejar vacío
+              </button>
+            )}
+          </div>
           <div className="mt-1">
             <TemplateEditor
               value={template}
@@ -163,6 +176,9 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
               sampleRow={csvSampleRow}
             />
           </div>
+          <p className="mt-1 text-xs text-text-light">
+            Si la dejas vacía, cada agente escribe el mensaje al revisar su asignación.
+          </p>
         </div>
 
         {canDistribute && (

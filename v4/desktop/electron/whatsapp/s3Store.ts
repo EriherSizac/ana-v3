@@ -21,6 +21,8 @@ export class S3SessionStore {
     private apiBase: string,
     private getToken: () => string | null,
     private dataPath: string,
+    // Notifica etapas a la UI ("Obteniendo sesión remota…", etc.).
+    private onStage: (msg: string) => void = () => {},
   ) {}
 
   private headers() {
@@ -58,6 +60,7 @@ export class S3SessionStore {
   }
 
   async save(opts: { session: string }): Promise<void> {
+    this.onStage('Respaldando sesión…');
     const zipPath = `${this.dataPath}/${opts.session}.zip`;
     const url = await this.presign('put');
     if (!url) throw new Error('No se pudo obtener presign PUT de la sesión');
@@ -72,12 +75,14 @@ export class S3SessionStore {
   }
 
   async extract(opts: { session: string; path: string }): Promise<void> {
+    this.onStage('Obteniendo sesión remota…');
     const url = await this.presign('get');
     if (!url) throw new Error('No se pudo obtener presign GET de la sesión');
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Falló bajar la sesión de S3 (${res.status})`);
     const buf = Buffer.from(await res.arrayBuffer());
     fs.writeFileSync(opts.path, buf);
+    this.onStage('Restaurando sesión…');
     console.log('[wa] sesión restaurada desde S3');
   }
 

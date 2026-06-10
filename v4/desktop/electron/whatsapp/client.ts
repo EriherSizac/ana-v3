@@ -28,6 +28,7 @@ export interface WaEvents {
   message: (msg: NormalizedMessage) => void;
   error: (e: string) => void;
   conflict: (msg: string) => void; // sesión abierta en otro equipo
+  loading: (msg: string) => void; // progreso del arranque (sesión remota, etc.)
 }
 
 export interface NormalizedMessage {
@@ -95,8 +96,11 @@ export class WaClient extends EventEmitter {
     this.starting = true;
     this.sawSignal = false;
     console.log('[wa] start: lanzando cliente…');
+    this.emit('loading', 'Iniciando WhatsApp…');
     try {
-      const store = new S3SessionStore(this.apiBase, this.getToken, AUTH_DIR);
+      const store = new S3SessionStore(this.apiBase, this.getToken, AUTH_DIR, (msg) =>
+        this.emit('loading', msg),
+      );
       // En el build instalado, Chromium va bundleado en resources/chrome (en dev
       // puppeteer usa el de su caché). Sin esto el exe no encuentra Chrome.
       const executablePath = app.isPackaged
@@ -181,7 +185,9 @@ export class WaClient extends EventEmitter {
     c.on('loading_screen', (percent) => {
       this.sawSignal = true;
       console.log('[wa] loading_screen', percent);
+      this.emit('loading', `Cargando conversaciones… ${percent || 0}%`);
     });
+    c.on('authenticated', () => this.emit('loading', 'Autenticando…'));
     c.on('change_state', (s) => console.log('[wa] change_state', s));
     c.on('qr', async (qr) => {
       this.sawSignal = true;
