@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
-import { TemplateEditor, parseCsvPreview } from '../ui/TemplateEditor';
+import { TemplateEditor, parseCsvPreview, getUnknownTemplateVars } from '../ui/TemplateEditor';
 import { SearchableSelect } from '../ui/SearchableSelect';
 import { normalizeContactRow } from '../../electron/whatsapp/template';
 import { uploadCsv, getCampaigns, type UserAccess } from '../lib/api';
@@ -42,6 +42,9 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
   const [sending, setSending] = useState(false);
   const [progress, setProgress] = useState<SendProgress>({ phase: 'idle' });
 
+  // Variables de la plantilla que no existen en el CSV (alias v3↔v4 incluidos).
+  const unknownVars = getUnknownTemplateVars(template, csvColumns);
+
   // Default de campaña cuando cargan las opciones.
   useEffect(() => {
     if (!campaign && campaignOptions[0]) setCampaign(campaignOptions[0]);
@@ -69,8 +72,8 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
       });
       setStatus(
         distribute && canDistribute
-          ? `CSV subido. Contactos se repartirán entre los agentes activos de "${campaign}".`
-          : 'CSV subido. Los envíos se ejecutarán al recoger los jobs.',
+          ? `CSV subido. Los contactos se asignaron a los agentes de "${campaign}"; cada uno los revisa y envía desde "Mi asignación".`
+          : 'CSV subido. Los contactos quedaron en tu "Mi asignación" para revisar y enviar.',
       );
     } catch (e: any) {
       setStatus(`Error: ${e?.message ?? e}`);
@@ -173,9 +176,21 @@ export function Campaigns({ access }: { access: UserAccess | null }) {
           </div>
         )}
 
-        <Button onClick={upload} disabled={!file || sending}>
-          {sending ? 'Subiendo…' : 'Subir y disparar envíos'}
+        {unknownVars.length > 0 && (
+          <div className="rounded-xl bg-error-10 px-4 py-2 text-sm text-error-70">
+            La plantilla usa variables que no están en el CSV:{' '}
+            <span className="font-mono">{unknownVars.map((v) => `{${v}}`).join(', ')}</span>.
+            Revisa que coincidan con las columnas (chips de arriba).
+          </div>
+        )}
+
+        <Button onClick={upload} disabled={!file || sending || unknownVars.length > 0}>
+          {sending ? 'Subiendo…' : 'Subir contactos'}
         </Button>
+        <p className="text-xs text-text-light">
+          Subir no envía nada: los contactos quedan en “Mi asignación” para revisarlos y
+          enviarlos desde ahí.
+        </p>
 
         {status && (
           <div className="rounded-xl bg-primary-light-90 px-4 py-2 text-sm text-text-muted">

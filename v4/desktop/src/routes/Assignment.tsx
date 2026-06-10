@@ -22,6 +22,7 @@ export function Assignment() {
   const [templateTouched, setTemplateTouched] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [progress, setProgress] = useState<SendProgress>({ phase: 'idle' });
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     const apply = (next: AssignedJob[]) => {
@@ -56,6 +57,25 @@ export function Assignment() {
     [firstSelected],
   );
 
+  // Filtra por nombre, credit_id o últimos dígitos del teléfono.
+  const jobName = (j: AssignedJob) =>
+    j.row.name || j.row.nombre || `${j.row.first_name ?? ''} ${j.row.last_name ?? ''}`.trim();
+  const jobCredit = (j: AssignedJob) =>
+    j.row.credit || j.row.credito || j.row.credit_id || j.row.id_credito || '';
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return jobs;
+    const qDigits = q.replace(/\D/g, '');
+    return jobs.filter((j) => {
+      const phone = j.phone.replace(/\D/g, '');
+      return (
+        jobName(j).toLowerCase().includes(q) ||
+        jobCredit(j).toLowerCase().includes(q) ||
+        (qDigits.length >= 2 && phone.includes(qDigits))
+      );
+    });
+  }, [jobs, query]);
+
   const toggle = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -63,9 +83,16 @@ export function Assignment() {
       return n;
     });
 
-  const allSelected = jobs.length > 0 && selected.size === jobs.length;
+  // "Todos" opera sobre lo filtrado (lo que el agente está viendo).
+  const allFilteredSelected =
+    filtered.length > 0 && filtered.every((j) => selected.has(j.jobId));
   const toggleAll = () =>
-    setSelected(allSelected ? new Set() : new Set(jobs.map((j) => j.jobId)));
+    setSelected((s) => {
+      const n = new Set(s);
+      if (allFilteredSelected) for (const j of filtered) n.delete(j.jobId);
+      else for (const j of filtered) n.add(j.jobId);
+      return n;
+    });
 
   async function send() {
     setStatus(null);
@@ -90,7 +117,7 @@ export function Assignment() {
         <div className="pernexium-card mt-6 space-y-4 p-6">
           <div className="flex items-center justify-between">
             <label className="flex items-center gap-2 text-sm font-semibold text-text-muted">
-              <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+              <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} />
               {selected.size}/{jobs.length} seleccionados
             </label>
             {firstSelected?.campaign && (
@@ -100,18 +127,32 @@ export function Assignment() {
             )}
           </div>
 
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar por nombre, crédito o últimos dígitos del teléfono…"
+            className="w-full rounded-xl border border-neutral-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
+          />
+
           <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-neutral-50">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-neutral-30 text-left text-xs uppercase tracking-wider text-text-light">
                 <tr>
                   <th className="w-8 px-3 py-2" />
                   <th className="px-3 py-2">Nombre</th>
+                  <th className="px-3 py-2">Crédito</th>
                   <th className="px-3 py-2">Teléfono</th>
-                  <th className="px-3 py-2">Archivo</th>
                 </tr>
               </thead>
               <tbody>
-                {jobs.map((j) => (
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-4 text-center text-xs text-text-light">
+                      Sin coincidencias para “{query}”.
+                    </td>
+                  </tr>
+                )}
+                {filtered.map((j) => (
                   <tr
                     key={j.jobId}
                     onClick={() => toggle(j.jobId)}
@@ -125,13 +166,9 @@ export function Assignment() {
                         onClick={(e) => e.stopPropagation()}
                       />
                     </td>
-                    <td className="px-3 py-2">
-                      {j.row.name || j.row.nombre || j.row.first_name || '—'}
-                    </td>
+                    <td className="px-3 py-2">{jobName(j) || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{jobCredit(j) || '—'}</td>
                     <td className="px-3 py-2 font-mono text-xs">{maskPhone(j.phone)}</td>
-                    <td className="max-w-40 truncate px-3 py-2 text-xs text-text-light">
-                      {j.campaignId}
-                    </td>
                   </tr>
                 ))}
               </tbody>
