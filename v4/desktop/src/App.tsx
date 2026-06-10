@@ -99,8 +99,12 @@ export function App() {
   if (authed === null) return <div className="min-h-screen bg-neutral-30" />;
   if (!authed) return <Login onDone={onLogin} />;
 
-  const canUpload = can(access, ANA_PERMISSIONS.CONTACTS_UPLOAD);
   const isAdmin = !!access?.isAdmin;
+  const isLeader = !!access?.isLeader;
+  // Subir/poner asignación: admin o líder (uploaders).
+  const canUpload = isAdmin || isLeader || can(access, ANA_PERMISSIONS.CONTACTS_UPLOAD);
+  // "Mi asignación": SOLO agentes (reciben contactos), no admins ni líderes.
+  const isAgent = !!access && !isAdmin && !isLeader;
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-neutral-30">
@@ -128,9 +132,11 @@ export function App() {
           <NavPill active={tab === 'chats'} onClick={() => setTab('chats')}>
             Chats
           </NavPill>
-          <NavPill active={tab === 'assignment'} onClick={() => setTab('assignment')}>
-            Mi asignación
-          </NavPill>
+          {isAgent && (
+            <NavPill active={tab === 'assignment'} onClick={() => setTab('assignment')}>
+              Mi asignación
+            </NavPill>
+          )}
           {canUpload && (
             <NavPill active={tab === 'campaigns'} onClick={() => setTab('campaigns')}>
               Campañas
@@ -157,7 +163,7 @@ export function App() {
         <AdminRolePerms />
       ) : tab === 'campaigns' && canUpload ? (
         <Campaigns access={access} />
-      ) : tab === 'assignment' ? (
+      ) : tab === 'assignment' && isAgent ? (
         <Assignment />
       ) : (
         <Chats access={access} waStatus={waStatus} qr={qr} />
