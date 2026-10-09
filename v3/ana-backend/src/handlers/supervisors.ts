@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { requireAdmin } from '../lib/adminAuth';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3Client = new S3Client({ region: 'us-east-1' });
@@ -114,22 +115,6 @@ const parseMultipartFormData = (
 };
 
 /**
- * Handler para OPTIONS - solo retorna 200 para CORS preflight
- */
-export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
-  return {
-    statusCode: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-    body: ''
-  };
-
-};
-
-/**
  * Lista archivos de asignaciones (assignments) para un agente/campaña
  * Prefijo: assignments/agents/{campaign}/ y filtra por {agent}-contacts*.csv
  */
@@ -144,7 +129,6 @@ export const listAgentAssignments = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Agente y campaña son requeridos' }),
       };
@@ -180,7 +164,6 @@ export const listAgentAssignments = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ success: true, data: { agent, campaign, prefix, items } }),
     };
@@ -190,7 +173,6 @@ export const listAgentAssignments = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
     };
@@ -200,13 +182,14 @@ export const listAgentAssignments = async (
 export const downloadFilesByKey = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     if (!event.body) {
       return {
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Body requerido' }),
       };
@@ -220,7 +203,6 @@ export const downloadFilesByKey = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Body debe ser JSON válido con campo: key o keys' }),
       };
@@ -238,7 +220,6 @@ export const downloadFilesByKey = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Se requiere key o keys' }),
       };
@@ -277,7 +258,6 @@ export const downloadFilesByKey = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ success: true, data: { okCount, total: results.length, results } }),
     };
@@ -287,7 +267,6 @@ export const downloadFilesByKey = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
     };
@@ -308,7 +287,6 @@ export const getAgentAssignments = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Agente y campaña son requeridos' }),
       };
@@ -340,7 +318,6 @@ export const getAgentAssignments = async (
         statusCode: 404,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'CSV assignment no encontrado' }),
       };
@@ -358,7 +335,6 @@ export const getAgentAssignments = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'text/csv',
-        'Access-Control-Allow-Origin': '*',
       },
       body: csvContent || '',
     };
@@ -368,7 +344,6 @@ export const getAgentAssignments = async (
         statusCode: 404,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'CSV assignment no encontrado' }),
       };
@@ -379,7 +354,6 @@ export const getAgentAssignments = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
     };
@@ -393,6 +367,8 @@ export const getAgentAssignments = async (
 export const publishAgentContactsDeprecated = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     const { agent, campaign } = event.pathParameters || {};
 
@@ -412,7 +388,6 @@ export const publishAgentContactsDeprecated = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Agente y campaña son requeridos' }),
       };
@@ -423,7 +398,6 @@ export const publishAgentContactsDeprecated = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Body requerido' }),
       };
@@ -443,7 +417,6 @@ export const publishAgentContactsDeprecated = async (
         statusCode: 415,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Content-Type debe ser multipart/form-data' }),
       };
@@ -514,7 +487,6 @@ export const publishAgentContactsDeprecated = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Multipart inválido' }),
       };
@@ -529,7 +501,6 @@ export const publishAgentContactsDeprecated = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({ success: false, message: 'Archivo CSV requerido' }),
       };
@@ -571,7 +542,6 @@ export const publishAgentContactsDeprecated = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ success: true, message: 'CSV publicado', data: { agent, campaign, key: key_deprecated } }),
     };
@@ -581,7 +551,6 @@ export const publishAgentContactsDeprecated = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
     };
@@ -591,6 +560,8 @@ export const publishAgentContactsDeprecated = async (
 export const uploadAgentContactsLogging = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     const { agent, campaign } = event.pathParameters || {};
 
@@ -607,7 +578,6 @@ export const uploadAgentContactsLogging = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -622,7 +592,6 @@ export const uploadAgentContactsLogging = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -640,7 +609,6 @@ export const uploadAgentContactsLogging = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -663,7 +631,6 @@ export const uploadAgentContactsLogging = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -678,7 +645,6 @@ export const uploadAgentContactsLogging = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -748,7 +714,6 @@ export const uploadAgentContactsLogging = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: true,
@@ -771,7 +736,6 @@ export const uploadAgentContactsLogging = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: false,
@@ -789,6 +753,8 @@ export const uploadAgentContactsLogging = async (
 export const uploadAgentContacts = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     const { agent, campaign } = event.pathParameters || {};
 
@@ -805,7 +771,6 @@ export const uploadAgentContacts = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -820,7 +785,6 @@ export const uploadAgentContacts = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -905,7 +869,6 @@ export const uploadAgentContacts = async (
           statusCode: 400,
           headers: {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
           },
           body: JSON.stringify({
             success: false,
@@ -924,7 +887,6 @@ export const uploadAgentContacts = async (
           statusCode: 400,
           headers: {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
           },
           body: JSON.stringify({
             success: false,
@@ -953,7 +915,6 @@ export const uploadAgentContacts = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -971,7 +932,6 @@ export const uploadAgentContacts = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -1081,7 +1041,6 @@ export const uploadAgentContacts = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: true,
@@ -1107,7 +1066,6 @@ export const uploadAgentContacts = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: false,
@@ -1132,7 +1090,6 @@ export const getAgentContacts = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -1167,7 +1124,6 @@ export const getAgentContacts = async (
         statusCode: 404,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -1187,7 +1143,6 @@ export const getAgentContacts = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'text/csv',
-        'Access-Control-Allow-Origin': '*',
       },
       body: csvContent || ''
     };
@@ -1198,7 +1153,6 @@ export const getAgentContacts = async (
         statusCode: 404,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -1212,7 +1166,6 @@ export const getAgentContacts = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: false,

@@ -6,21 +6,10 @@ import {
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
+import { requireAdmin } from '../lib/adminAuth';
 
 const s3Client = new S3Client({ region: 'us-east-2' });
 const TEMPLATES_BUCKET = process.env.TEMPLATES_BUCKET || '';
-
-export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
-  return {
-    statusCode: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-    body: '',
-  };
-};
 
 /**
  * GET /templates?campaign=X&channel=Y        → lista archivos
@@ -117,6 +106,8 @@ export const getTemplates = async (
 export const putTemplate = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     const body = JSON.parse(event.body || '{}');
     const { campaign, channel, filename, content } = body;

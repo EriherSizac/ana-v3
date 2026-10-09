@@ -20,21 +20,27 @@ provider:
   # https://www.serverless.com/framework/docs/providers/aws/guide/domains
   # domain: api.example.com
   httpApi:
+    # CORS solo para dominios de Pernexium (el CLI es Node y no envía Origin).
+    # API Gateway responde el preflight; los handlers ya no ponen cabeceras CORS.
     cors:
       allowedOrigins:
-        - '*'
+        - https://pernexium.com.mx
+        - https://*.pernexium.com.mx
+        - https://pernexium.com
+        - https://*.pernexium.com
       allowedHeaders:
         - Content-Type
         - Authorization
+        - X-Admin-Key
       allowedMethods:
         - GET
         - POST
-        - PATCH
-        - PUT
-        - DELETE
         - OPTIONS
+      maxAge: 3600
   environment:
     BUCKET_NAME: ${self:service}-storage-${sls:stage}
+    # Llave de administración (supervisores). Va en .env, NO se commitea.
+    ADMIN_API_KEY: ${env:ADMIN_API_KEY, ''}
     ANA_API_URL: https://ow24p7ablb.execute-api.us-east-1.amazonaws.com
     TEMPLATES_BUCKET: s3-motor-509399624341-prod
   iam:
@@ -59,87 +65,41 @@ functions:
       - httpApi:
           path: /
           method: get
-          cors: true
 
   uploadBackup:
     handler: src/handlers/backups.uploadBackup
     events:
       - httpApi:
-          cors: true
           path: /backups
           method: post
-
-  backupsOptions:
-    handler: src/handlers/backups.optionsHandler
-    events:
-      - httpApi:
-          cors: true
-          path: /backups
-          method: options
 
   getLatestBackup:
     handler: src/handlers/backups.getLatestBackup
     events:
       - httpApi:
-          cors: true
           path: /backups/latest/{agentId}/{campaign}
           method: get
-
-  backupsLatestOptions:
-    handler: src/handlers/backups.optionsHandler
-    events:
-      - httpApi:
-          cors: true
-          path: /backups/latest/{agentId}/{campaign}
-          method: options
 
   saveChatBackup:
     handler: src/handlers/chatBackups.saveChatBackup
     events:
       - httpApi:
-          cors: true
           path: /backups/chat
           method: post
-
-  chatBackupsOptions:
-    handler: src/handlers/chatBackups.optionsHandler
-    events:
-      - httpApi:
-          cors: true
-          path: /backups/chat
-          method: options
 
   getChatBackup:
     handler: src/handlers/chatBackups.getChatBackup
     events:
       - httpApi:
-          cors: true
           path: /backups/chat/{campaign}/{agentId}/{contactPhone}
           method: get
-
-  getChatBackupOptions:
-    handler: src/handlers/chatBackups.optionsHandler
-    events:
-      - httpApi:
-          cors: true
-          path: /backups/chat/{campaign}/{agentId}/{contactPhone}
-          method: options
 
   listChatBackups:
     handler: src/handlers/chatBackups.listChatBackups
     events:
       - httpApi:
-          cors: true
           path: /backups/chats/{campaign}/{agentId}
           method: get
-
-  listChatBackupsOptions:
-    handler: src/handlers/chatBackups.optionsHandler
-    events:
-      - httpApi:
-          cors: true
-          path: /backups/chats/{campaign}/{agentId}
-          method: options
 
   getChats:
     handler: src/handlers/chats.getChats
@@ -147,15 +107,6 @@ functions:
       - httpApi:
           path: /get/chats/{agentId}/{campaignId}
           method: get
-          cors: true
-
-  chatsOptions:
-    handler: src/handlers/chats.optionsHandler
-    events:
-      - httpApi:
-          path: /get/chats/{agentId}/{campaignId}
-          method: options
-          cors: true
 
   uploadMedia:
     handler: src/handlers/media.uploadMedia
@@ -163,15 +114,6 @@ functions:
       - httpApi:
           path: /media
           method: post
-          cors: true
-
-  mediaOptions:
-    handler: src/handlers/media.optionsHandler
-    events:
-      - httpApi:
-          path: /media
-          method: options
-          cors: true
 
   updatePendingContacts:
     handler: src/handlers/contacts.updatePendingContacts
@@ -179,15 +121,6 @@ functions:
       - httpApi:
           path: /contacts/pending
           method: post
-          cors: true
-
-  contactsOptions:
-    handler: src/handlers/contacts.optionsHandler
-    events:
-      - httpApi:
-          path: /contacts/pending
-          method: options
-          cors: true
 
   verifyCredentials:
     handler: src/handlers/auth.verifyCredentials
@@ -195,15 +128,6 @@ functions:
       - httpApi:
           path: /auth/verify
           method: post
-          cors: true
-
-  authOptions:
-    handler: src/handlers/auth.optionsHandler
-    events:
-      - httpApi:
-          path: /auth/verify
-          method: options
-          cors: true
 
   # Supervisores - Cargar datos de agentes
   uploadAgentContacts:
@@ -212,7 +136,6 @@ functions:
       - httpApi:
           path: /supervisors/agents/{agent}/{campaign}/contacts
           method: post
-          cors: true
 
   getAgentContacts:
     handler: src/handlers/supervisors.getAgentContacts
@@ -220,15 +143,6 @@ functions:
       - httpApi:
           path: /supervisors/agents/{agent}/{campaign}/contacts
           method: get
-          cors: true
-
-  supervisorsContactsOptions:
-    handler: src/handlers/supervisors.optionsHandler
-    events:
-      - httpApi:
-          path: /supervisors/agents/{agent}/{campaign}/contacts
-          method: options
-          cors: true
 
   # Supervisores - Consultar asignaciones (assignments)
   listAgentAssignments:
@@ -237,7 +151,6 @@ functions:
       - httpApi:
           path: /supervisors/assignments/agents/{agent}/{campaign}
           method: get
-          cors: true
 
   getAgentAssignments:
     handler: src/handlers/supervisors.getAgentAssignments
@@ -245,19 +158,6 @@ functions:
       - httpApi:
           path: /supervisors/assignments/agents/{agent}/{campaign}/contacts
           method: get
-          cors: true
-
-  supervisorsAssignmentsOptions:
-    handler: src/handlers/supervisors.optionsHandler
-    events:
-      - httpApi:
-          path: /supervisors/assignments/agents/{agent}/{campaign}
-          method: options
-          cors: true
-      - httpApi:
-          path: /supervisors/assignments/agents/{agent}/{campaign}/contacts
-          method: options
-          cors: true
 
   # Agentes - Publicar selección final hacia key legacy/deprecated
   publishAgentContactsDeprecated:
@@ -266,15 +166,6 @@ functions:
       - httpApi:
           path: /agents/{agent}/{campaign}/contacts
           method: post
-          cors: true
-
-  agentsPublishContactsOptions:
-    handler: src/handlers/supervisors.optionsHandler
-    events:
-      - httpApi:
-          path: /agents/{agent}/{campaign}/contacts
-          method: options
-          cors: true
 
   # Supervisores - Descargar archivo(s) por S3 key(s)
   downloadFilesByKey:
@@ -283,15 +174,6 @@ functions:
       - httpApi:
           path: /supervisors/files/download
           method: post
-          cors: true
-
-  supervisorsFilesDownloadOptions:
-    handler: src/handlers/supervisors.optionsHandler
-    events:
-      - httpApi:
-          path: /supervisors/files/download
-          method: options
-          cors: true
 
   # Credenciales por campaña
   getCampaignCredentials:
@@ -300,15 +182,6 @@ functions:
       - httpApi:
           path: /credentials/{campaign}
           method: get
-          cors: true
-
-  credentialsGetOptions:
-    handler: src/handlers/credentials.optionsHandler
-    events:
-      - httpApi:
-          path: /credentials/{campaign}
-          method: options
-          cors: true
 
   uploadCampaignCredentials:
     handler: src/handlers/credentials.uploadCampaignCredentials
@@ -316,15 +189,6 @@ functions:
       - httpApi:
           path: /credentials/upload
           method: post
-          cors: true
-
-  credentialsUploadOptions:
-    handler: src/handlers/credentials.optionsHandler
-    events:
-      - httpApi:
-          path: /credentials/upload
-          method: options
-          cors: true
 
   regenerateDailyPasswords:
     handler: src/handlers/credentials.regenerateDailyPasswords
@@ -332,15 +196,6 @@ functions:
       - httpApi:
           path: /credentials/regenerate
           method: post
-          cors: true
-
-  credentialsRegenerateOptions:
-    handler: src/handlers/credentials.optionsHandler
-    events:
-      - httpApi:
-          path: /credentials/regenerate
-          method: options
-          cors: true
 
   # Templates de campaña (S3: s3-motor-509399624341-prod)
   getTemplates:
@@ -349,7 +204,6 @@ functions:
       - httpApi:
           path: /templates
           method: get
-          cors: true
 
   putTemplate:
     handler: src/handlers/templates.putTemplate
@@ -357,15 +211,6 @@ functions:
       - httpApi:
           path: /templates
           method: post
-          cors: true
-
-  templatesOptions:
-    handler: src/handlers/templates.optionsHandler
-    events:
-      - httpApi:
-          path: /templates
-          method: options
-          cors: true
 
 resources:
   Resources:

@@ -5,21 +5,6 @@ const s3Client = new S3Client({ region: 'us-east-1' });
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
 
 /**
- * Handler para OPTIONS - solo retorna 200 para CORS preflight
- */
-export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
-  return {
-    statusCode: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-    body: ''
-  };
-};
-
-/**
  * Obtiene las credenciales de una campaña desde S3
  */
 async function getCampaignCredentials(campaign: string): Promise<Map<string, string>> {
@@ -72,7 +57,6 @@ export const verifyCredentials = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -89,7 +73,6 @@ export const verifyCredentials = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -106,7 +89,6 @@ export const verifyCredentials = async (
         statusCode: 401,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -124,7 +106,6 @@ export const verifyCredentials = async (
         statusCode: 401,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -138,7 +119,6 @@ export const verifyCredentials = async (
         statusCode: 401,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -152,7 +132,6 @@ export const verifyCredentials = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: true,
@@ -171,7 +150,6 @@ export const verifyCredentials = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: false,

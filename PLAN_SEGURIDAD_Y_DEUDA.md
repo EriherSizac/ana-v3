@@ -22,16 +22,19 @@ Origen: reporte de seguridad/rendimiento/deuda técnica + revisión del repo.
 
 ## 1. Fases
 
-### Fase 1 — Retirar v3 y endurecer CORS en v4 (replanteada tras D1–D4)
-v3 no está en producción (D2) → no se parchea, se retira.
+### Fase 1 — v3 se queda vivo y se cierra (opción B) + CORS v4
+Decisión 2026-10-08: v4 es una migración a medias y v3 sigue en producción (stack `ana-backend-prod`, us-east-1). **No se retira.**
 
-1. Confirmar si el stack `ana-backend` v3 (`ow24p7ablb`, us-east-1) existe (`serverless info`). `serverless remove` en dev/prod **solo con OK explícito en ese momento** (irreversible). Si ya no existe, omitir.
-2. Antes de borrar el bucket `ana-backend-storage-*` de v3, verificar si contiene datos y respaldar.
-3. Marcar `v3/` como deprecado (banner en `v3/README.md`); opcional: mover a tag/rama `v3-archive` y borrar de `main`.
-4. **CORS v4 (D1 = a)**: servir el renderer empaquetado con protocolo propio `app://ana` (`protocol.registerSchemesAsPrivileged` + `protocol.handle` en `main.ts`) en vez de `loadFile`, para tener un origen estable.
-5. `v4/backend/serverless.yml`: `httpApi.cors` con `allowedOrigins` desde `${param:corsOrigins}` = `app://ana` (+ `http://localhost:5173` solo en stage dev); `allowedHeaders: [content-type, authorization]`; solo métodos usados; sin credentials. Verificar que HTTP API acepte el esquema `app://`; si no, fallback a fetch desde proceso main.
-6. Revisar CORS de los buckets CSV/media (comentario L291 del yml) al mismo origen.
-7. Auth v4 (D4 = Cognito, ya implementado): confirmar que **todas** las rutas (incl. `POST /send`) tienen authorizer o `SEND_API_KEY`, sin rutas públicas no intencionales.
+Restricción de diseño descubierta: el CLI v3 (Node) llama al API con `fetch` plano, sin token (solo `/auth/verify` con palabra del día). Un authorizer Cognito en todas las rutas **rompería la flota instalada**, así que el cierre es por capas:
+
+1. **CORS**: `httpApi.cors` solo `https://pernexium.com.mx`, `https://*.pernexium.com.mx`, `https://pernexium.com`, `https://*.pernexium.com`. Se eliminan los 79 literales `Access-Control-Allow-Origin: '*'` y las 18 funciones/rutas OPTIONS (API Gateway responde el preflight). El CLI no envía Origin, no se afecta.
+2. **Rutas de administración con `X-Admin-Key`** (`src/lib/adminAuth.ts`, fail-closed, `timingSafeEqual`): `/credentials/*`, `/supervisors/files/download`, `/supervisors/agents/.../contacts` POST, `/agents/.../contacts` POST, `POST /templates`.
+3. **`/credentials/{campaign}`**: se conserva porque los supervisores lo usan para repartir la palabra del día (README-SUPERVISORES) y **el CLI nunca lo llama** (solo usa `/auth/verify`, que valida del lado servidor). Por eso pasa a admin-only. Se elimina la creación automática de `admin,acceso2024` (ahora 404) y se genera la palabra con `crypto.randomInt` + sufijo de 4 dígitos (antes 1 de 30 con `Math.random`).
+4. **Rutas que el CLI sí usa** (`/auth/verify`, `/backups*`, `/get/chats`, `/media`, `/contacts/pending`, `GET /templates`) quedan sin token: riesgo residual hasta liberar un CLI que envíe credenciales. Mitigación pendiente: throttling del stage.
+5. **Lecturas de asignaciones** (`GET /supervisors/assignments/...`, `GET .../contacts`): se dejan abiertas por no poder descartar que el agente o un sistema externo las consuma (no aparecen en este repo). Verificar en logs y cerrarlas.
+6. **Despliegue**: NO realizado. Requiere `ADMIN_API_KEY` en `v3/ana-backend/.env` y avisar a supervisores del header nuevo.
+7. **CORS v4 (D1 = a)**: pendiente, `app://ana` + allowlist en `v4/backend/serverless.yml` (ver arriba), independiente de v3.
+8. Auth v4: confirmar que todas las rutas (incl. `POST /send`) tienen authorizer o `SEND_API_KEY`.
 
 ### Fase 2 — Limpiar datos del repo
 `git rm`:
@@ -63,7 +66,7 @@ Checks: `git grep` de AKIA/secrets, `.env` no versionado.
 | Orden | Fase | Esfuerzo | Riesgo de romper |
 |---|---|---|---|
 | 1 | F2 limpieza de datos | bajo | bajo |
-| 2 | F1.1–1.3 retirar v3 | bajo | medio (irreversible; pedir OK) |
+| 2 | F1.1–1.6 cerrar v3 (código hecho, deploy pendiente) | medio | medio (supervisores deben usar X-Admin-Key) |
 | 3 | F1.4–1.7 CORS v4 + `app://` | medio | medio (puede romper desktop) |
 | 4 | F4 unit + CI | medio | bajo |
 | 5 | F3 clientes v4 | bajo | bajo |
@@ -74,7 +77,7 @@ Un commit por fase, rama `installer-2`, sin Co-Authored-By.
 ## 3. Decisiones (resueltas 2026-10-08)
 
 - **D1 = (a)**: protocolo `app://` en la allowlist de CORS v4. Fallback (b) si API Gateway no acepta el esquema.
-- **D2**: v3 **no** sigue en producción → retirar, no parchear. Se descartan auth/credentials/CORS de v3 y `clients.ts` de v3.
+- **D2 (revisada)**: v3 **sigue en producción** (verificado en AWS). Se cierra en lugar de retirarse: ver Fase 1.
 - **D3**: CSV **no reales** → sin reescritura de historial ni force-push.
 - **D4**: auth Cognito. v4 ya lo usa; v3 irrelevante por D2.
 
@@ -92,4 +95,8 @@ Se llena conforme se aplique cada medida.
 | 2026-10-08 | F2 | H7: sin `.gitignore` raíz que impida reintroducir datos | Medio: recurrencia | `.gitignore` raíz: `*.csv` salvo `!**/*.example.csv`, `.serverless/`, `.agent-config.json`, `.claude/settings*.json`, `.env*` salvo `.env.example` | F2 | `git check-ignore -v` sobre rutas de prueba | Hecho |
 | 2026-10-08 | F2 | Búsqueda de secretos (AKIA, claves privadas, `password=`) y `.env` versionado | — | Ninguno encontrado; sin `.env` en el índice | — | `git grep` + `git ls-files` | Verificado, sin acción |
 | 2026-10-08 | F2 | D3: historial contiene los CSV | Bajo: datos no reales | Sin reescritura ni force-push, por decisión | — | — | Aceptado |
-| 2026-10-08 | F1.1-1.2 | **Premisa D2 contradicha por AWS (solo lectura)**: stack `ana-backend-prod` (us-east-1, cuenta 509399624341) está en `UPDATE_COMPLETE`; `ana-backend-dev` no existe. Su bucket `ana-backend-storage-prod` tiene 2752 objetos / ~7 GB (`agents/`, `assignments/`, `backups/`, `chats/`, `credentials`, `historic/`, `media/`, `versions/` con instaladores ANA-1.0.x hasta feb-2026 y el manifest de autoactualización `versions/latest.json`) | Alto: `serverless remove` rompería el autoupdate de los CLI v3 instalados y puede borrar datos de chats/credenciales sin respaldo; la API pública sin auth sigue expuesta mientras exista | **Retiro NO ejecutado.** Pendiente decisión: (A) respaldo del bucket a otra ubicación + `remove`; (B) dejar v3 vivo pero cerrar: authorizer + CORS + sin `credentials`; (C) congelar: revocar acceso público y mantener solo `versions/` | — | `aws cloudformation describe-stacks`, `aws s3 ls` | Bloqueado, espera decisión |
+| 2026-10-08 | F1.1-1.2 | **Premisa D2 contradicha por AWS (solo lectura)**: stack `ana-backend-prod` (us-east-1, cuenta 509399624341) está en `UPDATE_COMPLETE`; `ana-backend-dev` no existe. Su bucket `ana-backend-storage-prod` tiene 2752 objetos / ~7 GB (`agents/`, `assignments/`, `backups/`, `chats/`, `credentials`, `historic/`, `media/`, `versions/` con instaladores ANA-1.0.x hasta feb-2026 y el manifest de autoactualización `versions/latest.json`) | Alto: `serverless remove` rompería el autoupdate de los CLI v3 instalados y puede borrar datos de chats/credenciales sin respaldo; la API pública sin auth sigue expuesta mientras exista | **Retiro NO ejecutado.** Pendiente decisión: (A) respaldo del bucket a otra ubicación + `remove`; (B) dejar v3 vivo pero cerrar: authorizer + CORS + sin `credentials`; (C) congelar: revocar acceso público y mantener solo `versions/` | — | `aws cloudformation describe-stacks`, `aws s3 ls` | Resuelto: se elige B (cerrar v3) |
+| 2026-10-08 | F1.1 | H3: CORS `*` en 2 capas (yml + 79 literales en 9 handlers) | Alto: cualquier origen web podía invocar la API | `allowedOrigins` = `*.pernexium.com.mx`/`.com` (+ apex); borrados los literales y 18 rutas OPTIONS; `allowedMethods` reducido a GET/POST/OPTIONS (únicos usados) | _commit F1_ | `tsc --noEmit` limpio; 0 ocurrencias de `Access-Control` en handlers; **no desplegado** | Código listo, falta deploy |
+| 2026-10-08 | F1.2 | H1: rutas de supervisor/administración públicas | Crítico | `requireAdmin` (X-Admin-Key, fail-closed) en credentials×3, supervisors×4, `POST /templates` | _commit F1_ | tsc limpio; falta prueba funcional tras deploy | Código listo, falta deploy |
+| 2026-10-08 | F1.3 | H2: `GET /credentials/{campaign}` entregaba claves en texto plano y creaba `admin,acceso2024`; generador con 30 opciones y `Math.random` | Crítico | Admin-only; sin default (404); `randomInt` + sufijo 4 dígitos. Justificación: el CLI no lo usa, solo supervisores | _commit F1_ | tsc limpio; **hay que regenerar claves tras deploy** | Código listo, falta deploy |
+| 2026-10-08 | F1.4 | Riesgo residual: rutas del CLI sin token; lecturas de asignaciones abiertas | Medio | Documentado; pendiente throttling y revisar logs | — | — | Abierto |

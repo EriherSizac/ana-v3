@@ -1,5 +1,8 @@
 # 📋 Documentación de Endpoints para Supervisores
 
+> **Seguridad (actualizado):** las rutas de supervisor (`/credentials/*`, `/supervisors/*` de escritura/descarga, `/agents/*/contacts` POST, `POST /templates`) exigen el header `X-Admin-Key: <ADMIN_API_KEY>`. CORS solo permite `*.pernexium.com.mx` y `*.pernexium.com`. Al ejecutar los `curl` de abajo agrega `-H "X-Admin-Key: $ADMIN_API_KEY"`.
+
+
 ## 🎯 Descripción General
 
 Este documento describe los endpoints disponibles para que los supervisores gestionen credenciales de campaña y contactos de agentes en el sistema de WhatsApp automatizado.
@@ -525,7 +528,7 @@ Esto creará:
 
 ## 🔒 Seguridad
 
-- Todos los endpoints tienen CORS habilitado
+- CORS restringido a dominios pernexium.com.mx y pernexium.com (el preflight lo responde API Gateway)
 - Las credenciales se almacenan en S3 (no en base de datos)
 - Las contraseñas diarias cambian regularmente
 - Los agentes solo pueden acceder a sus propios contactos

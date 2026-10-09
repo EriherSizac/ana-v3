@@ -1,23 +1,10 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
+import { requireAdmin } from '../lib/adminAuth';
+import { randomInt } from 'crypto';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
 const s3Client = new S3Client({ region: 'us-east-1' });
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
-
-/**
- * Handler para OPTIONS - solo retorna 200 para CORS preflight
- */
-export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
-  return {
-    statusCode: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-    body: ''
-  };
-};
 
 /**
  * Frases aleatorias para palabras del día
@@ -59,7 +46,8 @@ const DAILY_PHRASES = [
  * Genera una frase aleatoria para palabra del día
  */
 function generateRandomPhrase(): string {
-  return DAILY_PHRASES[Math.floor(Math.random() * DAILY_PHRASES.length)];
+  // CSPRNG + sufijo numérico: 30 frases solas serían adivinables (1 de 30).
+  return `${DAILY_PHRASES[randomInt(DAILY_PHRASES.length)]}-${randomInt(1000, 10000)}`;
 }
 
 /**
@@ -68,6 +56,8 @@ function generateRandomPhrase(): string {
 export const getCampaignCredentials = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     const { campaign } = event.pathParameters || {};
     
@@ -76,7 +66,6 @@ export const getCampaignCredentials = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -99,29 +88,16 @@ export const getCampaignCredentials = async (
         statusCode: 200,
         headers: {
           'Content-Type': 'text/csv',
-          'Access-Control-Allow-Origin': '*',
         },
         body: csvContent || ''
       };
     } catch (error: any) {
       if (error.name === 'NoSuchKey') {
-        // Si no existe, crear uno por defecto
-        const defaultCsv = 'user,dailyPassword\nadmin,acceso2024\n';
-        
-        await s3Client.send(new PutObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: key,
-          Body: defaultCsv,
-          ContentType: 'text/csv',
-        }));
-
+        // Sin credenciales por defecto: nunca se crea un usuario con clave conocida.
         return {
-          statusCode: 200,
-          headers: {
-            'Content-Type': 'text/csv',
-            'Access-Control-Allow-Origin': '*',
-          },
-          body: defaultCsv
+          statusCode: 404,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ success: false, message: 'Campaña sin credenciales; súbelas con POST /credentials/upload' })
         };
       }
       throw error;
@@ -133,7 +109,6 @@ export const getCampaignCredentials = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: false,
@@ -150,6 +125,8 @@ export const getCampaignCredentials = async (
 export const regenerateDailyPasswords = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     // Parsear el body para obtener campaign
     let requestData;
@@ -160,7 +137,6 @@ export const regenerateDailyPasswords = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -176,7 +152,6 @@ export const regenerateDailyPasswords = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -201,7 +176,6 @@ export const regenerateDailyPasswords = async (
           statusCode: 404,
           headers: {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
           },
           body: JSON.stringify({
             success: false,
@@ -219,7 +193,6 @@ export const regenerateDailyPasswords = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -264,7 +237,6 @@ export const regenerateDailyPasswords = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: true,
@@ -284,7 +256,6 @@ export const regenerateDailyPasswords = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: false,
@@ -301,6 +272,8 @@ export const regenerateDailyPasswords = async (
 export const uploadCampaignCredentials = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     // Parsear el body para obtener campaign y csv
     let requestData;
@@ -311,7 +284,6 @@ export const uploadCampaignCredentials = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -327,7 +299,6 @@ export const uploadCampaignCredentials = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -343,7 +314,6 @@ export const uploadCampaignCredentials = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -358,7 +328,6 @@ export const uploadCampaignCredentials = async (
         statusCode: 400,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
         },
         body: JSON.stringify({
           success: false,
@@ -382,7 +351,6 @@ export const uploadCampaignCredentials = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: true,
@@ -402,7 +370,6 @@ export const uploadCampaignCredentials = async (
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: false,

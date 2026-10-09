@@ -5,21 +5,6 @@ const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 
 /**
- * Handler para OPTIONS - solo retorna 200 para CORS preflight
- */
-export const optionsHandler = async (): Promise<APIGatewayProxyResult> => {
-  return {
-    statusCode: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-    body: ''
-  };
-};
-
-/**
  * Guarda mensajes de chat en un archivo único por contacto
  * Compara con mensajes existentes y solo agrega los nuevos
  */
@@ -158,7 +143,6 @@ export const listChatBackups = async (
     if (!campaign || !agentId) {
       return {
         statusCode: 400,
-        headers: { 'Access-Control-Allow-Origin': '*' },
         body: JSON.stringify({ error: 'campaign and agentId are required' }),
       };
     }
@@ -224,7 +208,6 @@ export const listChatBackups = async (
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
       },
       body: JSON.stringify({
         success: true,
@@ -238,7 +221,6 @@ export const listChatBackups = async (
     console.error('Error listing chat backups:', error);
     return {
       statusCode: 500,
-      headers: { 'Access-Control-Allow-Origin': '*' },
       body: JSON.stringify({
         error: 'Internal server error',
         details: error instanceof Error ? error.message : 'Unknown error',
