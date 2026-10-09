@@ -19,8 +19,8 @@ En la plantilla puedes usar cualquiera de los dos nombres (`{saldo}` funciona so
 
 ## Archivos
 
-- `contactos-demo.csv` — formato v4 mínimo (`telefono,nombre,saldo`)
-- `contactos-demo-v3.csv` — formato estándar v3 completo (`phone_number,first_name,last_name,credit,discount,total_balance,product,message`), con plantilla por contacto en la columna `message` y expresión matemática
+- `contactos-demo.example.csv` — formato v4 mínimo (`telefono,nombre,saldo`)
+- `contactos-demo-v3.example.csv` — formato estándar v3 completo (`phone_number,first_name,last_name,credit,discount,total_balance,product,message`), con plantilla por contacto en la columna `message` y expresión matemática
 
 ## Cómo probar
 

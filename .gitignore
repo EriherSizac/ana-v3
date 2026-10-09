@@ -1,0 +1,12 @@
+# Datos de contactos/credenciales: solo se versionan ejemplos *.example.csv con datos falsos
+*.csv
+!**/*.example.csv
+
+# Artefactos locales
+.serverless/
+.agent-config.json
+.claude/settings.local.json
+.claude/settings.json
+.env
+.env.*
+!.env.example
