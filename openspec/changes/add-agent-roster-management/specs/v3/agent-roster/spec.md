@@ -24,9 +24,9 @@ Un usuario SHALL ser agente de la campaña X si existe en el pool `us-east-2_Uep
 - **WHEN** `ana.lopez` está habilitada y `CONFIRMED` en el pool y tiene el rol `Agente DIDI VIP` (`campaign_name` `DIDI_VIP`) que otorga `ana:campaign:message:send`
 - **THEN** `ana.lopez` es agente de `didi_vip`
 
-#### Scenario: Líder sin envío explícito
-- **WHEN** `luis` solo tiene `Líder DIDI VIP` y ese rol no otorga `ana:campaign:message:send` de forma explícita
-- **THEN** `luis` no es agente de `didi_vip`
+#### Scenario: Líder
+- **WHEN** `luis` solo tiene `Líder DIDI VIP`
+- **THEN** `luis` no es agente de `didi_vip`, porque el nombre del rol no contiene "agente"
 
 #### Scenario: Rol global
 - **WHEN** `erick.silva` solo tiene `Developer` con `campaign_name` `*`
@@ -41,22 +41,26 @@ Un usuario SHALL ser agente de la campaña X si existe en el pool `us-east-2_Uep
 - **THEN** es agente de `prueba`
 
 ### Requirement: Permiso de envío de un rol
-Todo rol SHALL otorgar `ana:campaign:message:send` por defecto (permiso por defecto de v4), salvo que su catálogo local de v4 (por `role_id`) o sus permisos inline (`permissions[].permission_name`) traigan `-ana:campaign:message:send`. Los roles de líder (nombre con "líder"/"lider") o que otorgan `ana:admin:console:manage` MUST otorgarlo solo con el permiso explícito.
+Un rol SHALL ser rol de agente si su `role_name` contiene la palabra "agente" (sin distinguir mayúsculas ni acentos; formato "Agente <Campaña>"). Un rol de agente SHALL otorgar `ana:campaign:message:send` por defecto, salvo deny `-ana:campaign:message:send` en su catálogo local de v4 (por `role_id`) o inline (`permissions[].permission_name`). Un rol sin "agente" en el nombre MUST NOT hacer agente a nadie, aunque traiga el permiso.
 
 #### Scenario: Rol de agente sin configuración
 - **WHEN** el rol `Agente DIDI VIP` no tiene entradas en el catálogo local de v4 ni permisos `ana:*` inline
 - **THEN** el rol otorga envío y sus usuarios son agentes de `didi_vip`
 
+#### Scenario: Nombre en minúsculas o sin acento
+- **WHEN** el rol se llama `agente prueba` o `AGENTE Prueba`
+- **THEN** es rol de agente de su campaña
+
 #### Scenario: Envío desactivado en el rol
-- **WHEN** el catálogo local de v4 del rol `c288ee3e-…` incluye `-ana:campaign:message:send`
-- **THEN** el rol no otorga envío
+- **WHEN** el catálogo local de v4 del rol `Agente DIDI VIP` incluye `-ana:campaign:message:send`
+- **THEN** el rol no otorga envío y sus usuarios no son agentes por ese rol
 
-#### Scenario: Líder con envío explícito
-- **WHEN** el rol `Líder DIDI VIP` tiene `ana:campaign:message:send` explícito en el catálogo local
-- **THEN** sus usuarios son agentes de `didi_vip`
+#### Scenario: Rol que no es de agente con el permiso
+- **WHEN** el rol `Calidad DIDI VIP` tiene `ana:campaign:message:send` explícito en el catálogo local
+- **THEN** sus usuarios no son agentes de `didi_vip`
 
-#### Scenario: Admin sin envío explícito
-- **WHEN** un rol de `prueba` otorga `ana:admin:console:manage` y no trae `ana:campaign:message:send` explícito
+#### Scenario: Admin de campaña
+- **WHEN** un rol `Admin Prueba` otorga `ana:admin:console:manage`
 - **THEN** ese rol no hace agente de `prueba` a sus usuarios
 
 ### Requirement: Lectura de roles desde la API de Roles
