@@ -32,3 +32,12 @@
 ## Migration Plan
 
 Release del desktop por el feed; rollback publicando la versión anterior con número mayor.
+
+## Decisiones de implementación
+
+- **`handle(channel, validador, handler)`** en `main.ts` es el único punto que llama `ipcMain.handle`; cada canal (incluidos los de `v4-fix-desktop-session-lifecycle`: `auth:provide-token`, `update:retry`, `update:bypass-status`, `update:bypass`) declara su validador. El emisor se compara por `processId`/`routingId` contra `mainWindow.webContents.mainFrame` y su URL con `isAppUrl` (empaquetado: `file:` terminado en `/dist/index.html`; dev: origen de `VITE_DEV_SERVER_URL` o `http://localhost:5173`).
+- **Media**: además del tamaño se valida que el base64 sea bien formado (longitud múltiplo de 4 y alfabeto válido) sin decodificarlo; el `caption` puede ser vacío (0–4096). El selector de archivos del chat ahora restringe a `image/*,audio/*,video/*,application/pdf` para no ofrecer tipos que el main rechazaría (antes se aceptaba cualquier documento: **cambio de comportamiento**, p. ej. `.xlsx` ya no se puede enviar).
+- **CSP**: construida por `src/lib/csp.ts` (puro, con pruebas) e inyectada por un plugin de Vite. `frame-ancestors` no se incluye porque los navegadores la ignoran en `<meta>`; se agregó `form-action 'none'`, `media-src` (audio/video de S3) y `font-src data:` (algunas fuentes de @fontsource pueden inlinearse). En dev se agregan el servidor de Vite, `ws:` y `'unsafe-inline'`/`'unsafe-eval'` en scripts (preámbulo de React Refresh). `'unsafe-inline'` en estilos se mantiene también en build (React usa `style={...}` en barras de progreso).
+- **Sin `VITE_API_BASE`** el build no agrega el origen de la API a `connect-src`; como la API vive en `*.execute-api.us-east-2.amazonaws.com` igual queda cubierta por `https://*.amazonaws.com`.
+- **Fuentes**: `@fontsource/inter` (400/500/600/700) y `@fontsource/jost` (500/700/900) importadas en `src/index.css`; el build incluye los `.woff2` en `dist/assets`.
+- Verificaciones manuales pendientes: 2.1 (enlace https y `window.require` en dev), 3.2 (flujo completo empaquetado sin violaciones de CSP), 4.1 (WhatsApp conecta con sandbox en Windows) y release 6.x.

@@ -126,7 +126,8 @@ export class WaClient extends EventEmitter {
         puppeteer: {
           headless: true,
           ...(executablePath ? { executablePath } : {}),
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+          // Sandbox de Chromium ACTIVO (sin --no-sandbox ni --disable-setuid-sandbox).
+          args: ['--disable-dev-shm-usage', '--disable-gpu'],
         },
       });
       this.wire();

@@ -91,6 +91,28 @@ rutas `GET /conversations` y `.../messages` aceptan `?operatorId=`:
 - La vista es **solo lectura** desde otra cuenta: responder requiere la sesión
   WhatsApp del agente dueño, que vive en la máquina de ese agente.
 
+## Seguridad del desktop
+
+- **Ventana**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`; el renderer solo ve `window.ana` (preload).
+- **Navegación**: `will-navigate`/`will-redirect` cancelan cualquier URL fuera de la app (`file://…/dist/index.html` empaquetado o el servidor de Vite en dev). `setWindowOpenHandler` siempre deniega; un enlace `https:` se abre en el navegador del sistema (`shell.openExternal`), otros esquemas se ignoran.
+- **Teclado (build instalado)**: F12 siempre bloqueado; Ctrl/Cmd+Shift+I/J/C y Ctrl/Cmd+U solo sin Alt, para que AltGr (Ctrl+Alt en Windows) escriba `@`, `\`, `|` (`shouldBlockKey` en `electron/ipc/guard.ts`).
+- **CSP** (meta inyectada por `vite.config.ts`, `src/lib/csp.ts`): `default-src 'self'`; `script-src 'self'`; `style-src 'self' 'unsafe-inline'`; `img-src`/`media-src 'self' data: blob: https://*.amazonaws.com`; `font-src 'self' data:`; `connect-src 'self' <VITE_API_BASE> https://cognito-idp.us-east-2.amazonaws.com https://*.amazonaws.com`; `object-src 'none'`; `base-uri 'none'`; `form-action 'none'`. En `vite` (dev) se agregan el servidor de Vite y `ws:`. Fuentes Inter/Jost empaquetadas con `@fontsource` (sin Google Fonts).
+- **Guard IPC** (`electron/ipc/guard.ts`): todo `ipcMain.handle` pasa por `handle(channel, validador, handler)` en `main.ts`. Rechaza con `{ok:false, error:"solicitud inválida"}` si el emisor no es el frame principal de la ventana con la URL de la app o si los argumentos no cumplen: JID `^\d{8,15}@c\.us$`, texto 1–4096, media ≤ 16 MB de tipo `image/*`, `audio/*`, `video/*` o `application/pdf` con nombre saneado, `jobIds` ≤ 5000 de ≤ 200, plantillas ≤ 4096, token JWT o `null`, campaña ≤ 100, contraseña de emergencia ≤ 256.
+
+  | Canal | Argumentos validados |
+  |---|---|
+  | `auth:set-token` | token JWT o `null`, `{reason:'expired'}` opcional |
+  | `auth:provide-token` | token JWT o `null` |
+  | `agent:register` | campaña ≤ 100 o `null` |
+  | `jobs:approve` | `jobIds`, plantillas por archivo |
+  | `jobs:get-assignment`, `update:check`, `update:retry`, `update:bypass-status`, `wa:start`, `wa:stop`, `wa:reset`, `wa:get-state` | sin argumentos |
+  | `update:bypass` | contraseña ≤ 256 |
+  | `wa:send-reply` | JID, texto |
+  | `wa:typing` | JID, booleano |
+  | `wa:send-media` | JID, media |
+
+- **WhatsApp (Chromium de whatsapp-web.js)**: se lanza con su sandbox activo (sin `--no-sandbox` ni `--disable-setuid-sandbox`); se conservan `--disable-dev-shm-usage` y `--disable-gpu`.
+
 ## Layout del repo
 
 ```

@@ -1,9 +1,18 @@
 /*
  * File: index
  * Created: 2026-06-09
- * Updated: 2026-06-09
+ * Updated: 2026-10-26
  * Author: Erick Hernández Silva
  */
+
+/* Fuentes empaquetadas (sin Google Fonts: la CSP solo permite font-src 'self'). */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/jost/500.css';
+@import '@fontsource/jost/700.css';
+@import '@fontsource/jost/900.css';
 
 @tailwind base;
 @tailwind components;

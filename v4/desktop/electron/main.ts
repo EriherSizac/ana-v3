@@ -3,7 +3,7 @@
 // Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
-import { app, BrowserWindow, ipcMain, Menu, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Notification, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { WaClient } from './whatsapp/client';
@@ -15,6 +15,22 @@ import { setupUpdater, retryUpdate, markUpdateBypassed, lastUpdateStatus } from 
 import { TokenBroker, createAuthFetch } from './auth/tokenBroker';
 import { decideSetToken, shouldHeartbeat, type SetTokenReason } from './auth/session';
 import { BypassGuard, type AttemptState } from './update/bypass';
+import {
+  createGuard,
+  isAppUrl,
+  isJid,
+  noArgs,
+  shouldBlockKey,
+  vBool,
+  vCampaign,
+  vIdList,
+  vMedia,
+  vTemplates,
+  vText,
+  vToken,
+  type ArgsValidator,
+  type IpcEventLike,
+} from './ipc/guard';
 
 // El proceso main no lee .env (eso es del renderer vía Vite). Default = backend
 // prod desplegado; override con ANA_API_BASE en el entorno si hace falta.
@@ -52,6 +68,29 @@ const LOCKED = app.isPackaged;
 // instalado. Para re-bloquear, poner DEVTOOLS = false.
 const DEVTOOLS = false;
 
+// Origen de la app para validar navegación y emisores IPC.
+const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173';
+const SENDER_CTX = { packaged: app.isPackaged, devOrigin: new URL(DEV_SERVER_URL).origin };
+
+/** Solo el frame principal de la ventana de la app, con su URL esperada. */
+function isTrustedSender(event: IpcEventLike): boolean {
+  const frame = event.senderFrame;
+  if (!frame || !mainWindow || mainWindow.isDestroyed()) return false;
+  const main = mainWindow.webContents.mainFrame;
+  const f = frame as unknown as { processId?: number; routingId?: number };
+  if (f.processId !== main.processId || f.routingId !== main.routingId) return false;
+  return isAppUrl(frame.url, SENDER_CTX);
+}
+const guard = createGuard(isTrustedSender);
+/** `ipcMain.handle` con validación de emisor y argumentos (ipc/guard.ts). */
+function handle<A extends unknown[], R>(
+  channel: string,
+  validate: ArgsValidator<A>,
+  handler: (...args: A) => R,
+) {
+  ipcMain.handle(channel, guard(channel, validate, handler) as (e: unknown, ...a: unknown[]) => unknown);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -60,6 +99,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
       devTools: !LOCKED || DEVTOOLS,
     },
   });
@@ -68,16 +109,27 @@ function createWindow() {
   if (LOCKED) Menu.setApplicationMenu(null);
 
   const wc = mainWindow.webContents;
+  // Navegación: solo dentro de la app. Ventanas nuevas: nunca; https → navegador del sistema.
+  const blockForeign = (e: { preventDefault: () => void }, url: string) => {
+    if (!isAppUrl(url, SENDER_CTX)) e.preventDefault();
+  };
+  wc.on('will-navigate', blockForeign);
+  wc.on('will-redirect', blockForeign);
+  wc.setWindowOpenHandler(({ url }) => {
+    try {
+      if (new URL(url).protocol === 'https:') void shell.openExternal(url);
+    } catch {
+      /* URL inválida: se ignora */
+    }
+    return { action: 'deny' };
+  });
+
   if (LOCKED && !DEVTOOLS) {
     wc.on('context-menu', (e) => e.preventDefault());
     wc.on('devtools-opened', () => wc.closeDevTools());
+    // F12 siempre; atajos de DevTools solo sin Alt (AltGr = Ctrl+Alt debe escribir).
     wc.on('before-input-event', (event, input) => {
-      const k = (input.key || '').toLowerCase();
-      const devtools =
-        k === 'f12' ||
-        ((input.control || input.meta) && input.shift && (k === 'i' || k === 'j' || k === 'c')) ||
-        ((input.control || input.meta) && k === 'u');
-      if (devtools) event.preventDefault();
+      if (shouldBlockKey(input)) event.preventDefault();
     });
   } else if (DEVTOOLS) {
     // F12 abre/cierra DevTools (el menú está oculto).
@@ -94,7 +146,7 @@ function createWindow() {
   if (app.isPackaged) {
     void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   } else {
-    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173');
+    void mainWindow.loadURL(DEV_SERVER_URL);
   }
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => (mainWindow = null));
@@ -202,11 +254,17 @@ const poller = new JobPoller({
 // ---- IPC desde el renderer ----
 // El agente aprueba qué enviar (y con qué plantilla) desde "Mi asignación".
 // templates: plantilla aprobada por archivo (clave srcKey o campaignId).
-ipcMain.handle('jobs:approve', (_e, jobIds: string[], templates?: Record<string, string>) =>
-  poller.approve(jobIds, templates && typeof templates === 'object' ? templates : {}),
+handle(
+  'jobs:approve',
+  ([ids, tpls]) => {
+    const jobIds = vIdList(ids);
+    const templates = vTemplates(tpls);
+    return jobIds && templates ? ([jobIds, templates] as [string[], Record<string, string>]) : undefined;
+  },
+  (jobIds, templates) => poller.approve(jobIds, templates),
 );
 // Hidrata la vista al montarse (sin esperar al próximo poll).
-ipcMain.handle('jobs:get-assignment', () => poller.getAssignment());
+handle('jobs:get-assignment', noArgs, () => poller.getAssignment());
 // Recuerda el último operador que usó WhatsApp en esta máquina (persiste entre
 // reinicios) → al entrar OTRO usuario se bota el auth local del anterior.
 const LAST_OP_FILE = path.join(app.getPath('userData'), '.ana-last-operator');
@@ -225,9 +283,17 @@ const writeLastOperator = (op: string) => {
   }
 };
 
-ipcMain.handle(
+handle(
   'auth:set-token',
-  async (_e, token: string | null, opts?: { reason?: SetTokenReason }) => {
+  ([t, o]) => {
+    const token = vToken(t);
+    if (token === undefined) return undefined;
+    if (o === undefined || o === null) return [token, undefined] as [string | null, undefined];
+    if (typeof o === 'object' && (o as { reason?: unknown }).reason === 'expired')
+      return [token, { reason: 'expired' as const }] as [string | null, { reason?: SetTokenReason }];
+    return undefined;
+  },
+  async (token: string | null, opts?: { reason?: SetTokenReason }) => {
     const action = decideSetToken({
       token,
       reason: opts?.reason,
@@ -279,15 +345,22 @@ ipcMain.handle(
   },
 );
 // Respuesta del renderer a `auth:token-request` (null = no pudo renovar ahora).
-ipcMain.handle('auth:provide-token', (_e, token: string | null) => {
-  broker.provide(token);
-  return { ok: true };
-});
+handle(
+  'auth:provide-token',
+  ([t]) => {
+    const token = vToken(t);
+    return token === undefined ? undefined : ([token] as [string | null]);
+  },
+  (token) => {
+    broker.provide(token);
+    return { ok: true };
+  },
+);
 
 // El renderer dispara el check cuando ya tiene el listener montado (UpdateGate)
 // → evita la carrera de perder el evento 'none'/'available'. Idempotente: una
 // recarga solo recibe la última fase (sin listeners ni intervalos nuevos).
-ipcMain.handle('update:check', () => {
+handle('update:check', noArgs, () => {
   if (mainWindow)
     setupUpdater(mainWindow, {
       // Al terminar la descarga: no iniciar jobs nuevos, esperar el job en curso
@@ -299,7 +372,7 @@ ipcMain.handle('update:check', () => {
     });
   return { ok: true };
 });
-ipcMain.handle('update:retry', () => {
+handle('update:retry', noArgs, () => {
   retryUpdate();
   return { ok: true };
 });
@@ -334,13 +407,19 @@ const bypassGuard = new BypassGuard(readBuildConfig().updateBypassHash, {
 /** Solo aplica cuando el chequeo terminó en error (no 404) en el build instalado. */
 const bypassApplies = () => app.isPackaged && lastUpdateStatus()?.phase === 'error';
 
-ipcMain.handle('update:bypass-status', () => {
+handle('update:bypass-status', noArgs, () => {
   const st = bypassGuard.status();
   return { ...st, available: st.available && bypassApplies() };
 });
-ipcMain.handle('update:bypass', (_e, password: string) => {
+handle(
+  'update:bypass',
+  ([p]) => {
+    const password = vText(p, 256);
+    return password === undefined ? undefined : ([password] as [string]);
+  },
+  (password) => {
   if (!bypassApplies()) return { ok: false, reason: 'unavailable', ...bypassGuard.status() };
-  const r = bypassGuard.verify(String(password ?? ''));
+  const r = bypassGuard.verify(password);
   if (r.ok) {
     // Registro del evento. No hay ruta de backend para auditoría y aún no hay
     // sesión (el gate va antes del login): consola + archivo local.
@@ -360,7 +439,8 @@ ipcMain.handle('update:bypass', (_e, password: string) => {
     markUpdateBypassed();
   }
   return r;
-});
+  },
+);
 
 /** Heartbeat solo con campaña registrada y WhatsApp `connected` (no en QR). */
 function heartbeatIfConnected() {
@@ -368,30 +448,43 @@ function heartbeatIfConnected() {
     void backend.heartbeat(agentCampaign);
 }
 
-ipcMain.handle('agent:register', (_e, campaign: string | null) => {
-  agentCampaign = campaign;
-  heartbeatIfConnected();
-  return { ok: true };
-});
+handle(
+  'agent:register',
+  ([c]) => {
+    const campaign = vCampaign(c);
+    return campaign === undefined ? undefined : ([campaign] as [string | null]);
+  },
+  (campaign) => {
+    agentCampaign = campaign;
+    heartbeatIfConnected();
+    return { ok: true };
+  },
+);
 
 // Heartbeat periódico mientras haya campaña + WhatsApp conectado.
 setInterval(heartbeatIfConnected, HEARTBEAT_MS);
-ipcMain.handle('wa:start', async () => {
+handle('wa:start', noArgs, async () => {
   await wa.start();
   return { ok: true };
 });
 // Estado actual (para que el renderer lo recupere tras refresh).
-ipcMain.handle('wa:get-state', () => wa.getState());
-ipcMain.handle('wa:stop', async () => {
+handle('wa:get-state', noArgs, () => wa.getState());
+handle('wa:stop', noArgs, async () => {
   await wa.stop();
   return { ok: true };
 });
-ipcMain.handle('wa:reset', async () => {
+handle('wa:reset', noArgs, async () => {
   await wa.clearSession(); // borra sesión muerta
   await wa.start(); // arranca limpio → debe salir QR
   return { ok: true };
 });
-ipcMain.handle('wa:send-reply', async (_e, jid: string, body: string) => {
+handle(
+  'wa:send-reply',
+  ([j, b]) => {
+    const body = vText(b);
+    return isJid(j) && body !== undefined ? ([j, body] as [string, string]) : undefined;
+  },
+  async (jid, body) => {
   try {
     // Manual: el typing ya se mostró en vivo mientras escribías → sin delay extra.
     const msg = await wa.sendText(jid, body, false);
@@ -400,18 +493,26 @@ ipcMain.handle('wa:send-reply', async (_e, jid: string, body: string) => {
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
   }
-});
-ipcMain.handle('wa:typing', async (_e, jid: string, on: boolean) => {
-  await wa.setTyping(jid, on);
-  return { ok: true };
-});
-ipcMain.handle(
+  },
+);
+handle(
+  'wa:typing',
+  ([j, o]) => {
+    const on = vBool(o);
+    return isJid(j) && on !== undefined ? ([j, on] as [string, boolean]) : undefined;
+  },
+  async (jid, on) => {
+    await wa.setTyping(jid, on);
+    return { ok: true };
+  },
+);
+handle(
   'wa:send-media',
-  async (
-    _e,
-    jid: string,
-    m: { dataBase64: string; mimetype: string; filename: string; caption?: string },
-  ) => {
+  ([j, media]) => {
+    const m = vMedia(media);
+    return isJid(j) && m ? ([j, m] as [string, NonNullable<ReturnType<typeof vMedia>>]) : undefined;
+  },
+  async (jid, m) => {
     try {
       const msg = await wa.sendMediaData(jid, m);
       // Respaldo a S3 + puntero, igual que la media entrante.

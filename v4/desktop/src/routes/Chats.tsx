@@ -411,6 +411,8 @@ export function Chats({
                     📎
                     <input
                       type="file"
+                      // Mismos tipos que acepta el main (ipc/guard.ts): imagen, audio, video o PDF.
+                      accept="image/*,audio/*,video/*,application/pdf"
                       className="hidden"
                       disabled={replySending}
                       onChange={(e) => {
