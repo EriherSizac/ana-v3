@@ -1,6 +1,6 @@
 # File: serverless
 # Created: 2026-06-09
-# Updated: 2026-06-10
+# Updated: 2026-10-26
 # Author: Erick Hernández Silva
 
 service: ana-backend
@@ -59,8 +59,11 @@ provider:
     INTERACTIONS_API_KEY: ${env:INTERACTIONS_API_KEY, ''}
     # user_id del CRM con el que se registran las interacciones.
     INTERACTIONS_USER_ID: ${env:INTERACTIONS_USER_ID, ''}
-    # Key del endpoint sistema-a-sistema POST /send (backend/.env).
-    SEND_API_KEY: ${env:SEND_API_KEY, ''}
+    # Keys del endpoint sistema-a-sistema POST /send: SecureString en SSM
+    # (us-east-2), resueltas al desplegar. NUNCA en el repo ni en .env.
+    # send-api-key es obligatoria; send-api-key-next solo durante una rotación.
+    SEND_API_KEY: ${ssm:/ana/v4/${sls:stage}/send-api-key}
+    SEND_API_KEY_NEXT: ${ssm:/ana/v4/${sls:stage}/send-api-key-next, ''}
   httpApi:
     cors: true
     authorizers:
@@ -252,6 +255,18 @@ functions:
             - suffix: .csv
 
 resources:
+  # Límite de tasa de POST /send en API Gateway (429 sin invocar la Lambda).
+  # HttpApiStage es el stage que genera Serverless para httpApi.
+  extensions:
+    HttpApiStage:
+      DependsOn:
+        - HttpApiRoutePostSend
+      Properties:
+        RouteSettings:
+          'POST /send':
+            ThrottlingRateLimit: 5
+            ThrottlingBurstLimit: 10
+
   Resources:
     # Aislamiento multi-operador: operatorId en la PK → un operador solo
     # puede Query su propia partición. Sin GSI, sin Scan cross-tenant.

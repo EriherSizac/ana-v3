@@ -40,3 +40,13 @@
 ## Open Questions
 
 - Qué sistemas llaman hoy `POST /send` en prod (CRM, dashboard, automatizaciones) y quién recibe la key nueva; se responde con los logs antes del paso 1 sin cambiar el diseño.
+
+## Decisiones de implementación
+
+- **Distinguir "fuente caída" de "sin agentes".** `getEligibleAgents` devolvía `[]` en ambos casos. Se agregó `fetchEligibleAgents` en `lib/dashboard.ts` (misma fuente y regla) que devuelve `null` si la API falla; `getEligibleAgents` quedó como envoltorio `?? []`, sin cambio de comportamiento para `api.ts`/`csvTrigger.ts`. Cuando `add-agent-roster-management` introduzca su regla de habilitación, `directSend` debe pasar a usarla (D5).
+- **`PutCommand` siempre condicional.** También sin `idempotencyKey` se usa `attribute_not_exists(jobId)`: con el sufijo aleatorio la colisión es improbable, pero si ocurriera se responde 500 en lugar de pisar un job. Solo con clave el `ConditionalCheckFailedException` se traduce a `200 duplicate: true`.
+- **Keys leídas en cada invocación.** `SEND_API_KEY`/`SEND_API_KEY_NEXT` se leen de `process.env` dentro del handler (no al importar), lo que permite probar el caso "sin keys → 401" y no cambia el costo.
+- **Orden de validación**: auth → campos requeridos → `idempotencyKey` → campaña → agente → `Put`. Una `idempotencyKey` inválida responde 400 antes de consultar fuentes externas.
+- **Throttling** vía `resources.extensions.HttpApiStage.Properties.RouteSettings['POST /send']` con `DependsOn: HttpApiRoutePostSend` (el stage referencia la ruta por su `routeKey`).
+- **Fin de rotación**: SSM no admite un `String`/`SecureString` vacío, así que "vaciar `send-api-key-next`" se hace borrando el parámetro; `serverless.yml` usa default `''`.
+- **Verificación de `serverless package` no ejecutada**: Serverless Framework v4 exige `serverless login` o `SERVERLESS_ACCESS_KEY`/licencia y la resolución `${ssm:...}` necesita credenciales AWS y el parámetro creado; la tarea 2.3 queda sin marcar hasta correrla.

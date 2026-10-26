@@ -27,13 +27,22 @@ const INTERNAL_EMAIL = /@pernexium\.com\.mx|@dirsa/i;
  * [] si la API falla (el caller decide el fallback).
  */
 export async function getEligibleAgents(campaign: string): Promise<string[]> {
+  return (await fetchEligibleAgents(campaign)) ?? [];
+}
+
+/**
+ * Igual que `getEligibleAgents` (misma fuente y regla), pero distingue la falla
+ * de la fuente: `null` si la API falla (red o no-2xx), `[]` si no hay agentes.
+ * `POST /send` lo usa para responder 503 (fail-closed) en vez de 400.
+ */
+export async function fetchEligibleAgents(campaign: string): Promise<string[] | null> {
   try {
     const res = await fetch(`${BASE}/users/campaign/${encodeURIComponent(campaign)}`, {
       headers: { 'X-Api-Key': KEY },
     });
     if (!res.ok) {
       console.error('[dashboard] /users/campaign falló', res.status);
-      return [];
+      return null;
     }
     const { users = [] } = (await res.json()) as { users?: DashUser[] };
     const requiredRole = process.env[`AGENT_ROLE_${campaign.toUpperCase()}`];
@@ -46,6 +55,6 @@ export async function getEligibleAgents(campaign: string): Promise<string[]> {
       .filter(Boolean);
   } catch (e) {
     console.error('[dashboard] error red /users/campaign', e);
-    return [];
+    return null;
   }
 }

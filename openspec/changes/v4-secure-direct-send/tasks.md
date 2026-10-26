@@ -3,22 +3,22 @@
 ## 1. Preparación
 
 - [ ] 1.1 Revisar en CloudWatch (`/aws/lambda/ana-backend-prod-directSend`, 30 días) quién llama `POST /send` (IP de origen, User-Agent, volumen) y listar los integradores a contactar; verificar dejando la lista en el PR
-- [ ] 1.2 Agregar `vitest` y `aws-sdk-client-mock` como devDependencies de `v4/backend` con script `test` (solo si ningún cambio previo lo hizo); verificar con `npm test` en verde con una prueba vacía
+- [x] 1.2 Agregar `vitest` y `aws-sdk-client-mock` como devDependencies de `v4/backend` con script `test` (solo si ningún cambio previo lo hizo); verificar con `npm test` en verde con una prueba vacía
 
 ## 2. Autenticación y límite de tasa
 
-- [ ] 2.1 Crear `src/lib/apiKey.ts` con `matchesApiKey(header, keys[])` (SHA-256 + `timingSafeEqual`, evalúa todas las keys, vacías ignoradas); verificar con vitest: key actual, key `NEXT`, key incorrecta, header ausente y ambas vacías → false
-- [ ] 2.2 Usar `matchesApiKey` en `directSend.ts` con `SEND_API_KEY` y `SEND_API_KEY_NEXT`; verificar con vitest del handler que sin keys configuradas responde 401 aunque llegue header
+- [x] 2.1 Crear `src/lib/apiKey.ts` con `matchesApiKey(header, keys[])` (SHA-256 + `timingSafeEqual`, evalúa todas las keys, vacías ignoradas); verificar con vitest: key actual, key `NEXT`, key incorrecta, header ausente y ambas vacías → false
+- [x] 2.2 Usar `matchesApiKey` en `directSend.ts` con `SEND_API_KEY` y `SEND_API_KEY_NEXT`; verificar con vitest del handler que sin keys configuradas responde 401 aunque llegue header
 - [ ] 2.3 Cambiar `serverless.yml` para leer ambas variables de `${ssm:/ana/v4/${sls:stage}/send-api-key}` y `send-api-key-next` (opcional) y agregar `RouteSettings` de throttling para `POST /send` (5 rps, ráfaga 10); verificar con `npx serverless package --stage dev` que la plantilla contiene el `RouteSettings` y que no queda `${env:SEND_API_KEY}`
 
 ## 3. Encolado y validación
 
-- [ ] 3.1 Generar `jobId` con sufijo aleatorio y soportar `idempotencyKey` con `PutCommand` condicional (`attribute_not_exists(jobId)`) y respuesta `duplicate: true`; verificar con vitest (aws-sdk-client-mock): dos llamadas mismo ms → ids distintos; misma clave → un solo `Put` exitoso y misma respuesta; clave inválida → 400
-- [ ] 3.2 Validar `username` contra `getEligibleAgents(campaign)` sin distinguir mayúsculas (400 si no está, 503 si la fuente falla) y escribir con la grafía devuelta; verificar con vitest los tres casos de `specs/v4/direct-send/spec.md`
+- [x] 3.1 Generar `jobId` con sufijo aleatorio y soportar `idempotencyKey` con `PutCommand` condicional (`attribute_not_exists(jobId)`) y respuesta `duplicate: true`; verificar con vitest (aws-sdk-client-mock): dos llamadas mismo ms → ids distintos; misma clave → un solo `Put` exitoso y misma respuesta; clave inválida → 400
+- [x] 3.2 Validar `username` contra `getEligibleAgents(campaign)` sin distinguir mayúsculas (400 si no está, 503 si la fuente falla) y escribir con la grafía devuelta; verificar con vitest los tres casos de `specs/v4/direct-send/spec.md`
 
 ## 4. Documentación
 
-- [ ] 4.1 Reescribir `v4/ENVIO_DIRECTO.md` sin el valor de la key (placeholder `<SEND_API_KEY>`), con dónde vive (SSM), cómo pedirla, rotación, errores 400 (campaña inexistente, agente fuera de campaña, `idempotencyKey` inválida), 429 y `idempotencyKey`; verificar con `git grep -n "04a272bf" -- v4` sin resultados
+- [x] 4.1 Reescribir `v4/ENVIO_DIRECTO.md` sin el valor de la key (placeholder `<SEND_API_KEY>`), con dónde vive (SSM), cómo pedirla, rotación, errores 400 (campaña inexistente, agente fuera de campaña, `idempotencyKey` inválida), 429 y `idempotencyKey`; verificar con `git grep -n "04a272bf" -- v4` sin resultados
 
 ## 5. Despliegue y rotación
 

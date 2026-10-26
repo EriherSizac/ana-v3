@@ -7,7 +7,9 @@
     "deploy": "serverless deploy",
     "deploy:prod": "serverless deploy --stage prod",
     "remove": "serverless remove",
-    "logs": "serverless logs -f api -t"
+    "logs": "serverless logs -f api -t",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.700.0",
@@ -21,8 +23,10 @@
     "@types/aws-lambda": "^8.10.145",
     "@types/node": "^24.3.1",
     "@types/pg": "^8.11.10",
+    "aws-sdk-client-mock": "^4.1.0",
     "serverless": "^4.4.0",
     "serverless-prune-plugin": "^2.1.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.5"
   }
 }
