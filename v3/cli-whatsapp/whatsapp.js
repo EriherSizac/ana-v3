@@ -3,7 +3,6 @@ import './setup-env.js';
 
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
-import { replaceVariables } from './message-utils.js';
 import { loadAgentConfig, saveAgentConfig, hasAgentConfig } from './agent-config.js';
 
 let autoBrowser = null;
@@ -1260,7 +1259,8 @@ export async function sendMessage(contact, messageTemplate) {
         response: '',
       };
     }
-    const personalizedMessage = replaceVariables(messageTemplate, contact);
+    // El mensaje ya llega renderizado desde parseAssignmentCsv (una sola pasada)
+    const personalizedMessage = String(messageTemplate ?? '');
     
     console.log(`\n📤 Enviando a ${contact.name} (${contact.phone})...`);
     

@@ -53,3 +53,11 @@ Nuevo `v3/cli-whatsapp/template-utils.js` sin imports con efectos. Pruebas en `v
 2. Prueba manual con una asignación de prueba propia (`direct: true`) que contenga `{{name}}`, `{first_name}`, `{{total_balance}}` y `{{total_balance * 0.5}}`.
 3. `build-completo.ps1` (incrementa patch) y `npm run upload`; los CLIs instalados se actualizan al siguiente arranque.
 4. Rollback: republicar `versions/latest.json` apuntando a la versión anterior no hace downgrade (solo se actualiza si la remota es mayor); el rollback real es publicar una versión mayor con el código anterior.
+
+## Decisiones de implementación
+
+- **Script `test` = `node --test` (sin argumento `test/`).** Con Node 22 (máquina de desarrollo) `node --test test/` falla con `MODULE_NOT_FOUND`: desde Node 21 los argumentos posicionales son patrones glob y un directorio no se expande. `node --test` sin argumentos usa el descubrimiento por defecto (`test/**/*.js`, `**/*.test.js`, excluye `node_modules`) y funciona igual en Node 18 (el embebido en el portable) y en Node 22. Las pruebas viven en `v3/cli-whatsapp/test/` como pedía D4.
+- **`parseAssignmentCsv` se movió ya con el renderizado (tareas 1.2 y 2.3 en un solo paso).** El resultado final es el mismo que hacerlo en dos pasos; la prueba de parseo y la de CSV → mensaje final están en `test/assignment-csv.test.js`.
+- **`sendMessage` envía `String(messageTemplate ?? '')`.** Antes `replaceVariables(undefined)` lanzaba; ahora un mensaje ausente se envía vacío y el flujo existente decide (no hay otros llamadores además de `index.js`).
+- **Búsqueda por clave con `hasOwnProperty`.** `renderTemplate` ignora propiedades heredadas del prototipo (`{constructor}` queda literal en lugar de insertar código de función); no afecta columnas reales.
+- **Verificación del empaquetado sin ejecutar `build-portable.ps1`.** Ese script incrementa la versión de `package.json` y descarga Node/Chromium, así que no se ejecutó; se verificó en local que el cierre de imports relativos de `$filesToCopy` está completo y que `esbuild` empaqueta `index.js` sin errores. La tarea 3.1 queda pendiente de la verificación manual del build.

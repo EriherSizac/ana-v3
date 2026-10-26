@@ -1,77 +1,15 @@
+import { renderTemplate } from './template-utils.js';
+
 /**
- * Reemplaza variables en el mensaje con datos del contacto
- * @param {string} template - Plantilla del mensaje con variables {{variable}}
+ * Reemplaza variables en el mensaje con datos del contacto.
+ * Envoltorio de compatibilidad sobre renderTemplate (una sola pasada); el flujo
+ * automático ya renderiza el mensaje en parseAssignmentCsv.
+ * @param {string} template - Plantilla del mensaje con variables {{variable}} o {variable}
  * @param {Object} contact - Objeto con los datos del contacto
  * @returns {string} Mensaje personalizado
  */
 export function replaceVariables(template, contact) {
-  let message = template;
-  
-  // Primero, mapear las variables estándar (para compatibilidad)
-  const standardReplacements = {
-    '{{phone}}': contact.phone || '',
-    '{{name}}': contact.name || '',
-    '{{first_name}}': contact.first_name || '',
-    '{{last_name}}': contact.last_name || '',
-    '{{credit}}': contact.credit || '',
-    '{{discount}}': contact.discount || '',
-    '{{total_balance}}': contact.total_balanc || '',
-    '{{total_balanc}}': contact.total_balanc || '', // Compatibilidad con versión anterior
-    '{{product}}': contact.product || '',
-  };
-
-  Object.entries(standardReplacements).forEach(([key, value]) => {
-    const regex = new RegExp(key.replace(/[{}]/g, '\\$&'), 'g');
-    message = message.replace(regex, value);
-  });
-
-  // Luego, reemplazar CUALQUIER otra variable que venga del CSV original
-  // Buscar todas las variables {{algo}} en el mensaje (puede incluir expresiones matemáticas)
-  const variablePattern = /\{\{([^}]+)\}\}/g;
-  message = message.replace(variablePattern, (match, varExpr) => {
-    const trimmed = varExpr.trim();
-
-    // Detectar si es una expresión matemática: contiene operadores o funciones
-    const hasMathOp = /[+\-*\/()^%]/.test(trimmed);
-
-    if (hasMathOp) {
-      // Reemplazar nombres de columnas por sus valores numéricos
-      let expr = trimmed.replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, (colName) => {
-        if (contact.hasOwnProperty(colName)) {
-          const val = parseFloat(String(contact[colName]).replace(/,/g, '.'));
-          if (!isNaN(val)) return val;
-        }
-        return colName;
-      });
-
-      try {
-        // Evaluar solo expresiones numéricas seguras
-        if (/^[0-9+\-*\/().\s%]+$/.test(expr)) {
-          // eslint-disable-next-line no-new-func
-          const result = Function('"use strict"; return (' + expr + ')')();
-          if (typeof result === 'number' && isFinite(result)) {
-            // Redondear a 2 decimales si tiene parte decimal
-            return Number.isInteger(result) ? String(result) : result.toFixed(2);
-          }
-        }
-      } catch (_) {
-        // Si falla la evaluación, continuar al fallback
-      }
-    }
-
-    // Variable simple: si existe en el contacto, usarla
-    if (contact.hasOwnProperty(trimmed)) {
-      return contact[trimmed] || '';
-    }
-
-    // Si no existe, dejar la variable sin reemplazar
-    return match;
-  });
-
-  // Convertir \n literales a saltos de línea reales
-  message = message.replace(/\\n/g, '\n');
-
-  return message;
+  return renderTemplate(template, { fields: contact || {}, raw: contact || {} });
 }
 
 /**
