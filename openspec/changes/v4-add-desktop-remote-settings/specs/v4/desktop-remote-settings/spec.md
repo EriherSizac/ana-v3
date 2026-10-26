@@ -7,7 +7,7 @@ Permitir que el rol Developer ajuste sin release, desde ANA Admin, parámetros o
 ## ADDED Requirements
 
 ### Requirement: Catálogo de configuración del desktop
-El sistema SHALL reconocer solo estas llaves: `sendMinGapSeconds` (entero de 60 a 600, por defecto 120), `sendMaxPerWindow` (entero de 1 a 20, por defecto 7), `sendWindowMinutes` (entero de 5 a 60, por defecto 20) y `openChatInteraction` (booleano, por defecto `true`), cada una con etiqueta y descripción en español.
+El sistema SHALL reconocer solo estas llaves: `sendMinGapSeconds` (entero de 60 a 600, por defecto 120), `sendMaxPerWindow` (entero de 1 a 20, por defecto 7), `sendWindowMinutes` (entero de 5 a 60, por defecto 20) y `openChatInteraction` (booleano, por defecto `false`), cada una con etiqueta y descripción en español.
 
 #### Scenario: Llave desconocida
 - **WHEN** un Developer intenta guardar `{"values":{"foo":1}}`
@@ -18,7 +18,7 @@ La configuración efectiva SHALL ser los valores guardados sobre los valores por
 
 #### Scenario: Nunca configurada
 - **WHEN** no existe configuración guardada
-- **THEN** la configuración efectiva es `sendMinGapSeconds: 120`, `sendMaxPerWindow: 7`, `sendWindowMinutes: 20` y `openChatInteraction: true`
+- **THEN** la configuración efectiva es `sendMinGapSeconds: 120`, `sendMaxPerWindow: 7`, `sendWindowMinutes: 20` y `openChatInteraction: false`
 
 ### Requirement: Autorización Developer
 `GET /admin/desktop-settings` y `PUT /admin/desktop-settings` MUST permitirse solo a usuarios con algún rol cuyo nombre contenga "developer" sin distinguir mayúsculas ni acentos, sin depender de `PERMISSIONS_ENFORCED` ni de los permisos `ana:*`; en otro caso responden 403 `{"error":"sin permiso"}`. `GET /me` SHALL incluir `isDeveloper`.
@@ -62,6 +62,10 @@ El desktop SHALL leer `GET /settings` tras iniciar sesión y cada 5 minutos, con
 #### Scenario: Backend caído al arrancar
 - **WHEN** el desktop arranca y `GET /settings` falla
 - **THEN** usa los valores por defecto y vuelve a intentar a los 5 minutos
+
+#### Scenario: Activar el registro de apertura
+- **WHEN** un Developer guarda `openChatInteraction: true`
+- **THEN** en máximo 5 minutos los desktops conectados vuelven a notificar la apertura de chats propios
 
 #### Scenario: Cambio propagado
 - **WHEN** un Developer cambia `sendMinGapSeconds` a 180

@@ -23,3 +23,24 @@ El sistema SHALL marcar `isLeader = true` cuando algún `role_name` contiene "li
 #### Scenario: Líder envía su propio CSV
 - **WHEN** un líder consulta `GET /me`
 - **THEN** sus permisos incluyen `ana:campaign:message:send`
+
+## ADDED Requirements
+
+### Requirement: Superadmin por rol
+Además del superadmin fijo, el sistema SHALL tratar como superadmin a un usuario si algún `role_name` contiene "superadmin" tras pasar a minúsculas y quitar diacríticos, espacios, guiones y guiones bajos (p. ej. "Superadmin", "Súper Admin", "super-admin"). Su acceso MUST ser el del superadmin fijo (`campaigns: ["*"]`, todos los permisos, `isAdmin` e `isLeader` en `true`) conservando sus `roleIds` y `roleNames` reales, y SHALL cachearse e invalidarse como cualquier acceso.
+
+#### Scenario: Rol Superadmin
+- **WHEN** un usuario distinto de `erick.silva` tiene el rol "Súper Admin"
+- **THEN** `GET /me` devuelve `campaigns: ["*"]`, todos los permisos e `isAdmin: true`, y pasa los chequeos explícitos de cualquier ruta
+
+#### Scenario: Pierde el rol
+- **WHEN** se le quita el rol "Superadmin" en la API de Roles
+- **THEN** a más tardar al vencer la caché de acceso deja de tener acceso total
+
+#### Scenario: API de roles caída
+- **WHEN** la API de Roles no responde y el usuario no tiene acceso en caché
+- **THEN** no obtiene acceso de superadmin (solo el superadmin fijo conserva acceso total sin la API)
+
+#### Scenario: Nombre parecido
+- **WHEN** el usuario solo tiene el rol "Administrador Zendere"
+- **THEN** no se le trata como superadmin

@@ -3,7 +3,7 @@
 ## 1. Backend
 
 - [ ] 1.1 Agregar `vitest` y `aws-sdk-client-mock` a `v4/backend` si ningún cambio previo lo hizo; verificar con `npm test`
-- [ ] 1.2 Crear `src/lib/desktopSettings.ts` (catálogo, validación, merge efectivo) según design D2; verificar con vitest: sin configuración → defaults; valor guardado fuera de límites → default; llave desconocida → error; límites exactos (60 y 600 válidos, 59 inválido)
+- [ ] 1.2 Crear `src/lib/desktopSettings.ts` (catálogo, validación, merge efectivo) según design D2; verificar con vitest: sin configuración → defaults (incluido `openChatInteraction: false`); valor guardado fuera de límites → default; llave desconocida → error; límites exactos (60 y 600 válidos, 59 inválido)
 - [ ] 1.3 Agregar `isDeveloper` a `resolveUserAccess` (`access.ts`) y a `GET /me`; verificar con vitest (`"Developer"`, `"developer backend"`, `"Desarrollador"` → solo los dos primeros; no agrega permisos `ana:*`)
 - [ ] 1.4 Crear `src/handlers/settings.ts` con `GET /admin/desktop-settings`, `PUT /admin/desktop-settings` (versión condicional, auditoría por llave) y `GET /settings`, y registrarlas en `serverless.yml` con `cognitoJwt`; verificar con vitest + aws-sdk-client-mock de cada escenario de `specs/v4/desktop-remote-settings/spec.md` (403 sin Developer, 409 por versión, 400 por límites)
 
@@ -11,7 +11,7 @@
 
 - [ ] 2.1 Agregar `vitest` a `v4/desktop` si ningún cambio previo lo hizo; crear `electron/settings/remoteSettings.ts` (lectura tras token y cada 5 min, último valor, defaults); verificar con vitest con timers y `fetch` falsos (falla inicial → defaults; falla posterior → conserva último)
 - [ ] 2.2 Parametrizar el ritmo en `JobPoller` leyendo la configuración en cada cálculo de espera; verificar con vitest (gap 180 s → no envía antes; máximo 5 por ventana → el sexto espera)
-- [ ] 2.3 Exponer `getSettings()`/`onSettings()` en `preload.ts` (con el guard IPC si `v4-harden-desktop-shell` ya está aplicado) y condicionar `POST /interactions/open` en `Chats.tsx` a `openChatInteraction`; verificar con `npm run build` y manualmente en dev cambiando el valor en dev (sin llamada a `/interactions/open` con `false`)
+- [ ] 2.3 Exponer `getSettings()`/`onSettings()` en `preload.ts` (con el guard IPC si `v4-harden-desktop-shell` ya está aplicado) y condicionar `POST /interactions/open` en `Chats.tsx` a `openChatInteraction`; verificar con `npm run build` y manualmente en dev: con el valor por defecto no hay llamada a `/interactions/open` al abrir un chat; tras activar `openChatInteraction` desde la consola, sí (≤ 5 min)
 
 ## 3. ANA Admin
 
@@ -25,7 +25,7 @@
 ## 5. Despliegue y release
 
 - [ ] 5.1 Desplegar el backend en dev y prod (`npx serverless deploy --stage dev|prod`); verificar con `curl` que `GET /settings` devuelve los defaults y que un usuario sin Developer recibe 403 en `PUT /admin/desktop-settings`
-- [ ] 5.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y en la PC piloto que el ritmo por defecto no cambió
+- [ ] 5.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y en la PC piloto que el ritmo por defecto no cambió y que abrir un chat ya no registra "Atención WhatsApp" (sin llamadas a `/interactions/open` de esa PC en los logs)
 - [ ] 5.3 Desplegar ANA Admin y, en prod, verificar con un Developer que la sección carga; probar un cambio reversible (`sendMinGapSeconds` 120 → 150 → 120) y confirmar en la PC piloto la cuenta regresiva correspondiente
 
 ## Workflow follow-up

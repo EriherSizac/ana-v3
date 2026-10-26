@@ -12,7 +12,8 @@ El valor real de `SEND_API_KEY` está versionado en texto plano en `v4/ENVIO_DIR
 - Límite de tasa de la ruta `POST /send` en API Gateway (429 al excederlo).
 - Validación del agente destino: `username` debe ser un agente elegible de la campaña (misma fuente que el reparto); si no, 400; si la fuente no responde, 503 (fail-closed).
 - `jobId` de envío directo con sufijo aleatorio (sin colisiones en el mismo milisegundo) y `idempotencyKey` opcional para que el sistema llamante pueda reintentar sin duplicar.
-- **BREAKING** (para integradores): la key vieja deja de funcionar al terminar la rotación; un `username` que no es agente de la campaña ahora recibe 400 en vez de encolarse.
+- No hay consumidores conocidos (0 invocaciones de `ana-backend-prod-directSend` en 90 días, ningún llamador en otros repositorios): la key nueva se guarda en SSM y se entrega solo bajo solicitud, sin coordinación con integradores.
+- **BREAKING** (para un eventual integrador): la key expuesta deja de funcionar al desplegar; un `username` que no es agente de la campaña ahora recibe 400 en vez de encolarse.
 
 Fuera de alcance: keys por cliente/integrador con alcance por campaña, callback del resultado del envío, asociar la key a un agente.
 
@@ -31,6 +32,6 @@ _Ninguna._
 
 - Código: `v4/backend/src/handlers/directSend.ts`, nuevo `v4/backend/src/lib/apiKey.ts`, `v4/backend/serverless.yml` (variables desde `${ssm:...}`, throttling de la ruta), `v4/backend/src/lib/dashboard.ts` (reutilizado).
 - Documentación: `v4/ENVIO_DIRECTO.md` (sin el valor de la key; error 400 por campaña inexistente y por agente fuera de la campaña; 429; `idempotencyKey`).
-- Operación: parámetros SSM `/ana/v4/<stage>/send-api-key` y `/ana/v4/<stage>/send-api-key-next` en `us-east-2`; coordinación con los sistemas que hoy llaman `POST /send` para entregarles la key nueva.
+- Operación: parámetros SSM `/ana/v4/<stage>/send-api-key` y `/ana/v4/<stage>/send-api-key-next` en `us-east-2`; sin coordinación con consumidores (no hay conocidos).
 - Desktop: sin cambios (el job directo conserva su forma; solo cambia el formato del `jobId`).
 - Pruebas: vitest en `v4/backend` (se agrega si ningún cambio previo lo hizo).

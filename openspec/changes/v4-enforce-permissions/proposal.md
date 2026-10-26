@@ -13,11 +13,12 @@ v4 tiene un catálogo de permisos `ana:*` administrable por rol, pero en producc
   - `ana:chats:team:view`: "ver como" (conversaciones y media) de agentes del roster de las campañas propias, además de admin; chequeo independiente del flag.
   - `ana:team:jobs:view` / `ana:team:jobs:manage`: `GET /jobs/summary` y `POST /jobs/reassign` (además de líder y admin), por campaña propia.
   - `GET /agents`: solo admin, líder o con permisos de equipo.
+- **Superadmin por rol**: además del superadmin fijo `erick.silva` (se conserva), cualquier usuario con un rol cuyo nombre contenga "superadmin" (sin distinguir mayúsculas, acentos, espacios ni guiones) recibe el mismo acceso total. ANA Admin lo hereda vía v4 `GET /me` (`isAdmin: true`), sin cambios en `add-admin-web-foundation`.
 - Los líderes reciben también `ana:campaign:message:send` (suben y envían sus propios CSV).
 - Desktop: pestañas y paneles según permisos (no solo `isAdmin`/`isLeader`); "Ver como" para líderes con `ana:chats:team:view`; el editor de roles muestra los 9 permisos y conserva al guardar los que no muestra.
 - **BREAKING** (al pasar a `true`): usuarios sin `ana:campaign:message:send` dejan de recibir jobs y sin `ana:chats:message:reply` no pueden responder.
 
-Fuera de alcance: el superadmin fijo por nombre de usuario (pregunta abierta), permisos por campaña distintos por rol (siguen globales al usuario), `ana:admin:agents:manage` (lo define `add-agent-roster-management`).
+Fuera de alcance: permisos por campaña distintos por rol (siguen globales al usuario), `ana:admin:agents:manage` (lo define `add-agent-roster-management`).
 
 ## Capabilities
 
@@ -27,7 +28,7 @@ _Ninguna._
 
 ### Modified Capabilities
 
-- `v4/access-control`: flag con modo reporte; líderes con permiso de envío.
+- `v4/access-control`: flag con modo reporte; líderes con permiso de envío; se agrega el superadmin por rol.
 - `v4/send-jobs`: se agrega el permiso de envío en la cola del agente.
 - `v4/crm-interactions`: se agregan los permisos de registro.
 - `v4/conversations`: "ver como" para líderes con `ana:chats:team:view` sobre agentes de sus campañas.

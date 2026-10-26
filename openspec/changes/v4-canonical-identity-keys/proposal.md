@@ -16,7 +16,7 @@ v4 no tiene datos heredados de otro esquema de identidad (siempre usó Cognito),
 - **Codificación inyectiva** del operador en llaves S3 (`media/`, `wa-sessions/`, `csv-uploads/`): caracteres `[a-z0-9._-]` se conservan y cualquier otro byte (incluido `~`) se escribe como `~` + dos dígitos hexadecimales; dos operadores distintos nunca comparten prefijo. El dueño de una llave se obtiene decodificando ese segmento.
 - **Destinatarios canónicos** en el reparto: usernames del Dashboard y de `assignments` canonizados y deduplicados (pesos sumados).
 - **Campañas sin distinguir mayúsculas**: toda comparación de campaña (roles, body, metadata, catálogo) se hace sin espacios laterales y sin distinguir mayúsculas, y se guarda/envía al CRM con la grafía del catálogo.
-- **Migración única** (dry-run por defecto) que verifica que el pool de Cognito no distingue mayúsculas y que no hay colisiones, y copia ítems de DynamoDB y objetos de S3 de los usuarios afectados a sus llaves canónicas (reescribiendo `mediaKey`), sin borrar el origen hasta verificar.
+- **Migración única** (dry-run por defecto) que verifica de forma informativa los usuarios afectados y que no hay colisiones (se esperan 0: los usernames del pool están en minúsculas), y copia ítems de DynamoDB y objetos de S3 de los usuarios afectados a sus llaves canónicas (reescribiendo `mediaKey`), sin borrar el origen hasta verificar.
 - Desktop: nombre local de la sesión de WhatsApp y `.ana-last-operator` con el identificador canónico.
 - **BREAKING** (datos): las particiones y llaves de usuarios con mayúsculas o caracteres especiales cambian; sin la migración, esos usuarios dejan de ver su historial y su sesión de WhatsApp.
 
@@ -40,4 +40,4 @@ _Ninguna._
 - Backend: nuevo `v4/backend/src/lib/identity.ts` (`canonicalOperatorId`, `encodeKeySegment`/`decodeKeySegment`, `sameCampaign`, `resolveCatalogCampaign`), `src/lib/http.ts` (`claimUser`), `src/handlers/{api,agents,jobsAdmin,jobsPoll,interactions,csvTrigger,directSend}.ts`, `src/lib/{access,agents,dashboard,campaignsDb}.ts`; script `v4/backend/scripts/migrate-canonical-ids.ts`; pruebas vitest.
 - Desktop: `electron/main.ts` (`usernameFromJwt`), `electron/whatsapp/client.ts` (`configure`).
 - Datos: `ana-backend-{conversations,messages,jobs,agents,accesscache}-<stage>` y buckets `ana-backend-{media,csv}-<stage>` (solo usuarios afectados).
-- Coordinación: `add-agent-roster-management` define `operatorId` "tal como lo emite el pool" en `v4/agent-roster`; con este cambio pasa a ser el identificador canónico (ver design.md).
+- Compatibilidad: `add-agent-roster-management` define `operatorId` "tal como lo emite el pool" en `v4/agent-roster`; como el pool usa usernames en minúsculas, coincide con el identificador canónico (ver design.md).
