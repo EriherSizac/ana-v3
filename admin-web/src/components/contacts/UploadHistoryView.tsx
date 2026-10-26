@@ -81,6 +81,16 @@ export function UploadHistoryView({ detailHref }: UploadHistoryViewProps = {}) {
         )}
         <SearchableSelect label="Flota" options={FLEET_OPTIONS} value={fleet} onChange={(v) => setFleet(v as 'v3' | 'v4')} />
       </div>
+      {campaign && fleet === 'v4' && (
+        <p className="mb-3 text-sm">
+          <Link
+            href={`/contactos/historial/all?campaign=${encodeURIComponent(campaign)}&fleet=v4`}
+            className="font-semibold text-primary underline"
+          >
+            Por revisar (v4) de la campaña
+          </Link>
+        </p>
+      )}
       {campaign && fleet === 'v3' && (
         <p className="mb-3 text-sm">
           <Link

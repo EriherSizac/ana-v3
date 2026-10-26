@@ -193,7 +193,7 @@ describe('GET /jobs/summary', () => {
     expect(r.body).toEqual({
       campaign: 'didi_vip',
       total: 2,
-      operators: [{ operatorId: 'a1', pending: 2, leased: 0, files: ['f1'] }],
+      operators: [{ operatorId: 'a1', pending: 2, leased: 0, review: 0, files: ['f1'] }],
     });
   });
 

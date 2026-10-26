@@ -15,8 +15,10 @@ import type { AuthFetch } from '../auth/tokenBroker';
  * en el siguiente poll.
  *
  * Al enviar: agrupa por archivo (srcKey), un archivo a la vez, rate limit
- * humano (máx 7 mensajes / 20 min, ≥2 min entre cada uno) y ack por job.
- * El CSV de S3 se borra solo cuando ya no quedan jobs de ese archivo.
+ * humano (máx 7 mensajes / 20 min, ≥2 min entre cada uno), reserva
+ * (`POST /jobs/claim`) justo antes de cada envío y ack por job con reintentos.
+ * Un envío interrumpido queda `sending` y el backend lo pasa a "por revisar".
+ * El CSV de S3 se borra solo cuando ya no quedan jobs pendientes ni reservados.
  *
  * Todas las llamadas usan `authFetch` (token fresco + reintento ante 401). Un
  * 401/no-2xx/red al consultar NO publica una asignación vacía: se conserva la
@@ -31,9 +33,11 @@ export interface SendJob {
   row: Record<string, string>;
   countryCode: string;
   srcKey: string;
-  // pending/leased = por enviar; sent/no_whatsapp/error = historial.
-  status?: 'pending' | 'leased' | 'sent' | 'no_whatsapp' | 'error';
+  // pending/leased = por enviar; sending/review = por revisar (nunca se
+  // aprueban); sent/no_whatsapp/error/discarded = historial.
+  status?: 'pending' | 'leased' | 'sending' | 'review' | 'sent' | 'no_whatsapp' | 'error' | 'discarded';
   sentAt?: number;
+  reviewAt?: number;
   // true = envío directo (POST /send del backend): se manda sin aprobación.
   auto?: boolean;
 }
@@ -73,6 +77,9 @@ const POLL_INTERVAL_MS = 5000;
 const MIN_GAP_MS = 2 * 60 * 1000; // ≥2 min entre mensajes
 const WINDOW_MS = 20 * 60 * 1000; // ventana de 20 min
 const MAX_PER_WINDOW = 7; // máx 7 mensajes por ventana
+
+/** Esperas entre reintentos del acuse (v4-review-interrupted-sends D3). */
+export const ACK_RETRY_DELAYS_MS = [1000, 5000, 30_000];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const isPending = (j: SendJob) => !j.status || j.status === 'pending' || j.status === 'leased';
@@ -274,12 +281,16 @@ export class JobPoller {
       const tpl = templates[fileKey(job)];
       const effective = tpl !== undefined ? { ...job, template: tpl } : job;
       const work = (async () => {
+        // Reserva justo antes de enviar (v4-review-interrupted-sends D1): si
+        // falla (409 reasignado/tomado, o red) este mensaje NO se envía.
+        const claim = await this.claim(job.jobId);
+        if (claim !== 'claimed') return { skipped: claim } as const;
         const r = await this.deps.runJob(effective);
         this.sentAt.push(Date.now());
         // Marca el job (no lo borra): queda en el historial con su resultado.
         const status = r.success ? 'sent' : r.noWhatsapp ? 'no_whatsapp' : 'error';
-        await this.ack([{ jobId: job.jobId, status }]);
-        return { r, status } as const;
+        const acked = await this.ack([{ jobId: job.jobId, status }]);
+        return { r, status, acked } as const;
       })();
       this.current = work;
       let outcome: Awaited<typeof work>;
@@ -289,10 +300,17 @@ export class JobPoller {
         this.current = null;
       }
       done += 1;
-      outcome.r.success ? (sent += 1) : (failed += 1);
-      // Refleja el nuevo estado en memoria (para la próxima publicación).
       const k = this.known.get(job.jobId);
-      if (k) k.status = outcome.status;
+      if ('skipped' in outcome) {
+        // 409: ya no es de este agente o ya se tomó → deja de ofrecerse.
+        if (k && outcome.skipped === 'conflict') k.status = 'sending';
+        this.deps.onProgress({ phase: 'sending', campaignId, total, done, sent, failed });
+        continue;
+      }
+      outcome.r.success ? (sent += 1) : (failed += 1);
+      // Refleja el nuevo estado en memoria (para la próxima publicación). Sin
+      // acuse queda reservado: el backend lo pasará a "por revisar".
+      if (k) k.status = outcome.acked ? outcome.status : 'sending';
       this.deps.onProgress({
         phase: 'sending',
         campaignId,
@@ -304,8 +322,10 @@ export class JobPoller {
       });
     }
 
-    // Borra el CSV de S3 solo si ya no quedan jobs PENDIENTES de ese archivo.
-    const remaining = [...this.known.values()].some((j) => j.srcKey === srcKey && isPending(j));
+    // Borra el CSV de S3 solo si ya no quedan jobs pendientes ni reservados de ese archivo.
+    const remaining = [...this.known.values()].some(
+      (j) => j.srcKey === srcKey && (isPending(j) || j.status === 'sending'),
+    );
     if (srcKey && !remaining) await this.deleteFile(srcKey);
     this.deps.onProgress({ phase: 'fileDone', campaignId, total, done, sent, failed });
   }
@@ -338,16 +358,41 @@ export class JobPoller {
     }
   }
 
-  private async ack(acks: { jobId: string; status: string }[]) {
+  /** POST /jobs/claim: 'claimed' (200), 'conflict' (409) o 'error' (red/otro). */
+  private async claim(jobId: string): Promise<'claimed' | 'conflict' | 'error'> {
     try {
-      await this.deps.authFetch(`${this.deps.apiBase}/jobs/ack`, {
+      const res = await this.deps.authFetch(`${this.deps.apiBase}/jobs/claim`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ acks }),
+        body: JSON.stringify({ jobId }),
       });
+      if (res.ok) return 'claimed';
+      return res.status === 409 ? 'conflict' : 'error';
     } catch {
-      /* reintenta en el próximo poll */
+      return 'error';
     }
+  }
+
+  /**
+   * POST /jobs/ack con hasta ACK_RETRY_DELAYS_MS.length reintentos. true si el
+   * backend respondió 2xx. Si todos fallan el job queda `sending` y pasará a
+   * "por revisar" (nunca se reenvía solo).
+   */
+  private async ack(acks: { jobId: string; status: string }[]): Promise<boolean> {
+    for (let attempt = 0; attempt <= ACK_RETRY_DELAYS_MS.length; attempt++) {
+      if (attempt > 0) await sleep(ACK_RETRY_DELAYS_MS[attempt - 1]);
+      try {
+        const res = await this.deps.authFetch(`${this.deps.apiBase}/jobs/ack`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ acks }),
+        });
+        if (res.ok) return true;
+      } catch {
+        /* reintenta */
+      }
+    }
+    return false;
   }
 
   private async deleteFile(key: string) {

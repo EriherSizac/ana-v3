@@ -42,6 +42,13 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 4. Por cada job: normaliza teléfono, interpola plantilla, `client.sendMessage`.
 5. Reporta resultado → `PUT /messages` → DynamoDB. `POST /jobs/ack` marca cada job `sent`/`no_whatsapp`/`error` (no lo borra; queda como historial hasta el TTL de 7 días) y responde `{acked, notFound, invalid}`.
 
+### Envíos interrumpidos (por revisar)
+Estados de un job: `pending` (o sin estado / `leased` heredado) → `sending` → `sent`/`no_whatsapp`/`error`; o `sending` → `review` → `discarded` (con o sin reencolado).
+1. Ya cumplido el ritmo, el desktop reserva el job con `POST /jobs/claim {jobId}` (`pending` → `sending`, `claimedAt`, `attempts` + 1). 409 → no lo envía (reasignado o ya tomado); error de red → no lo envía y sigue con el siguiente.
+2. Tras enviar, `POST /jobs/ack` con hasta 3 reintentos (1 s, 5 s, 30 s). El acuse se acepta desde `pending`, `sending` o `review` (el resultado real gana); desde `discarded` u otro final distinto va a `invalid`.
+3. Un `sending` con `claimedAt` de **más de 10 minutos** pasa a `review` (`reviewReason: "interrupted"`, `reviewAt`) cuando lo leen `GET /jobs/poll` del dueño, `GET /jobs/summary` o `GET /jobs/review` (paso perezoso, sin proceso programado). Nunca vuelve solo a `pending`.
+4. El desktop muestra `sending`/`review` en "Por revisar" (solo lectura); el líder ve "N por revisar" en el panel de pendientes y resuelve desde ANA Admin: `GET /jobs/review?campaign=&srcKey=` y `POST /jobs/review/resolve {campaign, items:[{operatorId,jobId}], action:"discard"|"requeue", to?}` (1–100 items). `requeue` deja el original `discarded` con `resolution:"requeued"` y crea `<jobId>~r<epochMs>` `pending` en `to` (o el mismo agente).
+
 ### Recepción
 1. `client.on('message')` en main. Si trae media → `downloadMedia` → `POST /media/presign` → PUT a `MediaBucket` (`media/<op>/`).
 2. `PUT /messages` → DynamoDB guarda el **puntero** (`mediaKey`), nunca los bytes. Renderer escucha evento IPC → actualiza vista.

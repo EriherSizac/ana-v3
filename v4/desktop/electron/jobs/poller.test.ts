@@ -197,3 +197,113 @@ describe('JobPoller.pauseNewJobs / waitIdle', () => {
     }
   });
 });
+
+describe('JobPoller: reserva y acuse (v4-review-interrupted-sends)', () => {
+  const run = async (jobs: SendJob[], route: (url: string) => Response | Promise<Response>, ids: string[]) => {
+    const runJob = vi.fn(async () => ({ success: true }));
+    const authFetch = vi.fn(async (url: string) => (url.endsWith('/jobs/poll') ? pollResponse(jobs) : route(url)));
+    const { poller } = makePoller({ runJob, authFetch });
+    poller.start();
+    toStop.push(poller);
+    await poller.pollOnce();
+    expect((await poller.approve(ids)).ok).toBe(true);
+    const done = poller.currentBatch();
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    await done;
+    return { runJob, authFetch, poller };
+  };
+  const urls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.map((c) => String(c[0]));
+
+  it('claim 409 → no llama runJob ni ack; sigue con el siguiente', async () => {
+    vi.useFakeTimers();
+    let claims = 0;
+    try {
+      const { runJob, authFetch } = await run(
+        [job('j1'), job('j2')],
+        (url) => {
+          if (url.endsWith('/jobs/claim')) {
+            claims += 1;
+            const n = claims;
+            return new Response(JSON.stringify(n === 1 ? { error: 'job no disponible', status: null } : { claimed: true }), {
+              status: n === 1 ? 409 : 200,
+            });
+          }
+          return new Response('{}');
+        },
+        ['j1', 'j2'],
+      );
+      expect(runJob).toHaveBeenCalledTimes(1);
+      expect(runJob.mock.calls[0][0]).toMatchObject({ jobId: 'j2' });
+      expect(urls(authFetch).filter((u) => u.endsWith('/jobs/ack'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('claim con error de red → no envía', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runJob } = await run(
+        [job('j1')],
+        (url) => {
+          if (url.endsWith('/jobs/claim')) throw new Error('ECONNRESET');
+          return new Response('{}');
+        },
+        ['j1'],
+      );
+      expect(runJob).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ack falla 2 veces y luego ok → un solo runJob, 3 acks; CSV borrado', async () => {
+    vi.useFakeTimers();
+    try {
+      let acks = 0;
+      const { runJob, authFetch } = await run(
+        [job('j1')],
+        (url) => {
+          if (url.endsWith('/jobs/ack')) {
+            acks += 1;
+            if (acks === 1) throw new Error('red');
+            return new Response('{}', { status: acks === 2 ? 502 : 200 });
+          }
+          return new Response('{"claimed":true}');
+        },
+        ['j1'],
+      );
+      expect(runJob).toHaveBeenCalledTimes(1);
+      expect(acks).toBe(3);
+      expect(urls(authFetch)).toContain('https://api/uploads/delete');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ack falla siempre → queda reservado y el CSV NO se borra', async () => {
+    vi.useFakeTimers();
+    try {
+      const { authFetch } = await run(
+        [job('j1')],
+        (url) => (url.endsWith('/jobs/ack') ? new Response('', { status: 503 }) : new Response('{"claimed":true}')),
+        ['j1'],
+      );
+      expect(urls(authFetch).filter((u) => u.endsWith('/jobs/ack'))).toHaveLength(4);
+      expect(urls(authFetch)).not.toContain('https://api/uploads/delete');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sending/review no son aprobables ni se envían solos', async () => {
+    const authFetch = vi.fn(async () =>
+      pollResponse([job('r1', { status: 'review' }), job('s1', { status: 'sending', auto: true })]),
+    );
+    const runJob = vi.fn(async () => ({ success: true }));
+    const { poller } = makePoller({ authFetch, runJob });
+    await poller.pollOnce();
+    expect(await poller.approve(['r1', 's1'])).toEqual({ ok: false, error: 'Sin envíos seleccionados' });
+    expect(runJob).not.toHaveBeenCalled();
+  });
+});

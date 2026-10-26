@@ -2,9 +2,9 @@
 
 import { UploadHistoryView } from '@/components/contacts/UploadHistoryView';
 
-/** Las cargas v3 enlazan a su detalle con los contactos por revisar. */
+/** Cada carga enlaza a su detalle con los contactos por revisar (v4 por srcKey). */
 const detailHref = (item: { fleet: string; id: string }, campaign: string) =>
-  item.fleet === 'v3' ? `/contactos/historial/${encodeURIComponent(item.id)}?campaign=${encodeURIComponent(campaign)}` : null;
+  `/contactos/historial/${encodeURIComponent(item.id)}?campaign=${encodeURIComponent(campaign)}${item.fleet === 'v4' ? '&fleet=v4' : ''}`;
 
 export default function HistorialPage() {
   return <UploadHistoryView detailHref={detailHref} />;

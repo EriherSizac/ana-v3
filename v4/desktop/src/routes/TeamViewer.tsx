@@ -1,6 +1,6 @@
 // File: Selector para ver conversaciones de agentes.
 // Created: 2026-06-09
-// Updated: 2026-06-09
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { useEffect, useState } from 'react';
@@ -143,6 +143,13 @@ function JobsPanel({ campaign, agents }: { campaign: string; agents: AgentEntry[
           <span className="shrink-0 rounded-full bg-neutral-30 px-2 py-0.5 text-xs">
             {r.pending} pendientes
           </span>
+          {(r.review ?? 0) > 0 && (
+            <span className="shrink-0 rounded-full bg-error-10 px-2 py-0.5 text-xs text-error-70">
+              {r.review} por revisar
+            </span>
+          )}
+          {r.pending > 0 ? (
+          <>
           <select
             value={moveTo[r.operatorId] ?? ''}
             onChange={(e) => setMoveTo({ ...moveTo, [r.operatorId]: e.target.value })}
@@ -164,8 +171,13 @@ function JobsPanel({ campaign, agents }: { campaign: string; agents: AgentEntry[
           >
             Mover
           </button>
+          </>
+          ) : null}
         </div>
       ))}
+      {rows.some((r) => (r.review ?? 0) > 0) && (
+        <div className="text-xs text-text-light">Resuélvelos desde ANA Admin.</div>
+      )}
       {note && <div className="text-xs text-text-light">{note}</div>}
     </div>
   );

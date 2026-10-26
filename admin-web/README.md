@@ -229,3 +229,16 @@ vuelve a pedir.
 - La columna `ana_upload_id` está reservada en v3: un CSV que la traiga se
   rechaza y una variable `{x}` que solo resolvería contra ella (p. ej.
   `{upload}`) se marca "Variable desconocida".
+
+### Por revisar v4 (`/contactos/historial/{srcKey}?campaign=&fleet=v4`)
+
+- Cada carga v4 del historial enlaza a su detalle: los envíos interrumpidos
+  (`review`) y ya resueltos (`discarded`) de esa carga, por agente, con nombre,
+  crédito, teléfono enmascarado y momento de la interrupción
+  (`GET /api/v4/campaigns/{c}/review?srcKey=` → v4 `GET /jobs/review`).
+  `/contactos/historial/all?campaign=&fleet=v4` lista toda la campaña,
+  incluidos los envíos directos (marcados "Envío directo").
+- **Descartar** y **Reenviar a…** (agente habilitado del roster v4), con
+  `ConfirmDialog`; el reenvío advierte "Este contacto pudo haber recibido el
+  mensaje. Reenviarlo puede duplicarlo." → `POST /api/v4/campaigns/{c}/review/resolve`
+  (→ v4 `POST /jobs/review/resolve`, 1–100 contactos, resultado por contacto).

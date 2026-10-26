@@ -11,18 +11,59 @@ export const JOBS_TABLE = process.env.JOBS_TABLE!;
  */
 export const jobsCampaignIndex = () => process.env.JOBS_CAMPAIGN_INDEX || 'campaign-index';
 
-/** Estados de un job. `leased` es heredado (nada lo asigna) y cuenta como pendiente. */
-export type JobStatus = 'pending' | 'leased' | 'sent' | 'no_whatsapp' | 'error';
+/**
+ * Estados de un job. `leased` es heredado (nada lo asigna) y cuenta como pendiente.
+ * `sending` = reservado por el desktop justo antes de enviar; `review` = envío
+ * interrumpido (por revisar); `discarded` = resuelto por un supervisor
+ * (v4-review-interrupted-sends).
+ */
+export type JobStatus =
+  | 'pending'
+  | 'leased'
+  | 'sending'
+  | 'sent'
+  | 'no_whatsapp'
+  | 'error'
+  | 'review'
+  | 'discarded';
+/** Resultados que acepta el acuse. */
 export type FinalStatus = 'sent' | 'no_whatsapp' | 'error';
 export const FINAL_STATUSES: readonly FinalStatus[] = ['sent', 'no_whatsapp', 'error'];
+
+/** Un `sending` con `claimedAt` de hace MÁS de esto pasa a `review` (design D2). */
+export const REVIEW_AFTER_MS = 10 * 60 * 1000;
 
 /** ¿Por enviar? `pending`, sin estado o `leased` heredado. */
 export const isPendingStatus = (s: unknown): boolean =>
   s === undefined || s === null || s === 'pending' || s === 'leased';
 
-/** ¿Estado final (historial)? */
+/** ¿Resultado de un acuse (sent/no_whatsapp/error)? */
 export const isFinalStatus = (s: unknown): s is FinalStatus =>
   (FINAL_STATUSES as readonly unknown[]).includes(s);
+
+export type JobClass = 'pending' | 'sending' | 'review' | 'final';
+
+/**
+ * Clasificación pura de un job a la hora `now`:
+ *  - pending: por enviar (pending, sin estado o leased).
+ *  - sending: reservado hace ≤ 10 min (en envío).
+ *  - review: `review`, o `sending` reservado hace más de 10 min (debe pasar a review).
+ *  - final: sent/no_whatsapp/error/discarded (historial).
+ */
+export function classify(job: { status?: unknown; claimedAt?: unknown }, now: number): JobClass {
+  const s = job.status;
+  if (isPendingStatus(s)) return 'pending';
+  if (s === 'review') return 'review';
+  if (s === 'sending') return isReviewDue(job, now) ? 'review' : 'sending';
+  return 'final';
+}
+
+/** ¿Un `sending` venció y debe pasar a `review`? (estrictamente más de 10 min). */
+export function isReviewDue(job: { status?: unknown; claimedAt?: unknown }, now: number): boolean {
+  if (job.status !== 'sending') return false;
+  const at = typeof job.claimedAt === 'number' ? job.claimedAt : 0;
+  return now - at > REVIEW_AFTER_MS;
+}
 
 /** Un send-job: una fila de CSV resuelta a un mensaje a enviar. */
 export interface SendJob {
@@ -48,6 +89,15 @@ export interface SendJob {
   sentAt?: number; // epoch ms en que se procesó (para ordenar el historial)
   // true = envío directo (POST /send): el desktop lo manda sin aprobación.
   auto?: boolean;
+  // --- Reserva y revisión (v4-review-interrupted-sends) ---
+  claimedAt?: number; // epoch ms de la reserva (POST /jobs/claim)
+  reviewReason?: 'interrupted';
+  reviewAt?: number; // epoch ms del paso a review
+  resolution?: 'discarded' | 'requeued';
+  resolvedBy?: string;
+  resolvedAt?: number;
+  requeuedTo?: string; // operatorId destino del reencolado
+  requeuedFrom?: string; // `<operatorId>/<jobId>` del original (en el job nuevo)
 }
 
 export const JOB_TTL_DAYS = 7;

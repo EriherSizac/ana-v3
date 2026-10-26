@@ -59,8 +59,9 @@ export interface AssignedJob {
   row: Record<string, string>;
   countryCode: string;
   srcKey: string;
-  status?: 'pending' | 'leased' | 'sent' | 'no_whatsapp' | 'error';
+  status?: 'pending' | 'leased' | 'sending' | 'review' | 'sent' | 'no_whatsapp' | 'error' | 'discarded';
   sentAt?: number;
+  reviewAt?: number;
   auto?: boolean;
 }
 

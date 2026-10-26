@@ -263,6 +263,11 @@ functions:
           path: /jobs/ack
           method: post
           authorizer: { name: cognitoJwt }
+      # Reserva antes de enviar (v4-review-interrupted-sends D1).
+      - httpApi:
+          path: /jobs/claim
+          method: post
+          authorizer: { name: cognitoJwt }
 
   interactions:
     handler: src/handlers/interactions.handler
@@ -291,6 +296,15 @@ functions:
           authorizer: { name: cognitoJwt }
       - httpApi:
           path: /jobs/reassign
+          method: post
+          authorizer: { name: cognitoJwt }
+      # Envíos interrumpidos por revisar (v4-review-interrupted-sends).
+      - httpApi:
+          path: /jobs/review
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /jobs/review/resolve
           method: post
           authorizer: { name: cognitoJwt }
 
