@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseAssignmentCsv } from './assignment-csv.js';
+import { phone } from './phone-utils.js';
 
 const resolveBaseDir = () => {
   if (process.env.ANA_DATA_DIR) return process.env.ANA_DATA_DIR;
@@ -21,21 +22,12 @@ try {
   // ignore
 }
 
+/**
+ * Teléfono para búsqueda en el CRM (/client-info): +52 + 10 dígitos; no MX: + dígitos.
+ * Alias de phone.toCrmSearchPhone (phone-utils.js).
+ */
 export function normalizePhoneForBackend(rawPhone) {
-  const digits = String(rawPhone || '').replace(/\D/g, '');
-  if (!digits) return '';
-
-  // Teléfono de 10 dígitos (México sin código de país): +52 + 10 dígitos
-  if (digits.length === 10) return `+52${digits}`;
-  
-  // Si empieza con 521 y tiene 13 dígitos, remover el 1: +52 + 10 dígitos
-  if (digits.startsWith('521') && digits.length === 13) return `+52${digits.slice(3)}`;
-  
-  // Si empieza con 52 y tiene 12 dígitos, ya está correcto
-  if (digits.startsWith('52') && digits.length === 12) return `+${digits}`;
-  
-  // Otros casos: agregar + si no lo tiene
-  return digits.startsWith('+') ? digits : `+${digits}`;
+  return phone.toCrmSearchPhone(rawPhone);
 }
 
 export async function searchClientInfoByPhone(campaignName, phoneE164) {

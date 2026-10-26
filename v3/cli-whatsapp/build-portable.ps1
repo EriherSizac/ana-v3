@@ -103,6 +103,7 @@ $filesToCopy = @(
     "message-utils.js",
     "template-utils.js",
     "assignment-csv.js",
+    "phone-utils.js",
     "agent-config.js",
     "package.json",
     "package-lock.json"

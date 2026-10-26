@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
 import { loadAgentConfig, saveAgentConfig, API_BASE_URL, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
+import { phone, phoneUtilsInitScript } from './phone-utils.js';
 
 let manualBrowser = null;
 let manualPage = null;
@@ -297,9 +298,8 @@ async function injectNoWhatsappInfoButton(page) {
         const status = String(cols[idxStatus] || '').trim();
         if (status !== 'no_whatsapp') continue;
         const phoneRaw = String(cols[idxPhone] || '').trim();
-        const digits = phoneRaw.replace(/\D/g, '');
-        if (!digits) continue;
-        const last10 = digits.length > 10 ? digits.slice(-10) : digits;
+        const last10 = phone.toLast10(phoneRaw);
+        if (!last10) continue;
         phones.push(last10);
       }
 
@@ -534,6 +534,9 @@ export async function initManualWhatsApp(allowedContacts = []) {
     // ignore
   }
   
+  // Normalización de teléfonos compartida con Node (phone-utils.js) -> window.__anaPhone
+  await manualPage.addInitScript({ content: phoneUtilsInitScript() });
+
   // Inyectar protecciones ANTES de cargar WhatsApp (EXACTO como en whatsapp.js)
   await manualPage.addInitScript(() => {
     // Bloquear atajos de teclado para DevTools
@@ -1482,30 +1485,8 @@ async function initChatBackupSystem(page, agentConfig) {
     let nullPhoneStreak = 0;
     let lastChatSwitchAt = 0;
     
-    // Función para normalizar números de teléfono
-    const normalizePhoneForBackend = (rawPhone) => {
-      const digits = String(rawPhone || '').replace(/\D/g, '');
-      if (!digits) return '';
-
-      let normalized = digits;
-
-      // Si viene sin lada (10 dígitos), asumir México móvil
-      if (normalized.length === 10) {
-        normalized = '521' + normalized; // México móvil: 521 + 10 dígitos
-      }
-
-      // Si ya tiene 521 y 13 dígitos, está correcto
-      if (normalized.startsWith('521') && normalized.length === 13) {
-        return normalized;
-      }
-
-      // Si tiene 52 sin el 1 y 12 dígitos, agregar el 1
-      if (normalized.startsWith('52') && !normalized.startsWith('521') && normalized.length === 12) {
-        normalized = '521' + normalized.slice(2);
-      }
-
-      return normalized;
-    };
+    // Llave de respaldo: 521 + 10 dígitos (window.__anaPhone, inyectado desde phone-utils.js)
+    const normalizePhoneForBackend = (rawPhone) => window.__anaPhone.toBackupKeyPhone(rawPhone);
 
     // Función para calcular hash simple de mensajes
     const calculateMessagesHash = (messages) => {
@@ -1924,7 +1905,7 @@ async function initChatBackupSystem(page, agentConfig) {
       // Pausar el countdown mientras se ejecuta el respaldo
       stopCountdown();
       
-      // Normalizar el número de teléfono (521 -> 52)
+      // Normalizar el número de teléfono a la llave de respaldo (521 + 10 dígitos)
       const normalizedPhone = normalizePhoneForBackend(phoneNumber);
       log('[ChatBackup] Número original:', phoneNumber, '-> Normalizado:', normalizedPhone);
       
@@ -2167,28 +2148,6 @@ async function initChatBackupSystem(page, agentConfig) {
   console.log('[ChatBackup] Script de respaldo inyectado correctamente');
 }
 
-function normalizePhoneForBackend(rawPhone) {
-  const digits = String(rawPhone || '').replace(/\D/g, '');
-  if (!digits) return '';
-
-  let normalized = digits;
-
-  // México: WhatsApp a veces usa 521 + 10 dígitos. Backend requiere 52 + 10 dígitos.
-  if (normalized.startsWith('521') && normalized.length >= 13) {
-    normalized = `52${normalized.slice(3)}`;
-  }
-
-  // Si viene sin lada (10 dígitos), asumir México
-  if (!normalized.startsWith('52') && normalized.length === 10) {
-    normalized = `52${normalized}`;
-  }
-
-  if (!normalized.startsWith('52')) return '';
-  if (normalized.length < 12) return '';
-
-  return `+${normalized}`;
-}
-
 async function fetchResultCodesFromBackend(campaignName) {
   if (cachedResultCodesByCampaign.has(campaignName)) {
     return cachedResultCodesByCampaign.get(campaignName);
@@ -2272,7 +2231,7 @@ async function injectGestionButton(page) {
   const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
 
   await page.exposeFunction('getGestionDataFromBackend', async (phoneDigits) => {
-    const phoneE164 = normalizePhoneForBackend(phoneDigits);
+    const phoneE164 = phone.toGestionCrmPhone(phoneDigits);
     console.log('[Gestion] getGestionDataFromBackend campaign=', campaignName, 'phoneDigits=', phoneDigits, 'phoneE164=', phoneE164);
     const [resultCodes, clientInfo] = await Promise.all([
       fetchResultCodesFromBackend(campaignName),
@@ -2728,22 +2687,8 @@ async function injectHistoryButton(page) {
         btn.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
       };
 
-      // Función para normalizar el número de teléfono
-      const normalizePhone = (rawPhone) => {
-        const digits = String(rawPhone || '').replace(/\D/g, '');
-        if (!digits) return '';
-        let normalized = digits;
-        if (normalized.length === 10) {
-          normalized = '521' + normalized;
-        }
-        if (normalized.startsWith('521') && normalized.length === 13) {
-          return normalized;
-        }
-        if (normalized.startsWith('52') && !normalized.startsWith('521') && normalized.length === 12) {
-          normalized = '521' + normalized.slice(2);
-        }
-        return normalized;
-      };
+      // Llave de respaldo: 521 + 10 dígitos (window.__anaPhone, inyectado desde phone-utils.js)
+      const normalizePhone = (rawPhone) => window.__anaPhone.toBackupKeyPhone(rawPhone);
 
       // Función para cargar y mostrar historial dado un número
       const loadAndShowHistory = async (phoneNumber) => {

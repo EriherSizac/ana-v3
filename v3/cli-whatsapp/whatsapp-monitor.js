@@ -11,6 +11,7 @@ import {
   searchClientInfoByPhone,
   INTERACTIONS_API_BASE_URL,
 } from './agent-config.js';
+import { phone } from './phone-utils.js';
 
 let cachedResultCodesByCampaign = new Map();
 
@@ -468,8 +469,8 @@ async function monitorUnreadLoop() {
     const phoneE164 = normalizePhoneForBackend(phoneRaw);
     console.log('📞 [Monitor] phoneE164 normalizado:', phoneE164);
     
-    const phoneDigits = String(phoneE164 || '').replace(/\D/g, '');
-    const phone10 = phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
+    const phoneDigits = phone.parseMxPhone(phoneE164).digits;
+    const phone10 = phone.toLast10(phoneE164);
     console.log('📞 [Monitor] phone10:', phone10);
     
     if (!phone10) {

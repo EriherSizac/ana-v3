@@ -259,6 +259,7 @@ import {
   insertInteractions,
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
+import { phone } from "./phone-utils.js";
 
 // Función principal
 async function main() {
@@ -493,9 +494,7 @@ async function main() {
             const hh = String(now.getHours()).padStart(2, "0");
             const mm = String(now.getMinutes()).padStart(2, "0");
             const nextH = String((now.getHours() + 1) % 24).padStart(2, "0");
-            const phoneDigits = String(contact.phone || "").replace(/\D/g, "");
-            const phone10 =
-              phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
+            const phone10 = phone.toLast10(contact.phone);
             const subdictamen =
               result?.status === "no_whatsapp"
                 ? "No tiene Whatsapp"

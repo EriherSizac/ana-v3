@@ -4,6 +4,7 @@ import './setup-env.js';
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import { loadAgentConfig, saveAgentConfig, hasAgentConfig } from './agent-config.js';
+import { phone } from './phone-utils.js';
 
 let autoBrowser = null;
 let autoPage = null;
@@ -1249,7 +1250,8 @@ async function captureResponse() {
 export async function sendMessage(contact, messageTemplate) {
   try {
     const rawPhone = contact?.phone;
-    const cleanPhone = String(rawPhone || '').replace(/\D/g, '');
+    // MX: 52 + 10 dígitos (10, 52+10 o 521+10); otros países: dígitos tal cual
+    const cleanPhone = phone.toWhatsAppUrlPhone(rawPhone);
     if (!cleanPhone) {
       return {
         ...contact,
@@ -1266,6 +1268,7 @@ export async function sendMessage(contact, messageTemplate) {
     
     // Abrir chat
     const chatUrl = `https://web.whatsapp.com/send?phone=${cleanPhone}`;
+    console.log(`🔗 Abriendo chat: ${chatUrl}`);
     await autoPage.goto(chatUrl, { waitUntil: 'networkidle', timeout: 30000 });
     await autoPage.waitForTimeout(3000);
     
