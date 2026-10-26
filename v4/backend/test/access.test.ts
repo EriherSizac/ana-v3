@@ -30,7 +30,8 @@ describe('resolveUserAccess: agentes y gestión', () => {
     roles.value = [role('r1', 'Líder DIDI VIP', 'didi_vip')];
     const a = await resolveUserAccess('luis');
     expect(a.permissions).toContain(MANAGE);
-    expect(a.permissions).not.toContain(SEND);
+    // v4-enforce-permissions: el líder también envía sus propios CSV.
+    expect(a.permissions).toContain(SEND);
   });
 
   it('admin recibe ana:admin:agents:manage (todo el catálogo)', async () => {

@@ -17,6 +17,8 @@ import {
   toPhone10,
 } from '../lib/interactions';
 import { claim, confirm, release } from '../lib/idempotency';
+import { resolveCatalogCampaign } from '../lib/identity';
+import { routeAllowed } from '../lib/access';
 
 // Columnas del CSV donde puede venir el credit_id (mismos alias que v3-cli).
 const CREDIT_COLUMNS = ['credit', 'credito', 'credit_id', 'id_credito'];
@@ -92,6 +94,8 @@ export const handler = async (
   if (!user) return bad('no autenticado', 401);
 
   try {
+    // report → envío de campaña; open/manual → responder (según PERMISSIONS_ENFORCED).
+    if (!(await routeAllowed(user, event.routeKey))) return bad('sin permiso', 403);
     if (event.routeKey === 'POST /interactions/open')
       return await reportOpen(user, JSON.parse(event.body ?? '{}'));
     if (event.routeKey === 'POST /interactions/manual')
@@ -100,9 +104,11 @@ export const handler = async (
       return bad(`ruta no manejada: ${event.routeKey}`, 404);
 
     const p = JSON.parse(event.body ?? '{}') as ReportPayload;
-    const { jobId, campaign, phone, status } = p;
+    const { jobId, phone, status } = p;
     if (!jobId || !phone || !status) return bad('faltan jobId/phone/status');
-    if (!campaign) return ok({ reported: false, reason: 'sin campaña, no se registra' });
+    if (!p.campaign) return ok({ reported: false, reason: 'sin campaña, no se registra' });
+    // El CRM recibe la grafía del catálogo (v4-canonical-identity-keys D4).
+    const campaign = await resolveCatalogCampaign(p.campaign);
 
     return await withMarker(`REPORT#${user}`, jobId, ttlInDays(JOB_TTL_DAYS), 'ya reportado', async () => {
       const row = p.row ?? {};
@@ -152,7 +158,7 @@ async function reportOpen(
     new GetCommand({ TableName: CONVERSATIONS_TABLE, Key: { operatorId: user, chatId } }),
   );
   const conv = res.Item;
-  const campaign = String(conv?.campaign ?? '');
+  const campaign = await resolveCatalogCampaign(String(conv?.campaign ?? ''));
   if (!campaign) return ok({ reported: false, reason: 'conversación sin campaña' });
 
   const row = (conv?.contact ?? {}) as Record<string, string>;
@@ -209,7 +215,7 @@ async function reportManual(
     new GetCommand({ TableName: CONVERSATIONS_TABLE, Key: { operatorId: user, chatId: p.chatId } }),
   );
   const conv = res.Item;
-  const campaign = String(conv?.campaign ?? '');
+  const campaign = await resolveCatalogCampaign(String(conv?.campaign ?? ''));
   if (!campaign) return bad('conversación sin campaña; no se puede registrar', 409);
 
   const row = (conv?.contact ?? {}) as Record<string, string>;

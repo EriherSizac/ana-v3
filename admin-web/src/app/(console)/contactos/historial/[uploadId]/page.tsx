@@ -3,6 +3,7 @@
 import { useParams, useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 import { UploadDetailView } from '@/components/contacts/UploadDetailView';
+import { V4ReviewView } from '@/components/contacts/V4ReviewView';
 import { InlineMessage, PageContainer } from '@/components/ui';
 
 function Detail() {
@@ -17,6 +18,8 @@ function Detail() {
       </PageContainer>
     );
   }
+  // v4: el id es el srcKey de la carga; `all` = toda la campaña (incluye envíos directos).
+  if (search?.get('fleet') === 'v4') return <V4ReviewView campaign={campaign} srcKey={uploadId === 'all' ? null : uploadId} />;
   return <UploadDetailView uploadId={uploadId} campaign={campaign} />;
 }
 

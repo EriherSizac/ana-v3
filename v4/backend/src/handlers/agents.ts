@@ -9,7 +9,9 @@ import { campaignExists, listCampaignsDb } from '../lib/campaignsDb';
 import { buildRosterView, canManageAgents, parseRosterAgents } from '../lib/agentRoster';
 import { normalizeId, readCampaignAgents, RosterListError } from '../lib/campaignAgentsList';
 import { resolveUserAccess } from '../lib/access';
+import { ANA_PERMISSIONS } from '../lib/permissions';
 import { ok, bad, claimUser } from '../lib/http';
+import { campaignIn, campaignKey, resolveCatalogCampaign, sameCampaign } from '../lib/identity';
 
 /**
  * POST /agents/heartbeat — el agente se marca activo en su campaña.
@@ -56,12 +58,12 @@ async function heartbeat(
   access: import('../lib/access').UserAccess,
   body: { campaign?: string },
 ): Promise<APIGatewayProxyResultV2> {
-  const { campaign } = body;
-  if (!campaign) return bad('falta campaign');
-  const allowed =
-    access.isAdmin || access.campaigns.includes('*') || access.campaigns.includes(campaign);
+  const requested = typeof body.campaign === 'string' ? body.campaign.trim() : '';
+  if (!requested) return bad('falta campaign');
+  // Sin distinguir mayúsculas; se registra con la grafía del catálogo.
+  const allowed = access.isAdmin || campaignIn(access.campaigns, requested);
   if (!allowed) return bad('campaña no permitida', 403);
-  await registerAgent(campaign, access.username);
+  await registerAgent(await resolveCatalogCampaign(requested), access.username);
   return ok({ ok: true });
 }
 
@@ -73,10 +75,16 @@ async function agentsList(
   let campaigns: string[];
   if (access.isAdmin || access.campaigns.includes('*')) {
     if (!campaign) return bad('falta campaign');
-    campaigns = [campaign];
+    campaigns = [await resolveCatalogCampaign(campaign)];
   } else {
+    // Roster solo para líder o permisos de equipo (v4-enforce-permissions), sin flag.
+    const team =
+      access.isLeader ||
+      access.permissions.includes(ANA_PERMISSIONS.CHATS_TEAM_VIEW) ||
+      access.permissions.includes(ANA_PERMISSIONS.TEAM_JOBS_VIEW);
+    if (!team) return bad('sin permiso', 403);
     const own = access.campaigns.filter((c) => c !== '*');
-    campaigns = campaign ? own.filter((c) => c === campaign) : own;
+    campaigns = campaign ? own.filter((c) => sameCampaign(c, campaign)) : own;
     if (campaigns.length === 0) return bad('campaña no permitida', 403);
   }
 
@@ -90,8 +98,8 @@ async function campaignsList(
   // Campañas desde PostgreSQL. Admin/global ven todas; el resto solo las suyas.
   const all = await listCampaignsDb();
   if (access.isAdmin || access.campaigns.includes('*')) return ok({ campaigns: all });
-  const own = new Set(access.campaigns);
-  return ok({ campaigns: all.filter((c) => own.has(c)) });
+  const own = new Set(access.campaigns.map(campaignKey));
+  return ok({ campaigns: all.filter((c) => own.has(campaignKey(c))) });
 }
 
 /** GET /admin/agent-roster?campaign= — lista derivada + excepciones v4. */

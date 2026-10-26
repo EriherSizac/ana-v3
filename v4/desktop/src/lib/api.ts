@@ -164,6 +164,8 @@ export interface JobsOperatorSummary {
   operatorId: string;
   pending: number;
   leased: number;
+  /** Envíos interrumpidos por revisar (v4-review-interrupted-sends); ausente en backends viejos. */
+  review?: number;
   files: string[];
 }
 

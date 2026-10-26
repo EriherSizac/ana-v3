@@ -1,6 +1,6 @@
 // File: Selector para ver conversaciones de agentes.
 // Created: 2026-06-09
-// Updated: 2026-06-09
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { useEffect, useState } from 'react';
@@ -14,11 +14,13 @@ import {
   type UserAccess,
 } from '../lib/api';
 import { SearchableSelect } from '../ui/SearchableSelect';
+import { teamPanel } from '../lib/permissions';
 
 /**
- * Selector para ver conversaciones de agentes.
- *  - Admin: elige campaña, luego agente.
- *  - Líder: elige agente entre los de sus campañas (sin selector de campaña).
+ * Panel de equipo (v4-enforce-permissions):
+ *  - "Ver como" (admin o `ana:chats:team:view`): elige campaña (un líder, solo
+ *    las suyas) y luego agente; solo lectura.
+ *  - "Envíos pendientes" con `ana:team:jobs:view`; "Mover" con `ana:team:jobs:manage`.
  * value = operatorId visto (null = mis propias conversaciones).
  */
 export function TeamViewer({
@@ -31,34 +33,36 @@ export function TeamViewer({
   onChange: (operatorId: string | null) => void;
 }) {
   const isAdmin = !!access?.isAdmin;
+  const perms = teamPanel(access);
   const [campaigns, setCampaigns] = useState<string[]>([]);
   const [campaign, setCampaign] = useState<string>('');
   const [agents, setAgents] = useState<AgentEntry[]>([]);
 
-  // Campaña efectiva para el panel de envíos: la elegida (admin) o la del líder.
-  const leaderCampaign = (access?.campaigns ?? []).find((c) => c !== '*') ?? '';
-  const jobsCampaign = isAdmin ? campaign : leaderCampaign;
+  // Campaña efectiva para el panel de envíos: la elegida o (no admin) la primera propia.
+  const ownCampaign = (access?.campaigns ?? []).find((c) => c !== '*') ?? '';
+  const jobsCampaign = campaign || (isAdmin ? '' : ownCampaign);
 
-  // Admin: carga campañas. Líder: carga sus agentes directo.
+  // Con "Ver como": campañas elegibles (el backend limita las del líder).
+  // Sin él (solo pendientes): los agentes de sus campañas directo.
   useEffect(() => {
-    if (isAdmin) {
+    if (perms.viewAs) {
       void getCampaigns().then(setCampaigns).catch(() => setCampaigns([]));
-    } else {
+    } else if (!isAdmin) {
       void getAgents().then(setAgents).catch(() => setAgents([]));
     }
-  }, [isAdmin]);
+  }, [perms.viewAs, isAdmin]);
 
-  // Admin: al elegir campaña, carga sus agentes.
+  // Al elegir campaña, carga sus agentes y vuelve a "Mis conversaciones".
   useEffect(() => {
-    if (!isAdmin || !campaign) return;
+    if (!campaign) return;
     void getAgents(campaign).then(setAgents).catch(() => setAgents([]));
-    onChange(null); // reset selección al cambiar de campaña
-  }, [campaign, isAdmin]);
+    onChange(null);
+  }, [campaign]);
 
   return (
     <div className="space-y-2 border-b border-neutral-50 bg-neutral-30 p-3">
-      {/* "Ver como" (ver conversaciones de otro agente): SOLO admins. */}
-      {isAdmin && (
+      {/* "Ver como" (conversaciones de otro agente, solo lectura). */}
+      {perms.viewAs && (
         <>
           <div className="text-xs font-semibold uppercase tracking-wider text-text-light">
             Ver como
@@ -84,9 +88,9 @@ export function TeamViewer({
         </>
       )}
 
-      {/* Reasignación de envíos: admin y líder (no es "ver como"). */}
-      {jobsCampaign && (access?.isAdmin || access?.isLeader) && (
-        <JobsPanel campaign={jobsCampaign} agents={agents} />
+      {/* Envíos pendientes por agente; "Mover" solo con ana:team:jobs:manage. */}
+      {jobsCampaign && perms.jobs && (
+        <JobsPanel campaign={jobsCampaign} agents={agents} canMove={perms.move} />
       )}
     </div>
   );
@@ -97,7 +101,15 @@ export function TeamViewer({
  * v4 del consume-once de v3: si un agente se desconecta a media campaña, el
  * líder mueve sus pendientes a otro agente).
  */
-function JobsPanel({ campaign, agents }: { campaign: string; agents: AgentEntry[] }) {
+function JobsPanel({
+  campaign,
+  agents,
+  canMove,
+}: {
+  campaign: string;
+  agents: AgentEntry[];
+  canMove: boolean;
+}) {
   const [rows, setRows] = useState<JobsOperatorSummary[]>([]);
   const [moveTo, setMoveTo] = useState<Record<string, string>>({}); // from → to
   const [busy, setBusy] = useState(false);
@@ -143,6 +155,13 @@ function JobsPanel({ campaign, agents }: { campaign: string; agents: AgentEntry[
           <span className="shrink-0 rounded-full bg-neutral-30 px-2 py-0.5 text-xs">
             {r.pending} pendientes
           </span>
+          {(r.review ?? 0) > 0 && (
+            <span className="shrink-0 rounded-full bg-error-10 px-2 py-0.5 text-xs text-error-70">
+              {r.review} por revisar
+            </span>
+          )}
+          {r.pending > 0 && canMove ? (
+          <>
           <select
             value={moveTo[r.operatorId] ?? ''}
             onChange={(e) => setMoveTo({ ...moveTo, [r.operatorId]: e.target.value })}
@@ -164,8 +183,13 @@ function JobsPanel({ campaign, agents }: { campaign: string; agents: AgentEntry[
           >
             Mover
           </button>
+          </>
+          ) : null}
         </div>
       ))}
+      {rows.some((r) => (r.review ?? 0) > 0) && (
+        <div className="text-xs text-text-light">Resuélvelos desde ANA Admin.</div>
+      )}
       {note && <div className="text-xs text-text-light">{note}</div>}
     </div>
   );

@@ -10,7 +10,7 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 | App | **Electron desktop** (React + Vite + TS) | La sesión WA debe vivir en una máquina persistente. UI + motor en una sola pieza. |
 | Backend | **Serverless** AWS (Lambda + DynamoDB + S3 + SQS) | Datos/orquestación sin EC2. Nunca toca WhatsApp. |
 | Auth | **Cognito hosted UI / PKCE** contra el User Pool de Pernexium | Mismas cuentas/permisos que el resto de apps. **No** hay SSO por cookie (Electron no vive en `*.pernexium.com.mx`); login explícito en la app. |
-| Trigger nube→local | **Polling a tabla DynamoDB de jobs** (PK=operatorId, lease) | Lambda no puede push a la PC local (sin IP pública). SQS compartido no aísla por operador → tabla jobs por operatorId. Intervalo corto (~4s), no long-poll. |
+| Trigger nube→local | **Polling a tabla DynamoDB de jobs** (PK=operatorId, sin lease: estados) | Lambda no puede push a la PC local (sin IP pública). SQS compartido no aísla por operador → tabla jobs por operatorId. Intervalo corto (~4s), no long-poll. |
 | Enmascarado números | **Solo visual en UI** | Número plano en DynamoDB; la UI muestra `***1234`. |
 | Storage | DynamoDB (conversaciones/mensajes), S3 (CSV + media backup) | Resuelve concurrencia, escala, fuente de verdad para restore. |
 
@@ -25,7 +25,7 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 │   · envía / recibe real              │◄──────►│  Lambda:                             │
 │   · jobs poller (~4s)                │ HTTPS  │    · api      (conversaciones CRUD)  │
 │   · token de Amplify (renderer)      │ +token │    · csvTrigger (S3 → tabla jobs)    │
-│                                      │        │    · jobsPoll  (lease/ack por op.)   │
+│                                      │        │    · jobsPoll  (poll/ack por op.)    │
 │  Renderer (React + Vite):           │        │  DynamoDB: conversations, messages,  │
 │   · login (username, fondo azul)     │        │            jobs (PK operatorId)      │
 │   · chats / restore desde Dynamo     │        │  S3: csv-uploads, media-backup       │
@@ -37,10 +37,17 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 
 ### Envío masivo vía bucket
 1. UI pide presign a `api` (config de campaña fijada en metadata firmada) y sube CSV a S3 (`csv-uploads/`).
-2. Evento S3 dispara `csvTrigger` → parsea filas → escribe N jobs en la tabla `jobs` (PK=operatorId del presign).
-3. Main process pollea `GET /jobs/poll` (~4s) → backend hace lease de hasta 10 jobs del propio operador.
+2. Evento S3 dispara `csvTrigger` → parsea filas → escribe N jobs en la tabla `jobs` (PK=operatorId del presign). El identificador de carga (`campaignid`) lo genera el servidor (key sin `csv-uploads/`); el `campaignId` del cliente viaja como `label`. `jobId = <campaignid>#<índice>`, así dos cargas nunca se pisan. Un marcador `UPLOAD#<srcKey>` evita reprocesar eventos S3 duplicados; al escribir todos los jobs se borra el CSV.
+3. Main process pollea `GET /jobs/poll` (~5s) → backend devuelve los jobs del propio operador sin lease: primero los pendientes (hasta 2000, orden de `jobId`) y los 300 procesados más recientes; `truncated`/`pendingTotal` avisan si quedaron pendientes fuera. El agente aprueba qué enviar.
 4. Por cada job: normaliza teléfono, interpola plantilla, `client.sendMessage`.
-5. Reporta resultado → `PUT /messages` → DynamoDB. `POST /jobs/ack` borra los jobs hechos.
+5. Reporta resultado → `PUT /messages` → DynamoDB. `POST /jobs/ack` marca cada job `sent`/`no_whatsapp`/`error` (no lo borra; queda como historial hasta el TTL de 7 días) y responde `{acked, notFound, invalid}`.
+
+### Envíos interrumpidos (por revisar)
+Estados de un job: `pending` (o sin estado / `leased` heredado) → `sending` → `sent`/`no_whatsapp`/`error`; o `sending` → `review` → `discarded` (con o sin reencolado).
+1. Ya cumplido el ritmo, el desktop reserva el job con `POST /jobs/claim {jobId}` (`pending` → `sending`, `claimedAt`, `attempts` + 1). 409 → no lo envía (reasignado o ya tomado); error de red → no lo envía y sigue con el siguiente.
+2. Tras enviar, `POST /jobs/ack` con hasta 3 reintentos (1 s, 5 s, 30 s). El acuse se acepta desde `pending`, `sending` o `review` (el resultado real gana); desde `discarded` u otro final distinto va a `invalid`.
+3. Un `sending` con `claimedAt` de **más de 10 minutos** pasa a `review` (`reviewReason: "interrupted"`, `reviewAt`) cuando lo leen `GET /jobs/poll` del dueño, `GET /jobs/summary` o `GET /jobs/review` (paso perezoso, sin proceso programado). Nunca vuelve solo a `pending`.
+4. El desktop muestra `sending`/`review` en "Por revisar" (solo lectura); el líder ve "N por revisar" en el panel de pendientes y resuelve desde ANA Admin: `GET /jobs/review?campaign=&srcKey=` y `POST /jobs/review/resolve {campaign, items:[{operatorId,jobId}], action:"discard"|"requeue", to?}` (1–100 items). `requeue` deja el original `discarded` con `resolution:"requeued"` y crea `<jobId>~r<epochMs>` `pending` en `to` (o el mismo agente).
 
 ### Recepción
 1. `client.on('message')` en main. Si trae media → `downloadMedia` → `POST /media/presign` → PUT a `MediaBucket` (`media/<op>/`).
@@ -58,6 +65,13 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 - **Resumen**: `PUT /messages` solo actualiza la conversación si el mensaje es nuevo; `lastMessage`/`lastMessageTime` solo si es igual o más reciente; `unreadCount` +1 solo para entrantes. `POST /conversations/{chatId}/read` pone `unreadCount = 0` en la conversación propia (no la crea); el desktop la llama al abrir un chat propio.
 - **Mensajes propios de otros dispositivos**: el cliente escucha `message_create` con `fromMe` y los respalda igual que los entrantes. Los enviados por la app usan el `timestamp` de WhatsApp, así ambos caminos producen la misma `sk` y el mensaje queda una sola vez.
 
+## Identidad y llaves (`backend/src/lib/identity.ts`)
+
+- **operatorId canónico**: `cognito:username` (o `sub`) sin espacios laterales y en minúsculas (`Ana.Lopez` → `ana.lopez`). Lo aplican `claimUser`, `resolveUserAccess` (superadmin, caché, roles), los destinatarios del reparto (Dashboard y `assignments`, deduplicados y con pesos sumados) y el desktop (`usernameFromJwt`, `.ana-last-operator`).
+- **Segmento de operador en S3** (`media/<seg>/`, `wa-sessions/<seg>/session.zip`, `csv-uploads/<seg>/`): `encodeKeySegment` conserva `[a-z0-9._-]` y escribe cualquier otro byte UTF-8 como `~` + 2 hex (`a@b` → `a~40b`, `~` → `~7e`, `.`/`..` → `~2e`/`~2e~2e`). Es inyectiva: `a@b` y `a_b` ya no comparten prefijo ni sesión de WhatsApp. `GET /media/url` decodifica el dueño (`decodeKeySegment`; inválido → 400 `key inválida`). Durante la transición, `MEDIA_LEGACY_OWNER=true` acepta además el segmento saneado anterior del propio usuario.
+- **Campañas**: se comparan sin espacios laterales ni mayúsculas (`sameCampaign`) y se guardan/envían al CRM con la grafía del catálogo de PostgreSQL (`resolveCatalogCampaign`); `campaigns` de `/me` queda deduplicado y con esa grafía.
+- **Migración**: `backend/scripts/migrate-canonical-ids.ts` (dry-run por defecto, `--apply`, `--delete-source`); ver su encabezado.
+
 ## Roles & permisos
 
 Sigue `Implementar_roles_locales.md` (patrón local recomendado):
@@ -67,13 +81,64 @@ Sigue `Implementar_roles_locales.md` (patrón local recomendado):
 - `resolveUserAccess(username)` (backend/src/lib/access.ts): une permisos locales de todos los roles del usuario.
 - **Superadmin**: `erick.silva` → acceso total (bypass).
 - **Líder**: rol cuyo `role_name` ~ `/l[ií]der/` → obtiene `contacts:upload` + `contacts:distribute` aunque su almacén esté vacío.
-- **Enforcement** detrás del flag `PERMISSIONS_ENFORCED` (default `false` → no bloquea hasta validar; guía §8). El permiso **admin siempre es fail-closed** (no depende del flag).
+- **Enforcement** detrás del flag `PERMISSIONS_ENFORCED` (`false` default, `report`, `true`; ver abajo). El permiso **admin siempre es fail-closed** (no depende del flag).
 - **Caché** de `resolveUserAccess` (guía §6): L1 memoria 15 s + L2 `AccessCacheTable` 15 min. Al cambiar permisos de un rol → `invalidateByRole` borra del caché a los usuarios con ese rol. Lookups vacíos (posible outage de la API externa) no se cachean.
 - **UI admin** (`AdminRolePerms.tsx`): `GET`/`PUT /admin/role-permissions/{roleId}` para asignar permisos por rol.
 
-Catálogo (`ana:*`): `admin:console:manage`, `contacts:list:upload`,
-`contacts:list:distribute`, `chats:conversation:view`, `chats:message:reply`,
-`campaign:message:send`.
+Catálogo (`ana:*`): `admin:console:manage`, `admin:agents:manage`, `contacts:list:upload`,
+`contacts:list:distribute`, `chats:conversation:view`, `chats:team:view`, `chats:message:reply`,
+`campaign:message:send`, `team:jobs:view`, `team:jobs:manage`.
+
+### Aplicación de permisos en ana v4 (v4-enforce-permissions)
+
+**Flag `PERMISSIONS_ENFORCED`** (parámetro de despliegue `permissionsEnforced`):
+
+| Valor | Efecto en los chequeos normales |
+|---|---|
+| `false` (default) | permite; sin registro |
+| `report` | permite y registra `{"evt":"perm_would_deny","route","username","perm"}` |
+| `true` | aplica: 403 `{"error":"sin permiso"}` |
+
+**Mapa ruta → permiso** (chequeos normales, `ROUTE_PERMISSIONS` en `backend/src/lib/permissions.ts`):
+
+| Ruta | Permiso |
+|---|---|
+| `GET /conversations`, `GET /conversations/{chatId}/messages`, `GET /media/url` | `ana:chats:conversation:view` |
+| `GET /jobs/poll`, `POST /jobs/ack`, `POST /jobs/claim`, `POST /interactions/report` | `ana:campaign:message:send` |
+| `POST /interactions/open`, `POST /interactions/manual` | `ana:chats:message:reply` |
+
+**Chequeos explícitos** (no dependen del flag): consola admin (`ana:admin:console:manage`);
+presign de CSV (admin, líder o `ana:contacts:list:upload`); "ver como" de conversaciones,
+mensajes y media (admin, o `ana:chats:team:view` con el agente en el roster v4 o en la
+lista derivada de una campaña propia); `GET /jobs/summary` y `GET /jobs/review` (admin,
+o líder / `ana:team:jobs:view` en campaña propia); `POST /jobs/reassign` y
+`POST /jobs/review/resolve` (admin, o líder / `ana:team:jobs:manage` en campaña propia);
+`GET /agents` (admin o `*`; si no, líder, `ana:chats:team:view` o `ana:team:jobs:view`).
+
+**Líder** (`role_name` con "lider"): siempre upload, distribute, chats view, chats team view,
+team jobs view/manage, `ana:campaign:message:send` y `ana:admin:agents:manage`.
+
+**Superadmin por rol**: además de `erick.silva` (fijo, sin consultar la API de Roles),
+cualquier usuario con un rol cuyo nombre, sin acentos, en minúsculas y sin espacios,
+guiones ni guiones bajos contiene "superadmin" ("Superadmin", "Súper Admin", "super-admin")
+recibe acceso total (`campaigns: ["*"]`, todos los permisos, `isAdmin`/`isLeader`) con
+sus roles reales. Lo asigna quien administra la API de Roles de Pernexium (fuera de ANA);
+se retira quitando el rol allí y surte efecto al vencer la caché de acceso (≤ 15 min) o al
+invalidar el rol (`PUT /admin/role-permissions/{roleId}` invalida a sus usuarios). Cada
+resolución por rol registra `{"evt":"superadmin_role","username","role"}`.
+
+**Desktop**: pestañas según permisos ("Chats" con `chats:conversation:view`, "Mi asignación"
+con `campaign:message:send`, "Campañas" admin/líder/`contacts:list:upload`, "Admin" solo admin);
+"Ver como" con `chats:team:view`; "Envíos pendientes" con `team:jobs:view` y "Mover" con
+`team:jobs:manage`; sin `chats:message:reply` el main rechaza envíos manuales
+("sin permiso para responder"). El editor de roles muestra los 9 permisos y conserva al
+guardar los valores que no muestra.
+
+**Activación**: (1) deploy con `permissionsEnforced=report` en dev y prod; (2) release del
+desktop; (3) revisar `perm_would_deny` en CloudWatch ≥ 5 días hábiles y dar grants
+explícitos (p. ej. `ana:campaign:message:send`) a los roles que deban operar; (4) deploy
+con `permissionsEnforced=true` en dev, probar con usuarios de cada tipo, luego prod.
+Rollback: redeploy con `report`.
 
 ### Reparto de contactos del líder
 Un líder sube CSV con "repartir" → presign marca `distribute=1` + `campaign` en
@@ -93,6 +158,22 @@ rutas `GET /conversations` y `.../messages` aceptan `?operatorId=`:
 - Picker: `GET /agents/campaigns` (admin: todas; líder: las suyas) + `GET /agents?campaign=`.
 - La vista es **solo lectura** desde otra cuenta: responder requiere la sesión
   WhatsApp del agente dueño, que vive en la máquina de ese agente.
+
+## Configuración remota del desktop (`backend/src/lib/desktopSettings.ts`)
+
+Catálogo cerrado (cualquier otra llave → 400 `configuración desconocida: <llave>`):
+
+| Llave | Tipo | Límites | Por defecto |
+|---|---|---|---|
+| `sendMinGapSeconds` | entero | 60–600 | 120 |
+| `sendMaxPerWindow` | entero | 1–20 | 7 |
+| `sendWindowMinutes` | entero | 5–60 | 20 |
+| `openChatInteraction` | booleano | — | `false` |
+
+- Guardado en `RolePermsTable` (`PK=CONFIG`, `SK=DESKTOP_SETTINGS`) con `version` y auditoría por llave (`updatedBy`, `updatedAt`). Un valor guardado fuera de tipo o límites se ignora (se usa el por defecto).
+- `GET /settings`: valores efectivos, cualquier usuario autenticado. `GET`/`PUT /admin/desktop-settings`: solo rol **Developer** (nombre de rol con "developer", sin mayúsculas ni acentos; `isDeveloper` en `GET /me`), hard check; `PUT {version, values}` con versión condicional (409 `la configuración cambió`).
+- Desktop: el main (`electron/settings/remoteSettings.ts`) lee `GET /settings` tras el login y cada 5 min, conserva el último valor y usa los por defecto si nunca la leyó. El poller aplica el ritmo en cada cálculo de espera; `Chats` notifica `POST /interactions/open` solo con `openChatInteraction`. **Propagación ≤ 5 min.**
+- Se edita desde ANA Admin → "Configuración" → sección "Desktop v4" (solo Developer).
 
 ## Seguridad del desktop
 

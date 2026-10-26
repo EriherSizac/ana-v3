@@ -25,6 +25,10 @@ export interface AnaBridge {
   onWaSent: (cb: (data: any) => void) => () => void;
   onWaProgress: (cb: (data: SendProgress) => void) => () => void;
   onJobsAssignment: (cb: (jobs: AssignedJob[]) => void) => () => void;
+  onJobsAssignmentInfo: (cb: (info: AssignmentInfo) => void) => () => void;
+  getAssignmentInfo: () => Promise<AssignmentInfo>;
+  getSettings: () => Promise<DesktopSettings>;
+  onSettings: (cb: (s: DesktopSettings) => void) => () => void;
   approveJobs: (
     jobIds: string[],
     templates: Record<string, string>,
@@ -57,9 +61,25 @@ export interface AssignedJob {
   row: Record<string, string>;
   countryCode: string;
   srcKey: string;
-  status?: 'pending' | 'leased' | 'sent' | 'no_whatsapp' | 'error';
+  status?: 'pending' | 'leased' | 'sending' | 'review' | 'sent' | 'no_whatsapp' | 'error' | 'discarded';
   sentAt?: number;
+  reviewAt?: number;
   auto?: boolean;
+}
+
+// Configuración remota del desktop (GET /settings, vía el main).
+export interface DesktopSettings {
+  sendMinGapSeconds: number;
+  sendMaxPerWindow: number;
+  sendWindowMinutes: number;
+  openChatInteraction: boolean;
+}
+
+// Totales del último GET /jobs/poll (truncated = quedaron pendientes fuera).
+export interface AssignmentInfo {
+  truncated: boolean;
+  pendingTotal: number;
+  historyTotal: number;
 }
 
 export interface SendProgress {

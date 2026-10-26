@@ -121,7 +121,8 @@ sequenceDiagram
 
 - **Nada se envía sin aprobación** (excepto los directos `auto:true`, §4). Lo no seleccionado queda pendiente y reaparece en cada poll.
 - La vista "Mi asignación" se hidrata al montar (`jobs:get-assignment`), no espera al siguiente poll.
-- CSV de S3 se borra solo cuando **no quedan jobs** de ese archivo.
+- Sin lease: el poll entrega primero los pendientes (hasta 2000) y los 300 procesados más recientes; si hubo más pendientes trae `truncated: true` y la vista muestra "Mostrando N de M pendientes…".
+- `csvTrigger` borra el CSV de S3 en cuanto escribió todos sus jobs (la fila completa va en cada job); el `POST /uploads/delete` del desktop queda como no-op. El bucket expira `csv-uploads/` a los 7 días como respaldo.
 
 ```mermaid
 sequenceDiagram
@@ -136,7 +137,7 @@ sequenceDiagram
   loop cada ~5s
     P->>JP: GET /jobs/poll
     JP->>J: Query PK=operatorId
-    JP-->>P: jobs pendientes
+    JP-->>P: pendientes (≤2000) + historial (≤300) · truncated
     P->>P: separa auto:true (van solos)
     P--)R: IPC jobs:assignment (resto)
   end
@@ -148,11 +149,11 @@ sequenceDiagram
     P->>P: interpolate(plantilla, row)
     P->>WA: sendText (typing 2–9s)
     P->>API: PUT /messages (respaldo)
-    P->>JP: POST /jobs/ack (borra job)
+    P->>JP: POST /jobs/ack (marca estado, no borra)
     P--)INT: POST /interactions/report (CRM)
     P--)R: IPC wa:progress (barra)
   end
-  P->>API: POST /uploads/delete (si no quedan jobs del archivo)
+  P->>API: POST /uploads/delete (no-op heredado: el trigger ya borró el CSV)
 ```
 
 ## 4. Flujo: envío directo (sistema-a-sistema)
@@ -250,16 +251,16 @@ Reemplazo del consume-once de v3: agente caído a media campaña → el líder m
 sequenceDiagram
   participant T as TeamViewer (líder/admin)
   participant JA as λ jobsAdmin
-  participant J as DynamoDB jobs (GSI campaign-index)
+  participant J as DynamoDB jobs (GSI campaign-status-index)
 
   T->>JA: GET /jobs/summary?campaign=X
   JA->>J: Query GSI campaign=X
-  JA-->>T: pendientes/en-lease por agente (filtra TTL)
+  JA-->>T: pendientes por agente según status (filtra TTL; leased = 0)
   T->>JA: POST /jobs/reassign (campaign, from, to)
-  loop por job pendiente de `from`
-    JA->>J: TransactWrite [Delete(from) + Put(to)]<br/>atómico · respeta leases activos
+  loop por job pendiente de `from` (10 en paralelo, presupuesto 25 s)
+    JA->>J: TransactWrite [Delete(from) + Put(to)]<br/>atómico · condicionado a que siga pendiente
   end
-  JA-->>T: moved · skippedLeased
+  JA-->>T: moved · skipped (= skippedLeased) · partial
 ```
 
 ## 8. Campañas (PostgreSQL)

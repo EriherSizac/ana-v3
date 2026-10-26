@@ -86,11 +86,11 @@ PostgreSQL: tabla de campañas (default `campaigns.name`, configurable por env).
 | GET | `/conversations/{chatId}/messages` `?operatorId=` | Historial |
 | PUT | `/messages` | Persiste mensaje (whitelist; pointers de media) |
 | POST | `/uploads/presign` | URL firmada para subir CSV (config en metadata firmada) |
-| POST | `/uploads/delete` | Borra el CSV (solo dueño) |
+| POST | `/uploads/delete` | Borra el CSV (solo dueño; heredado: el trigger ya lo borra) |
 | POST | `/media/presign` | Subir media (nonce + allowlist content-type) |
 | GET | `/media/url?key=` | Ver media (autz como conversación) |
-| GET | `/jobs/poll` | Todos los jobs pendientes del operador |
-| POST | `/jobs/ack` | Borra jobs procesados |
+| GET | `/jobs/poll` | Pendientes del operador (≤2000) + historial reciente (≤300), `truncated`, totales; sin reserva por poll |
+| POST | `/jobs/ack` | Marca jobs `sent`/`no_whatsapp`/`error` (no borra); `{acked, notFound, invalid}` |
 | POST | `/agents/heartbeat` | Agente activo en su campaña |
 | GET | `/agents?campaign=` | Roster (admin/líder) |
 | GET | `/agents/campaigns` | Campañas (PostgreSQL; admin todas, resto las suyas) |
@@ -124,10 +124,10 @@ Catálogo: `ana:admin:console:manage`, `ana:contacts:list:upload`,
 1. Campañas: subir CSV (+plantilla, columna tel, lada, opción repartir).
 2. Presign → S3 (`csv-uploads/`); `csvTrigger` parsea → jobs en DynamoDB
    (al uploader, o round-robin a agentes de la campaña si reparte).
-3. `poller` (main) trae todos los pendientes, **agrupa por archivo y procesa uno a la vez**.
+3. `poller` (main) trae los pendientes (hasta 2000; avisa si hay más), **agrupa por archivo y procesa uno a la vez**. El identificador de carga lo genera el servidor (key del CSV); el `campaignId` del cliente es solo `label`.
 4. **Rate limit humano**: máx 7 msgs/20 min, ≥2 min entre cada uno. Simula
    "escribiendo…" 2–9s antes de enviar.
-5. Cada envío → `PUT /messages` + `ack`. Al terminar el archivo → borra el CSV de S3.
+5. Cada envío → `PUT /messages` + `ack` (marca el estado; no borra). `csvTrigger` borra el CSV de S3 al escribir todos los jobs.
 6. Barra de progreso en Campañas (hecho/total, enviados/fallidos, cuenta regresiva).
 
 ### Chat manual

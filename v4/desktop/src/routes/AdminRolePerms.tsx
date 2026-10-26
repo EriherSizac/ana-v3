@@ -7,20 +7,19 @@ import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Skeleton } from '../ui/Skeleton';
 import { getRoles, getRolePerms, setRolePerms, type RoleSummary } from '../lib/api';
-import { ANA_PERMISSIONS, DEFAULT_PERMISSIONS } from '../lib/permissions';
+import {
+  DEFAULT_PERMISSIONS,
+  PERMISSION_CATALOG,
+  checkedFromStored,
+  permissionsToSave,
+} from '../lib/permissions';
 
 const isDefault = (perm: string) => DEFAULT_PERMISSIONS.includes(perm);
 
 // Pantalla admin: lista todos los roles (API de Roles) y edita sus permisos ana.
-const CATALOG: { perm: string; label: string }[] = [
-  { perm: ANA_PERMISSIONS.ADMIN_CONSOLE, label: 'Consola de administración' },
-  { perm: ANA_PERMISSIONS.CONTACTS_UPLOAD, label: 'Subir contactos (CSV)' },
-  { perm: ANA_PERMISSIONS.CONTACTS_DISTRIBUTE, label: 'Repartir contactos entre agentes' },
-  { perm: ANA_PERMISSIONS.CHATS_VIEW, label: 'Ver conversaciones' },
-  { perm: ANA_PERMISSIONS.CHATS_TEAM_VIEW, label: 'Ver conversaciones de agentes' },
-  { perm: ANA_PERMISSIONS.CHATS_REPLY, label: 'Responder mensajes' },
-  { perm: ANA_PERMISSIONS.CAMPAIGN_SEND, label: 'Enviar campañas' },
-];
+// Catálogo de 9 (v4-enforce-permissions); los valores guardados que no muestra
+// se conservan al guardar.
+const CATALOG = PERMISSION_CATALOG;
 
 export function AdminRolePerms() {
   const [roles, setRoles] = useState<RoleSummary[] | null>(null);
@@ -28,6 +27,8 @@ export function AdminRolePerms() {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<RoleSummary | null>(null);
   const [perms, setPerms] = useState<Set<string> | null>(null);
+  // Lo guardado del rol (para conservar lo que el editor no muestra).
+  const [stored, setStored] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -45,17 +46,12 @@ export function AdminRolePerms() {
     setPerms(null);
     setStatus(null);
     try {
-      const stored = await getRolePerms(role.role_id); // grants + denies (`-perm`)
-      // Estado "checked" por permiso del catálogo:
-      //  default → ON salvo deny (`-perm` presente); no-default → ON si está el grant.
-      const checked = new Set<string>();
-      for (const { perm } of CATALOG) {
-        const on = isDefault(perm) ? !stored.includes(`-${perm}`) : stored.includes(perm);
-        if (on) checked.add(perm);
-      }
-      setPerms(checked);
+      const saved = await getRolePerms(role.role_id); // grants + denies (`-perm`)
+      setStored(saved);
+      setPerms(checkedFromStored(saved));
     } catch (e: any) {
       setPerms(new Set());
+      setStored([]);
       setStatus(`Error cargando permisos: ${e?.message ?? e}`);
     }
   }
@@ -73,14 +69,10 @@ export function AdminRolePerms() {
     setBusy(true);
     setStatus(null);
     try {
-      // Construye grants/denies: default desactivado → `-perm`; no-default activo → `perm`.
-      const out: string[] = [];
-      for (const { perm } of CATALOG) {
-        const on = perms.has(perm);
-        if (isDefault(perm) && !on) out.push(`-${perm}`);
-        else if (!isDefault(perm) && on) out.push(perm);
-      }
+      // Grants/denies de las casillas + lo guardado que el editor no muestra.
+      const out = permissionsToSave(stored, perms);
       await setRolePerms(selected.role_id, out);
+      setStored(out);
       setStatus('Permisos guardados.');
     } catch (e: any) {
       setStatus(`Error: ${e?.message ?? e}`);

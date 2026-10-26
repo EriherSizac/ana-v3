@@ -36,3 +36,13 @@
 2. Deploy B: código nuevo con `JOBS_CAMPAIGN_INDEX=campaign-status-index`.
 3. Release del desktop (aviso de truncado).
 4. Deploy C (≥ 1 día después, sin errores): retirar `campaign-index`.
+
+## Decisiones de implementación
+
+- **1.2 (código listo, deploy pendiente):** `serverless.yml` ya declara `campaign-status-index` junto a `campaign-index` y `JOBS_CAMPAIGN_INDEX: ${param:jobsCampaignIndex, 'campaign-index'}`. El Deploy B se hace con `--param="jobsCampaignIndex=campaign-status-index"` (sin cambio de código). Mientras la variable apunta al índice viejo, `status` no está proyectado: el resumen cuenta como pendiente lo que no trae estado (comportamiento previo) y la reasignación los intenta, pero la condición de la transacción sobre la tabla base deja el historial en `skipped`.
+- **Evento S3 tardío tras el borrado (D8):** si `GetObject` responde `NoSuchKey`, el trigger registra `evt:"csv_missing_object"` y termina sin lanzar (evita reintentos de S3 sobre un CSV ya procesado y borrado).
+- **CSV ilegible:** solo se registra en el log (`csv_rejected`/`parse_error`); no se agrega `parse_error` al historial de cargas (`v4/contact-uploads`) para no cambiar su contrato.
+- **Historial de cargas:** `jobs` y `perAgent` cuentan solo los jobs efectivamente escritos (en escritura parcial, menos que `validRows`).
+- **Reasignación:** cada job se lee completo con `GetItem` (antes `Query`), y un job que ya no está pendiente en la tabla base se cuenta en `skipped` sin intentar la transacción. `remaining` solo aparece con `partial: true`.
+- **Desktop:** el poller expone los totales como segundo argumento de `onAssignment` y un canal IPC nuevo `jobs:assignment-info` (+ `jobs:get-assignment-info` para hidratar). Con un backend previo sin totales, se calculan de lo recibido y `truncated` es falso. El límite de longitud de `jobId` del guard IPC sube de 200 a 1024 (los `jobId` ahora incluyen la key del CSV); un desktop viejo rechazaría aprobar jobs de archivos con nombres de más de ~140 caracteres hasta actualizarse.
+- **4.3:** la `LifecycleConfiguration` se verifica con una prueba que parsea `serverless.yml`; `npx serverless package` necesita credenciales/SSM (`/ana/v4/<stage>/send-api-key`) y queda como verificación manual.

@@ -3,12 +3,16 @@
 // Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
-/** cognito:username del id token (operatorId), sin verificar firma. */
+/** operatorId canónico (v4-canonical-identity-keys D1): sin espacios laterales y en minúsculas. */
+export const canonicalOperatorId = (v: unknown): string =>
+  typeof v === 'string' ? v.trim().toLowerCase() : '';
+
+/** operatorId canónico del id token (cognito:username o sub), sin verificar firma. */
 export function usernameFromJwt(token: string): string {
   try {
     const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
     const payload = JSON.parse(Buffer.from(part, 'base64').toString('utf-8'));
-    return payload['cognito:username'] ?? payload.sub ?? 'ana';
+    return canonicalOperatorId(payload['cognito:username'] ?? payload.sub) || 'ana';
   } catch {
     return 'ana';
   }
@@ -41,8 +45,10 @@ export function decideSetToken(input: {
   const { token, reason, activeOperator, lastOperator } = input;
   if (!token) return reason === 'expired' ? { kind: 'expired' } : { kind: 'logout' };
   const operator = usernameFromJwt(token);
-  if (activeOperator && activeOperator === operator) return { kind: 'refresh', operator };
-  return { kind: 'login', operator, wipeLocal: !!lastOperator && lastOperator !== operator };
+  if (activeOperator && canonicalOperatorId(activeOperator) === operator) return { kind: 'refresh', operator };
+  // `.ana-last-operator` de versiones previas puede traer otra grafía.
+  const last = canonicalOperatorId(lastOperator);
+  return { kind: 'login', operator, wipeLocal: !!last && last !== operator };
 }
 
 /** El heartbeat solo sale con campaña registrada y WhatsApp `connected`. */

@@ -202,6 +202,12 @@ líderes y admins lo tienen).
 Solo rol **Developer** (`isDeveloper`; admin o líder no bastan). Se arma desde
 el catálogo que devuelve v3 `GET /admin/cli-settings` (vía `GET/POST /api/cli-settings`);
 cada cambio pide `ConfirmDialog` y aplica a todos los CLIs v3 en ≤ 5 min.
+La sección **Desktop v4** de la misma página lee v4 `GET /admin/desktop-settings` (vía
+`GET/PUT /api/v4/desktop-settings`, solo Developer): ritmo de envío (`sendMinGapSeconds`
+60–600, `sendMaxPerWindow` 1–20, `sendWindowMinutes` 5–60) y `openChatInteraction`; cada
+cambio pide `ConfirmDialog` con el valor anterior y el nuevo, envía solo esa llave con la
+versión leída (409 → "La configuración cambió; recarga para ver el valor actual") y aplica
+a todos los desktops v4 en ≤ 5 min.
 
 ## Sección Historial legacy (`/historial-legacy`)
 
@@ -229,3 +235,16 @@ vuelve a pedir.
 - La columna `ana_upload_id` está reservada en v3: un CSV que la traiga se
   rechaza y una variable `{x}` que solo resolvería contra ella (p. ej.
   `{upload}`) se marca "Variable desconocida".
+
+### Por revisar v4 (`/contactos/historial/{srcKey}?campaign=&fleet=v4`)
+
+- Cada carga v4 del historial enlaza a su detalle: los envíos interrumpidos
+  (`review`) y ya resueltos (`discarded`) de esa carga, por agente, con nombre,
+  crédito, teléfono enmascarado y momento de la interrupción
+  (`GET /api/v4/campaigns/{c}/review?srcKey=` → v4 `GET /jobs/review`).
+  `/contactos/historial/all?campaign=&fleet=v4` lista toda la campaña,
+  incluidos los envíos directos (marcados "Envío directo").
+- **Descartar** y **Reenviar a…** (agente habilitado del roster v4), con
+  `ConfirmDialog`; el reenvío advierte "Este contacto pudo haber recibido el
+  mensaje. Reenviarlo puede duplicarlo." → `POST /api/v4/campaigns/{c}/review/resolve`
+  (→ v4 `POST /jobs/review/resolve`, 1–100 contactos, resultado por contacto).

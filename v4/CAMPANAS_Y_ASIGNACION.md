@@ -149,7 +149,7 @@ Alternativa interna (sin Dashboard): la tabla `agents` con **heartbeat**. Cada d
 - **ponderado** (`assignments = {operatorId: peso}`): se expande la lista (`{a:2,b:1}` → `[a,a,b]`) y se aplica el mismo round-robin → respeta proporciones.
 - **sin distribute**: el uploader se queda todos (revisa/envía él mismo).
 
-Cada job se escribe con `PK = operatorId` del agente destino → el aislamiento es natural: en `GET /jobs/poll` cada agente consulta solo su partición. Un GSI `campaign-index` permite al líder ver el total por campaña y **reasignar** pendientes de un agente caído a otro (`POST /jobs/reassign`).
+Cada job se escribe con `PK = operatorId` del agente destino → el aislamiento es natural: en `GET /jobs/poll` cada agente consulta solo su partición. Un GSI por campaña (`campaign-status-index`, que proyecta `status`; nombre en `JOBS_CAMPAIGN_INDEX`) permite al líder ver los pendientes reales por campaña y **reasignar** pendientes de un agente caído a otro (`POST /jobs/reassign`, por lotes en paralelo con presupuesto de 25 s y `partial: true` si falta). No hay reserva por poll: un job es pendiente (`pending`, sin estado o el estado heredado `leased`) o ya procesado. El `jobId` es `<identificador de carga>#<índice>` con el identificador generado por el servidor (la key del CSV sin `csv-uploads/`); el `campaignId` del cliente se guarda como `label`.
 
 Implementación: `backend/src/handlers/csvTrigger.ts`, `backend/src/lib/dashboard.ts`, `backend/src/handlers/jobsAdmin.ts`.
 
@@ -307,3 +307,32 @@ no la procesa). Permitido a admins (cualquier campaña) y a usuarios con
 `ana:contacts:list:upload` sobre campañas propias o `*`, sin depender de
 `PERMISSIONS_ENFORCED`; si no, `403 {"error":"sin permiso"}`. Sin `campaign` →
 `400 {"error":"falta campaign"}`.
+
+## 12. Envíos interrumpidos ("Por revisar")
+
+Si la app se cierra o se cae entre el envío de WhatsApp y el acuse, el job no
+vuelve a ofrecerse: el desktop lo reservó (`POST /jobs/claim`, estado
+`sending`) y, pasados **10 minutos** sin acuse, el backend lo pasa a
+`review`. Ningún job `review` se reenvía solo.
+
+| Estado | Significado |
+|---|---|
+| `pending` (o sin estado, `leased` heredado) | por enviar |
+| `sending` | reservado justo antes de enviar |
+| `review` | envío interrumpido: por revisar |
+| `sent` / `no_whatsapp` / `error` | resultado del acuse |
+| `discarded` | resuelto por un supervisor (`resolution: discarded` o `requeued`) |
+
+- El líder ve "N por revisar" por agente en el panel de envíos pendientes del
+  desktop (`GET /jobs/summary` trae `review`; `total` sigue siendo solo
+  pendientes) y los resuelve en ANA Admin: detalle de la carga v4
+  (`/contactos/historial/<srcKey>?campaign=&fleet=v4`) o "Por revisar (v4)"
+  de la campaña (incluye envíos directos).
+- **Descartar** → `discarded`. **Reenviar a…** (agente habilitado del roster
+  v4) → el original queda `discarded` con `resolution: "requeued"` y el
+  destino recibe un job `pending` nuevo (`<jobId>~r<epochMs>`) con la misma
+  fila; la confirmación advierte que el mensaje pudo haber salido.
+- Rutas: `GET /jobs/review?campaign=<c>[&srcKey=<k>]` y
+  `POST /jobs/review/resolve` (misma autorización que `/jobs/summary` y
+  `/jobs/reassign`). Implementación: `backend/src/handlers/jobsPoll.ts`,
+  `backend/src/handlers/jobsAdmin.ts`, `backend/src/lib/jobs.ts`.

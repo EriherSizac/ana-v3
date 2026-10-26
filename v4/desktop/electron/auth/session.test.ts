@@ -46,6 +46,25 @@ describe('usernameFromJwt', () => {
     expect(usernameFromJwt(jwt({ sub: 'x-1' }))).toBe('x-1');
     expect(usernameFromJwt('no-jwt')).toBe('ana');
   });
+
+  it('canónico: Ana.Lopez → ana.lopez', () => {
+    expect(usernameFromJwt(jwt({ 'cognito:username': ' Ana.Lopez ' }))).toBe('ana.lopez');
+  });
+});
+
+describe('decideSetToken con grafías distintas (v4-canonical-identity-keys)', () => {
+  it('Ana.Lopez vs ana.lopez → mismo operador (no borra WhatsApp local)', () => {
+    const t = jwt({ 'cognito:username': 'Ana.Lopez' });
+    expect(decideSetToken({ token: t, activeOperator: null, lastOperator: 'ana.lopez' })).toEqual({
+      kind: 'login',
+      operator: 'ana.lopez',
+      wipeLocal: false,
+    });
+    const t2 = jwt({ 'cognito:username': 'ana.lopez' });
+    expect(decideSetToken({ token: t2, activeOperator: null, lastOperator: 'Ana.Lopez' }).kind).toBe('login');
+    expect((decideSetToken({ token: t2, activeOperator: null, lastOperator: 'Ana.Lopez' }) as any).wipeLocal).toBe(false);
+    expect(decideSetToken({ token: t2, activeOperator: 'Ana.Lopez', lastOperator: 'Ana.Lopez' }).kind).toBe('refresh');
+  });
 });
 
 describe('shouldHeartbeat', () => {

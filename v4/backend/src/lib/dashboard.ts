@@ -5,6 +5,8 @@
 
 // Cliente de la API de agentes del dashboard (imery). Devuelve los agentes
 // ACTIVOS elegibles de una campaña para repartir contactos. Ver api-agentes.md.
+import { canonicalOperatorId } from './identity';
+
 const BASE = process.env.DASHBOARD_BASE_PATH!;
 const KEY = process.env.DASHBOARD_API_KEY!;
 
@@ -47,12 +49,14 @@ export async function fetchEligibleAgents(campaign: string): Promise<string[] | 
     const { users = [] } = (await res.json()) as { users?: DashUser[] };
     const requiredRole = process.env[`AGENT_ROLE_${campaign.toUpperCase()}`];
 
-    return users
+    // operatorId canónico y sin repetidos (v4-canonical-identity-keys D3).
+    const ids = users
       .filter((u) => u.active)
       .filter((u) => !INTERNAL_EMAIL.test(u.email ?? ''))
       .filter((u) => !requiredRole || (u.roles ?? []).some((r) => r.id === requiredRole))
-      .map((u) => u.username ?? u.user_id ?? '')
+      .map((u) => canonicalOperatorId(u.username ?? u.user_id ?? ''))
       .filter(Boolean);
+    return [...new Set(ids)];
   } catch (e) {
     console.error('[dashboard] error red /users/campaign', e);
     return null;

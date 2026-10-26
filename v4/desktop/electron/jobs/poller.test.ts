@@ -41,7 +41,22 @@ describe('JobPoller.pollOnce', () => {
   it('publica la asignación cuando la consulta es exitosa', async () => {
     const { poller, onAssignment } = makePoller({ authFetch: vi.fn(async () => pollResponse([job('j1')])) });
     await poller.pollOnce();
-    expect(onAssignment).toHaveBeenCalledWith([expect.objectContaining({ jobId: 'j1' })]);
+    expect(onAssignment).toHaveBeenCalledWith([expect.objectContaining({ jobId: 'j1' })], {
+      truncated: false,
+      pendingTotal: 1,
+      historyTotal: 0,
+    });
+  });
+
+  it('propaga truncated/pendingTotal/historyTotal del backend', async () => {
+    const body = { jobs: [{ id: 'j1', job: job('j1') }], truncated: true, pendingTotal: 3000, historyTotal: 12 };
+    const { poller, onAssignment } = makePoller({
+      authFetch: vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })),
+    });
+    await poller.pollOnce();
+    const info = { truncated: true, pendingTotal: 3000, historyTotal: 12 };
+    expect(onAssignment).toHaveBeenCalledWith([expect.objectContaining({ jobId: 'j1' })], info);
+    expect(poller.getAssignmentInfo()).toEqual(info);
   });
 
   it('401 y 500 no emiten onAssignment([]) y conservan la última asignación', async () => {
@@ -177,6 +192,160 @@ describe('JobPoller.pauseNewJobs / waitIdle', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       await w;
       expect(idle).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('JobPoller: reserva y acuse (v4-review-interrupted-sends)', () => {
+  const run = async (jobs: SendJob[], route: (url: string) => Response | Promise<Response>, ids: string[]) => {
+    const runJob = vi.fn(async () => ({ success: true }));
+    const authFetch = vi.fn(async (url: string) => (url.endsWith('/jobs/poll') ? pollResponse(jobs) : route(url)));
+    const { poller } = makePoller({ runJob, authFetch });
+    poller.start();
+    toStop.push(poller);
+    await poller.pollOnce();
+    expect((await poller.approve(ids)).ok).toBe(true);
+    const done = poller.currentBatch();
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    await done;
+    return { runJob, authFetch, poller };
+  };
+  const urls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.map((c) => String(c[0]));
+
+  it('claim 409 → no llama runJob ni ack; sigue con el siguiente', async () => {
+    vi.useFakeTimers();
+    let claims = 0;
+    try {
+      const { runJob, authFetch } = await run(
+        [job('j1'), job('j2')],
+        (url) => {
+          if (url.endsWith('/jobs/claim')) {
+            claims += 1;
+            const n = claims;
+            return new Response(JSON.stringify(n === 1 ? { error: 'job no disponible', status: null } : { claimed: true }), {
+              status: n === 1 ? 409 : 200,
+            });
+          }
+          return new Response('{}');
+        },
+        ['j1', 'j2'],
+      );
+      expect(runJob).toHaveBeenCalledTimes(1);
+      expect(runJob.mock.calls[0][0]).toMatchObject({ jobId: 'j2' });
+      expect(urls(authFetch).filter((u) => u.endsWith('/jobs/ack'))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('claim con error de red → no envía', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runJob } = await run(
+        [job('j1')],
+        (url) => {
+          if (url.endsWith('/jobs/claim')) throw new Error('ECONNRESET');
+          return new Response('{}');
+        },
+        ['j1'],
+      );
+      expect(runJob).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ack falla 2 veces y luego ok → un solo runJob, 3 acks; CSV borrado', async () => {
+    vi.useFakeTimers();
+    try {
+      let acks = 0;
+      const { runJob, authFetch } = await run(
+        [job('j1')],
+        (url) => {
+          if (url.endsWith('/jobs/ack')) {
+            acks += 1;
+            if (acks === 1) throw new Error('red');
+            return new Response('{}', { status: acks === 2 ? 502 : 200 });
+          }
+          return new Response('{"claimed":true}');
+        },
+        ['j1'],
+      );
+      expect(runJob).toHaveBeenCalledTimes(1);
+      expect(acks).toBe(3);
+      expect(urls(authFetch)).toContain('https://api/uploads/delete');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ack falla siempre → queda reservado y el CSV NO se borra', async () => {
+    vi.useFakeTimers();
+    try {
+      const { authFetch } = await run(
+        [job('j1')],
+        (url) => (url.endsWith('/jobs/ack') ? new Response('', { status: 503 }) : new Response('{"claimed":true}')),
+        ['j1'],
+      );
+      expect(urls(authFetch).filter((u) => u.endsWith('/jobs/ack'))).toHaveLength(4);
+      expect(urls(authFetch)).not.toContain('https://api/uploads/delete');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sending/review no son aprobables ni se envían solos', async () => {
+    const authFetch = vi.fn(async () =>
+      pollResponse([job('r1', { status: 'review' }), job('s1', { status: 'sending', auto: true })]),
+    );
+    const runJob = vi.fn(async () => ({ success: true }));
+    const { poller } = makePoller({ authFetch, runJob });
+    await poller.pollOnce();
+    expect(await poller.approve(['r1', 's1'])).toEqual({ ok: false, error: 'Sin envíos seleccionados' });
+    expect(runJob).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobPoller: ritmo configurable (v4-add-desktop-remote-settings)', () => {
+  const setup = async (n: number, pace: { minGapMs: number; windowMs: number; maxPerWindow: number }) => {
+    const jobs = Array.from({ length: n }, (_, i) => job(`p${i}`));
+    const runJob = vi.fn(async () => ({ success: true }));
+    const authFetch = vi.fn(async (url: string) => (url.endsWith('/jobs/poll') ? pollResponse(jobs) : new Response('{}')));
+    const { poller } = makePoller({ runJob, authFetch, pace: () => pace });
+    poller.start();
+    toStop.push(poller);
+    await poller.pollOnce();
+    expect((await poller.approve(jobs.map((j) => j.jobId))).ok).toBe(true);
+    return { runJob };
+  };
+
+  it('gap de 180 s: el segundo no sale antes', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runJob } = await setup(2, { minGapMs: 180_000, windowMs: 20 * 60_000, maxPerWindow: 7 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(runJob).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(177_000);
+      expect(runJob).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(runJob).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('máximo 5 por ventana: el sexto espera a que salga el primero', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runJob } = await setup(6, { minGapMs: 60_000, windowMs: 20 * 60_000, maxPerWindow: 5 });
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(runJob).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(14 * 60_000); // minuto ~19
+      expect(runJob).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      expect(runJob).toHaveBeenCalledTimes(6);
     } finally {
       vi.useRealTimers();
     }

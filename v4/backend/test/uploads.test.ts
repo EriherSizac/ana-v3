@@ -7,7 +7,12 @@ import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { ddbMock, s3Mock } from './helpers';
 
 const access = vi.hoisted(() => ({ value: null as any }));
-vi.mock('../src/lib/access', () => ({ resolveUserAccess: async () => access.value, can: () => true }));
+vi.mock('../src/lib/access', () => ({
+  resolveUserAccess: async () => access.value,
+  can: () => true,
+  canRoute: () => true,
+  routeAllowed: async () => true,
+}));
 vi.mock('../src/lib/dashboard', () => ({ getEligibleAgents: async () => [] }));
 vi.mock('../src/lib/campaignsDb', () => ({ campaignExists: async () => true }));
 
@@ -21,10 +26,19 @@ const OBJ_DATE = new Date('2026-10-25T15:00:00.000Z');
 /** Tabla de historial en memoria (PK campaign, SK srcKey). */
 let table: Map<string, Record<string, any>>;
 let jobs: any[];
+/** Marcadores UPLOAD#<srcKey> en la tabla de jobs (procesamiento único). */
+let markers: Set<string>;
 
 function installUploadsTable() {
   table = new Map();
-  ddbMock.on(PutCommand).callsFake((input: any) => {
+  markers = new Set();
+  ddbMock.on(PutCommand, { TableName: 'jobs-test' }).callsFake((input: any) => {
+    const k = `${input.Item.operatorId}|${input.Item.jobId}`;
+    if (markers.has(k)) throw Object.assign(new Error('cond'), { name: 'ConditionalCheckFailedException' });
+    markers.add(k);
+    return {};
+  });
+  ddbMock.on(PutCommand, { TableName: 'uploads-test' }).callsFake((input: any) => {
     table.set(`${input.Item.campaign}|${input.Item.srcKey}`, input.Item);
     return {};
   });
@@ -131,7 +145,7 @@ describe('csvTrigger: registro de cargas', () => {
   });
 
   it('fallo al registrar no rompe la creación de jobs', async () => {
-    ddbMock.on(PutCommand).rejects(Object.assign(new Error('boom'), { name: 'ProvisionedThroughputExceededException' }));
+    ddbMock.on(PutCommand, { TableName: 'uploads-test' }).rejects(Object.assign(new Error('boom'), { name: 'ProvisionedThroughputExceededException' }));
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     installObject(csvOf(3), { operatorid: 'lider.didi', campaign: 'didi_vip' });
     await expect(csvTrigger(s3Event())).resolves.toBeUndefined();

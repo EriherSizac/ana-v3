@@ -37,6 +37,10 @@ provider:
     CSV_BUCKET: ${self:service}-csv-${self:provider.stage}
     MEDIA_BUCKET: ${self:service}-media-${self:provider.stage}
     JOBS_TABLE: ${self:service}-jobs-${self:provider.stage}
+    # Índice por campaña que usan /jobs/summary y /jobs/reassign
+    # (v4-harden-send-job-queue D1). Deploy A: 'campaign-index'; Deploy B:
+    # --param="jobsCampaignIndex=campaign-status-index" (con el índice ACTIVE).
+    JOBS_CAMPAIGN_INDEX: ${param:jobsCampaignIndex, 'campaign-index'}
     ROLEPERMS_TABLE: ${self:service}-roleperms-${self:provider.stage}
     AGENTS_TABLE: ${self:service}-agents-${self:provider.stage}
     ACCESS_CACHE_TABLE: ${self:service}-accesscache-${self:provider.stage}
@@ -48,7 +52,12 @@ provider:
     # (DEV sería 2egq6rek0a). Si se consulta DEV, los usuarios de prod no existen.
     ROLES_API_BASE: ${param:rolesApiBase, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}
     ROLES_API_KEY: ${env:ROLES_API_KEY, ''}
-    # Flag de enforcement (guía §8). 'false' = no bloquear hasta validar.
+    # Flag de enforcement (guía §8, v4-enforce-permissions D1), parámetro
+    # `permissionsEnforced`:
+    #   'false'  (default) permite todo lo que no sea chequeo explícito.
+    #   'report' permite y registra evt:"perm_would_deny" (ruta, usuario, permiso).
+    #   'true'   aplica ROUTE_PERMISSIONS (403 "sin permiso").
+    # Ej.: npx serverless deploy --stage prod --param="permissionsEnforced=report"
     PERMISSIONS_ENFORCED: ${param:permissionsEnforced, 'false'}
     # API de agentes del dashboard (imery) — agentes activos por campaña.
     DASHBOARD_BASE_PATH: ${param:dashboardBasePath, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}
@@ -77,6 +86,9 @@ provider:
     COGNITO_USER_POOL_ID: ${self:custom.userPoolId}
     # Reparto solo a agentes habilitados. 'false' al desplegar (design D6).
     AGENT_ROSTER_FILTER: ${param:agentRosterFilter, 'false'}
+    # Transición de llaves S3 (v4-canonical-identity-keys D6): GET /media/url
+    # acepta el segmento saneado propio. 'true' entre la migración y --delete-source.
+    MEDIA_LEGACY_OWNER: ${param:mediaLegacyOwner, 'false'}
   httpApi:
     cors: true
     authorizers:
@@ -249,7 +261,7 @@ functions:
 
   jobsPoll:
     handler: src/handlers/jobsPoll.handler
-    description: Entrega/ack de send-jobs por operador (DynamoDB con lease)
+    description: Entrega/ack de send-jobs por operador (DynamoDB, sin lease)
     events:
       - httpApi:
           path: /jobs/poll
@@ -257,6 +269,11 @@ functions:
           authorizer: { name: cognitoJwt }
       - httpApi:
           path: /jobs/ack
+          method: post
+          authorizer: { name: cognitoJwt }
+      # Reserva antes de enviar (v4-review-interrupted-sends D1).
+      - httpApi:
+          path: /jobs/claim
           method: post
           authorizer: { name: cognitoJwt }
 
@@ -289,6 +306,15 @@ functions:
           path: /jobs/reassign
           method: post
           authorizer: { name: cognitoJwt }
+      # Envíos interrumpidos por revisar (v4-review-interrupted-sends).
+      - httpApi:
+          path: /jobs/review
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /jobs/review/resolve
+          method: post
+          authorizer: { name: cognitoJwt }
 
   directSend:
     handler: src/handlers/directSend.handler
@@ -298,6 +324,25 @@ functions:
           path: /send
           method: post
           # Sin authorizer Cognito: autentica por X-Api-Key dentro del handler.
+
+  # Configuración remota del desktop (v4-add-desktop-remote-settings): item
+  # PK=CONFIG / SK=DESKTOP_SETTINGS en RolePermsTable. Admin = rol Developer.
+  settings:
+    handler: src/handlers/settings.handler
+    description: Configuración remota del desktop v4 (lectura y edición Developer)
+    events:
+      - httpApi:
+          path: /settings
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/desktop-settings
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/desktop-settings
+          method: put
+          authorizer: { name: cognitoJwt }
 
   csvTrigger:
     handler: src/handlers/csvTrigger.handler
@@ -419,6 +464,14 @@ resources:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.CSV_BUCKET}
+        # csvTrigger borra el CSV al escribir todos sus jobs; esta regla es el
+        # respaldo para escrituras parciales o eventos perdidos (D8).
+        LifecycleConfiguration:
+          Rules:
+            - Id: expire-csv-uploads
+              Status: Enabled
+              Prefix: csv-uploads/
+              ExpirationInDays: 7
         PublicAccessBlockConfiguration:
           BlockPublicAcls: true
           BlockPublicPolicy: true
@@ -450,8 +503,8 @@ resources:
               ExposedHeaders: [ETag]
               MaxAge: 3000
 
-    # Cola de send-jobs por operador. PK=operatorId aísla el pull;
-    # status/leaseUntil dan semántica de lease (visibility) sin SQS.
+    # Cola de send-jobs por operador. PK=operatorId aísla el pull. Sin lease:
+    # status (pending/sent/no_whatsapp/error) marca qué falta por enviar.
     JobsTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -466,6 +519,8 @@ resources:
           - { AttributeName: jobId, KeyType: RANGE }
         # GSI sparse por campaña (vista del líder: pendientes por agente).
         # Solo jobs con `campaign` aparecen; los uploads sin campaña no indexan.
+        # campaign-status-index (D1) proyecta el estado real; campaign-index se
+        # retira en el Deploy C (CloudFormation crea/borra un GSI por update).
         GlobalSecondaryIndexes:
           - IndexName: campaign-index
             KeySchema:
@@ -474,6 +529,13 @@ resources:
             Projection:
               ProjectionType: INCLUDE
               NonKeyAttributes: [campaignId, leaseUntil, ttl]
+          - IndexName: campaign-status-index
+            KeySchema:
+              - { AttributeName: campaign, KeyType: HASH }
+              - { AttributeName: operatorId, KeyType: RANGE }
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes: [campaignId, srcKey, status, sentAt, ttl, label]
         TimeToLiveSpecification:
           AttributeName: ttl
           Enabled: true

@@ -130,6 +130,25 @@ export class Backend {
     }
   }
 
+  /** Acceso efectivo (`GET /me`) o null si no se pudo leer. */
+  async getAccess(): Promise<{ isAdmin: boolean; permissions: string[] } | null> {
+    if (!this.hasSession()) return null;
+    try {
+      const res = await this.authFetch(`${this.apiBase}/me`);
+      if (!res.ok) return null;
+      const { access } = (await res.json()) as { access?: { isAdmin?: boolean; permissions?: unknown } };
+      if (!access) return null;
+      return {
+        isAdmin: access.isAdmin === true,
+        permissions: Array.isArray(access.permissions)
+          ? access.permissions.filter((p): p is string => typeof p === 'string')
+          : [],
+      };
+    } catch {
+      return null;
+    }
+  }
+
   /** Registra este agente como activo en su campaña (para reparto del líder). */
   async heartbeat(campaign: string): Promise<void> {
     if (!this.hasSession() || !campaign) return;

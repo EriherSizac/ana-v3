@@ -20,7 +20,9 @@ import {
 } from '../lib/conversations';
 import { s3, CSV_BUCKET, MEDIA_BUCKET } from '../lib/s3';
 import { ok, bad, claimUser } from '../lib/http';
-import { resolveUserAccess, can, type UserAccess } from '../lib/access';
+import { resolveUserAccess, can, canRoute, type UserAccess } from '../lib/access';
+import { isAgentInCampaigns } from '../lib/agents';
+import { normalizeId, readCampaignAgents } from '../lib/campaignAgentsList';
 import { ANA_PERMISSIONS, sanitizeRolePermissions } from '../lib/permissions';
 import { setRolePermissions, getRolePermissions } from '../lib/rolePerms';
 import { invalidateByRole } from '../lib/accessCache';
@@ -28,23 +30,50 @@ import { checkAssignmentsEnabled, getDistributableAgents } from '../lib/distribu
 import { campaignExists } from '../lib/campaignsDb';
 import { listAllRoles } from '../lib/roles';
 import { listUploads } from '../lib/uploads';
+import {
+  campaignIn,
+  canonicalOperatorId,
+  decodeKeySegment,
+  encodeKeySegment,
+  legacySafeSegment,
+  resolveCatalogCampaign,
+} from '../lib/identity';
 
 /**
  * Resuelve el operador cuyas conversaciones se van a leer y autoriza el acceso.
  *  - sin operatorId, o == self → el propio usuario.
  *  - admin → cualquier operador.
- *  - líder con team-view → solo agentes de sus campañas.
+ *  - con `ana:chats:team:view` (líderes lo tienen) → solo agentes del roster
+ *    de sus campañas (v4-enforce-permissions D3).
+ * Hard check: no depende de PERMISSIONS_ENFORCED.
  * Devuelve el operatorId o null si no está autorizado.
  */
 async function resolveViewTarget(
   access: UserAccess,
   requested?: string,
 ): Promise<string | null> {
-  const target = requested ?? access.username;
+  const target = requested ? canonicalOperatorId(requested) : access.username;
   if (target === access.username) return target;
-  // "Ver como" (leer conversaciones de otro agente): SOLO admins.
   if (access.isAdmin) return target;
-  return null;
+  if (!access.permissions.includes(ANA_PERMISSIONS.CHATS_TEAM_VIEW)) return null;
+  if (access.campaigns.includes('*')) return target;
+  return (await isInOwnRoster(target, access.campaigns)) ? target : null;
+}
+
+/** ¿`operatorId` está en el roster v4 (o en la lista derivada) de alguna campaña? */
+async function isInOwnRoster(operatorId: string, campaigns: string[]): Promise<boolean> {
+  const own = campaigns.filter((c) => c && c !== '*');
+  if (await isAgentInCampaigns(operatorId, own)) return true;
+  for (const c of own) {
+    try {
+      const list = await readCampaignAgents(c);
+      if (list?.agents.some((a) => normalizeId(a.cognitoUsername) === operatorId || normalizeId(a.username) === operatorId))
+        return true;
+    } catch {
+      /* lista no disponible: solo cuenta el roster de la tabla */
+    }
+  }
+  return false;
 }
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -62,13 +91,13 @@ export const handler = async (
       case 'GET /me':
         return ok({ access });
       case 'GET /conversations': {
-        if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
+        if (!canRoute(access, route)) return bad('sin permiso', 403);
         const target = await resolveViewTarget(access, event.queryStringParameters?.operatorId);
         if (!target) return bad('sin permiso', 403);
         return await listConversations(target, event.queryStringParameters ?? {});
       }
       case 'GET /conversations/{chatId}/messages': {
-        if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
+        if (!canRoute(access, route)) return bad('sin permiso', 403);
         const target = await resolveViewTarget(access, event.queryStringParameters?.operatorId);
         if (!target) return bad('sin permiso', 403);
         return await listMessages(target, event.pathParameters?.chatId, event.queryStringParameters ?? {});
@@ -108,7 +137,7 @@ export const handler = async (
         // key con scope al propio username → basta estar autenticado.
         return await presignMedia(user, JSON.parse(event.body ?? '{}'));
       case 'GET /media/url':
-        if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
+        if (!canRoute(access, route)) return bad('sin permiso', 403);
         return await presignMediaGet(access, event.queryStringParameters?.key);
       // --- Sesión de WhatsApp respaldada en S3 (RemoteAuth) ---
       case 'POST /wa-session/presign':
@@ -145,15 +174,16 @@ async function uploadsHistory(
       (own.includes('*') || own.includes(campaign.toLowerCase())));
   if (!allowed) return bad('sin permiso', 403);
   const srcKey = q.srcKey?.trim() || undefined;
-  return ok({ campaign, items: await listUploads(campaign, { srcKey }) });
+  const catalogName = await resolveCatalogCampaign(campaign);
+  return ok({ campaign: catalogName, items: await listUploads(catalogName, { srcKey }) });
 }
 
 // Conversaciones/mensajes (resumen, paginación, leída): ver lib/conversations.ts.
 
 // Key de la sesión WhatsApp del operador (un zip por usuario). El scope por
 // username del JWT aísla: un agente solo lee/escribe SU sesión.
-const waSessionKey = (user: string) =>
-  `wa-sessions/${user.replace(/[^\w.\-]/g, '_')}/session.zip`;
+// Segmento de operador inyectivo (v4-canonical-identity-keys D2).
+const waSessionKey = (user: string) => `wa-sessions/${encodeKeySegment(user)}/session.zip`;
 
 /** Presigned PUT/GET para el zip de sesión de WhatsApp (RemoteAuth). */
 async function presignWaSession(
@@ -203,7 +233,7 @@ async function presignCsv(
   },
 ): Promise<APIGatewayProxyResultV2> {
   const user = access.username;
-  const safeUser = user.replace(/[^\w.\-]/g, '_');
+  const safeUser = encodeKeySegment(user);
   const filename = (payload.filename ?? 'upload.csv').replace(/[^\w.\-]/g, '_');
   if (filename === '.' || filename === '..') return bad('filename inválido');
 
@@ -212,16 +242,14 @@ async function presignCsv(
   if (payload.distribute && !distribute) return bad('sin permiso para repartir', 403);
 
   // Campaña: siempre requerida (se usa para el registro CRM, no solo reparto).
-  const campaign = payload.campaign ?? access.campaigns[0] ?? '';
-  if (!campaign) return bad('falta campaign');
-  // Debe ser propia (o admin/global).
-  if (
-    !access.isAdmin &&
-    !access.campaigns.includes('*') &&
-    !access.campaigns.includes(campaign)
-  ) {
+  const requested = (payload.campaign ?? access.campaigns[0] ?? '').trim();
+  if (!requested) return bad('falta campaign');
+  // Debe ser propia (o admin/global), sin distinguir mayúsculas.
+  if (!access.isAdmin && !campaignIn(access.campaigns, requested)) {
     return bad('campaña no permitida', 403);
   }
+  // Jobs, historial e interacciones usan la grafía del catálogo.
+  const campaign = await resolveCatalogCampaign(requested);
   // Y debe EXISTIR en la DB de campañas (typos no generan jobs huérfanos).
   if (!(await campaignExists(campaign))) {
     return bad(`la campaña "${campaign}" no existe`, 400);
@@ -231,10 +259,12 @@ async function presignCsv(
   let assignments = '';
   if (payload.assignments && Object.keys(payload.assignments).length > 0) {
     if (!distribute) return bad('assignments requiere distribute', 403);
+    // Destinatarios canónicos; los repetidos tras canonizar suman sus pesos.
     const clean: Record<string, number> = {};
-    for (const [op, w] of Object.entries(payload.assignments)) {
+    for (const [rawOp, w] of Object.entries(payload.assignments)) {
+      const op = canonicalOperatorId(rawOp);
       const n = Math.floor(Number(w));
-      if (op && Number.isFinite(n) && n > 0) clean[op] = n;
+      if (op && Number.isFinite(n) && n > 0) clean[op] = (clean[op] ?? 0) + n;
     }
     if (Object.keys(clean).length === 0) return bad('assignments sin pesos válidos');
     // Con AGENT_ROSTER_FILTER: solo destinatarios habilitados (400) y lista sana (503).
@@ -247,12 +277,17 @@ async function presignCsv(
 
   // Config fijada server-side en metadata firmada → el cliente no la altera.
   const key = `csv-uploads/${safeUser}/${Date.now()}_${filename}`;
+  // Identificador de carga generado aquí (v4-harden-send-job-queue D5): único
+  // por objeto subido, así dos cargas nunca comparten jobId. El valor del
+  // cliente (`<archivo>-<lada>`) se conserva solo como etiqueta.
+  const label = typeof payload.campaignId === 'string' ? payload.campaignId.slice(0, 100) : '';
   const metadata: Record<string, string> = {
     operatorid: user,
     template: payload.template ?? '{mensaje}',
     countrycode: payload.countryCode ?? '52',
     phonecolumn: payload.phoneColumn ?? 'telefono',
-    campaignid: payload.campaignId ?? key,
+    campaignid: key.slice('csv-uploads/'.length),
+    ...(label ? { label } : {}),
     distribute: distribute ? '1' : '0',
     campaign,
     ...(assignments ? { assignments } : {}),
@@ -293,8 +328,7 @@ async function deleteCsv(
   payload: { key?: string },
 ): Promise<APIGatewayProxyResultV2> {
   const key = payload.key ?? '';
-  const safeUser = user.replace(/[^\w.\-]/g, '_');
-  if (!key.startsWith(`csv-uploads/${safeUser}/`)) return bad('key no permitida', 403);
+  if (!key.startsWith(`csv-uploads/${encodeKeySegment(user)}/`)) return bad('key no permitida', 403);
   await s3.send(new DeleteObjectCommand({ Bucket: CSV_BUCKET, Key: key }));
   return ok({ deleted: key });
 }
@@ -320,7 +354,7 @@ async function presignMedia(
   user: string,
   payload: { filename?: string; mimetype?: string },
 ): Promise<APIGatewayProxyResultV2> {
-  const safeUser = user.replace(/[^\w.\-]/g, '_');
+  const safeUser = encodeKeySegment(user);
   const filename = (payload.filename ?? 'media.bin').replace(/[^\w.\-]/g, '_');
   if (filename === '.' || filename === '..') return bad('filename inválido');
   // nonce server-side → evita que un cliente sobrescriba media existente.
@@ -347,8 +381,14 @@ async function presignMediaGet(
   key?: string,
 ): Promise<APIGatewayProxyResultV2> {
   if (!key || !key.startsWith('media/')) return bad('key inválida');
-  const owner = key.split('/')[1]; // media/<owner>/...
-  const target = await resolveViewTarget(access, owner);
+  const segment = key.split('/')[1] ?? ''; // media/<owner codificado>/...
+  // Transición (design D6): llaves con el segmento saneado de antes del cambio.
+  const legacyOwn =
+    process.env.MEDIA_LEGACY_OWNER === 'true' &&
+    segment.toLowerCase() === legacySafeSegment(access.username).toLowerCase();
+  const owner = decodeKeySegment(segment);
+  if (owner === null && !legacyOwn) return bad('key inválida');
+  const target = legacyOwn ? access.username : await resolveViewTarget(access, owner!);
   if (!target) return bad('sin permiso', 403);
   const url = await getSignedUrl(
     s3,

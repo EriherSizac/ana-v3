@@ -8,11 +8,15 @@ import { Button } from '../ui/Button';
 import { TemplateEditor, getUnknownTemplateVars } from '../ui/TemplateEditor';
 import { ProgressBar } from './Campaigns';
 import { maskPhone } from '../lib/api';
-import type { AssignedJob, SendProgress } from '../types/ana';
+import { truncationNotice } from '../lib/assignmentNotice';
+import type { AssignedJob, AssignmentInfo, SendProgress } from '../types/ana';
 
 const isPending = (j: AssignedJob) => !j.status || j.status === 'pending' || j.status === 'leased';
 const isDone = (j: AssignedJob) =>
-  j.status === 'sent' || j.status === 'no_whatsapp' || j.status === 'error';
+  j.status === 'sent' || j.status === 'no_whatsapp' || j.status === 'error' || j.status === 'discarded';
+/** Reservado (en envío) o interrumpido: solo lectura, nunca aprobable. */
+const isReview = (j: AssignedJob) => j.status === 'sending' || j.status === 'review';
+export const REVIEW_NOTICE = 'Se interrumpió durante el envío; tu líder decide si se reenvía.';
 /** Archivo de un job (misma clave que usa el main para la plantilla). */
 const fileKey = (j: AssignedJob) => j.srcKey || j.campaignId;
 /** Nombre legible del archivo: último segmento del srcKey o la campaña. */
@@ -42,7 +46,8 @@ export function Assignment() {
   const [status, setStatus] = useState<string | null>(null);
   const [progress, setProgress] = useState<SendProgress>({ phase: 'idle' });
   const [query, setQuery] = useState('');
-  const [tab, setTab] = useState<'pending' | 'sent'>('pending');
+  const [tab, setTab] = useState<'pending' | 'review' | 'sent'>('pending');
+  const [info, setInfo] = useState<AssignmentInfo | null>(null);
 
   useEffect(() => {
     const apply = (next: AssignedJob[]) => {
@@ -59,10 +64,13 @@ export function Assignment() {
     // Hidratar al montar con la asignación vigente (el evento del poller solo
     // llega cada ~5s; sin esto la vista queda en blanco al entrar al tab).
     void window.ana.getAssignment().then(apply);
+    void window.ana.getAssignmentInfo().then(setInfo);
     const offJobs = window.ana.onJobsAssignment(apply);
+    const offInfo = window.ana.onJobsAssignmentInfo(setInfo);
     const offProgress = window.ana.onWaProgress(setProgress);
     return () => {
       offJobs();
+      offInfo();
       offProgress();
     };
   }, []);
@@ -75,7 +83,10 @@ export function Assignment() {
     () => jobs.filter(isDone).sort((a, b) => (b.sentAt ?? 0) - (a.sentAt ?? 0)),
     [jobs],
   );
-  const list = tab === 'pending' ? pendingJobs : sentJobs;
+  const reviewJobs = useMemo(() => jobs.filter(isReview), [jobs]);
+  const list = tab === 'pending' ? pendingJobs : tab === 'review' ? reviewJobs : sentJobs;
+  // Aviso si el backend no entregó todos los no finales (límite del poll).
+  const notice = truncationNotice(info, jobs.filter((j) => isPending(j) || isReview(j)).length);
 
   // Un grupo (editor de plantilla) por archivo con jobs seleccionados.
   const groups = useMemo<FileGroup[]>(() => {
@@ -165,10 +176,19 @@ export function Assignment() {
         plantilla; lo no seleccionado queda pendiente para después.
       </p>
 
+      {notice && (
+        <div role="status" className="mt-4 rounded-xl bg-primary-light-90 px-4 py-2 text-sm text-text-muted">
+          {notice}
+        </div>
+      )}
+
       {/* Tabs: pendientes (por enviar) / enviados (historial). */}
       <div className="mt-4 flex gap-1 border-b border-neutral-50">
         <TabBtn active={tab === 'pending'} onClick={() => setTab('pending')}>
           Pendientes ({pendingJobs.length})
+        </TabBtn>
+        <TabBtn active={tab === 'review'} onClick={() => setTab('review')}>
+          Por revisar ({reviewJobs.length})
         </TabBtn>
         <TabBtn active={tab === 'sent'} onClick={() => setTab('sent')}>
           Enviados ({sentJobs.length})
@@ -179,7 +199,9 @@ export function Assignment() {
         <div className="pernexium-card mt-4 p-6 text-sm text-text-light">
           {tab === 'pending'
             ? 'Sin contactos pendientes. Cuando tu líder reparta una campaña (o subas un CSV propio), aparecerán aquí.'
-            : 'Aún no hay envíos. El historial muestra los contactos ya procesados.'}
+            : tab === 'review'
+              ? 'Sin contactos por revisar.'
+              : 'Aún no hay envíos. El historial muestra los contactos ya procesados.'}
         </div>
       ) : (
         <div className="pernexium-card mt-4 space-y-4 p-6">
@@ -189,6 +211,8 @@ export function Assignment() {
                 <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} />
                 {selectedPending}/{pendingJobs.length} seleccionados
               </label>
+            ) : tab === 'review' ? (
+              <span className="text-sm font-semibold text-text-muted">{REVIEW_NOTICE}</span>
             ) : (
               <span className="text-sm font-semibold text-text-muted">
                 {sentJobs.length} en el historial
@@ -216,7 +240,7 @@ export function Assignment() {
                   <th className="px-3 py-2">Nombre</th>
                   <th className="px-3 py-2">Crédito</th>
                   <th className="px-3 py-2">Teléfono</th>
-                  {tab === 'sent' && <th className="px-3 py-2">Resultado</th>}
+                  {tab !== 'pending' && <th className="px-3 py-2">Resultado</th>}
                 </tr>
               </thead>
               <tbody>
@@ -248,7 +272,7 @@ export function Assignment() {
                     <td className="px-3 py-2">{jobName(j) || '—'}</td>
                     <td className="px-3 py-2 font-mono text-xs">{jobCredit(j) || '—'}</td>
                     <td className="px-3 py-2 font-mono text-xs">{maskPhone(j.phone)}</td>
-                    {tab === 'sent' && (
+                    {tab !== 'pending' && (
                       <td className="px-3 py-2">
                         <StatusBadge status={j.status} />
                       </td>
@@ -353,6 +377,9 @@ function StatusBadge({ status }: { status?: AssignedJob['status'] }) {
     sent: { label: 'Enviado', cls: 'bg-secondary/15 text-secondary' },
     no_whatsapp: { label: 'Sin WhatsApp', cls: 'bg-neutral-50 text-text-muted' },
     error: { label: 'Error', cls: 'bg-error-10 text-error-70' },
+    discarded: { label: 'Descartado', cls: 'bg-neutral-50 text-text-muted' },
+    review: { label: 'Por revisar', cls: 'bg-error-10 text-error-70' },
+    sending: { label: 'En envío', cls: 'bg-primary-light-90 text-primary' },
   };
   const s = map[status ?? ''] ?? { label: status ?? '—', cls: 'bg-neutral-30 text-text-light' };
   return (
