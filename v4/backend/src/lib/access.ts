@@ -6,6 +6,7 @@
 import { getUserRoles } from './roles';
 import { getManyRolePermissions } from './rolePerms';
 import { getCached, putCached } from './accessCache';
+import { canonicalOperatorId, catalogCampaigns, normalizeUserCampaigns } from './identity';
 import {
   ANA_PERMISSIONS,
   DEFAULT_PERMISSIONS,
@@ -36,7 +37,9 @@ const ALL_PERMS = Object.values(ANA_PERMISSIONS);
  *  + superadmin (erick.silva) = todo.
  *  + líder (role_name ~ /líder/) = upload + distribute.
  */
-export async function resolveUserAccess(username: string): Promise<UserAccess> {
+export async function resolveUserAccess(rawUsername: string): Promise<UserAccess> {
+  // operatorId canónico (v4-canonical-identity-keys D1) en caché, roles y comparaciones.
+  const username = canonicalOperatorId(rawUsername);
   // Superadmin: estático, no se cachea (siempre correcto).
   if (username === SUPERADMIN_USERNAME) {
     return {
@@ -111,7 +114,10 @@ export async function resolveUserAccess(username: string): Promise<UserAccess> {
     username,
     roleIds: roles.map((r) => r.role_id),
     roleNames: roles.map((r) => r.role_name),
-    campaigns: [...new Set(roles.map((r) => r.campaign_name))],
+    campaigns: normalizeUserCampaigns(
+      roles.map((r) => r.campaign_name),
+      roles.length > 0 ? await catalogCampaigns() : [],
+    ),
     permissions: [...permissions],
     isAdmin,
     isLeader,

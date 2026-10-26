@@ -13,6 +13,7 @@ import { JOBS_TABLE, JOB_TTL_DAYS, type SendJob } from '../lib/jobs';
 import { getDistributableAgents } from '../lib/distribution';
 import { normalizeContactRow } from '../lib/contacts';
 import { fileNameFromKey, recordUpload, type RejectReason, type UploadRecord } from '../lib/uploads';
+import { canonicalOperatorId, resolveCatalogCampaign } from '../lib/identity';
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_ROWS = 50_000;
@@ -30,15 +31,19 @@ const log = (o: Record<string, unknown>) => console.log(JSON.stringify(o));
 /**
  * `{"op1":2,"op2":1}` → ['op1','op1','op2']: lista expandida para que el
  * round-robin por índice respete los pesos relativos del reparto explícito.
+ * Destinatarios canónicos; los repetidos tras canonizar suman sus pesos.
  */
-function expandWeights(json: string): string[] {
+export function expandWeights(json: string): string[] {
   try {
     const weights = JSON.parse(json) as Record<string, number>;
-    const out: string[] = [];
-    for (const [op, w] of Object.entries(weights)) {
+    const merged = new Map<string, number>();
+    for (const [raw, w] of Object.entries(weights)) {
+      const op = canonicalOperatorId(raw);
       const n = Math.max(0, Math.floor(Number(w)));
-      for (let i = 0; i < n; i++) out.push(op);
+      if (op && n > 0) merged.set(op, (merged.get(op) ?? 0) + n);
     }
+    const out: string[] = [];
+    for (const [op, n] of merged) for (let i = 0; i < n; i++) out.push(op);
     return out;
   } catch {
     return [];
@@ -190,7 +195,7 @@ export const handler = async (event: S3Event): Promise<void> => {
     const uploadedAt = objectDate(obj.LastModified, rec.eventTime);
 
     // operatorId viene de la metadata FIRMADA en el presign → confiable.
-    const operatorId = meta.operatorid;
+    const operatorId = canonicalOperatorId(meta.operatorid);
     if (!operatorId) {
       console.warn(`csvTrigger: ${key} sin operatorId en metadata, ignorado`);
       await recordRejected(key, meta, uploadedAt, 'missing_operator');
@@ -203,7 +208,8 @@ export const handler = async (event: S3Event): Promise<void> => {
     const campaignId = meta.campaignid || key.replace(/^csv-uploads\//, '');
     const label = meta.label || undefined;
     const distribute = meta.distribute === '1';
-    const campaign = meta.campaign ?? '';
+    // Grafía del catálogo (presigns viejos pudieron firmar otra).
+    const campaign = meta.campaign ? await resolveCatalogCampaign(meta.campaign) : '';
 
     // Filas normalizadas con los alias de v3: un CSV con phone_number /
     // total_balance / message funciona con plantillas {telefono}/{saldo}/{mensaje}.

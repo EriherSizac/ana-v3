@@ -36,3 +36,14 @@
 
 Ver D5/D6. Rollback: antes de (e), redeploy del código anterior; las llaves viejas siguen intactas.
 
+
+## Decisiones de implementación
+
+- **`decodeKeySegment` canónico:** además de rechazar escapes mal formados y UTF-8 inválido, rechaza formas alternativas (p. ej. `~61` en vez de `a`, o mayúsculas literales): solo existe una codificación por operador.
+- **Import diferido del catálogo:** `identity.ts` no importa `pg` al cargarse; `resolveCatalogCampaign`/`catalogCampaigns` hacen `import('./campaignsDb')` y, si falla o el catálogo está vacío, usan el valor recibido sin espacios. `campaignExists` compara sin distinguir mayúsculas.
+- **Dónde se resuelve la grafía del catálogo:** presign CSV (metadata `campaign`), `csvTrigger` (por si un presign viejo firmó otra), heartbeat (`registerAgent`), `GET /agents?campaign=` (admin), consultas por campaña de `jobsAdmin` (resumen, reasignación, revisión), `POST /send` y las tres rutas de interacciones (lo que llega al CRM), y el historial de cargas. `GET /uploads/history` responde con la grafía del catálogo.
+- **`MEDIA_LEGACY_OWNER`:** parámetro de despliegue `mediaLegacyOwner` (default `'false'`); con `true`, `GET /media/url` acepta el segmento saneado anterior *del propio usuario* (comparado sin distinguir mayúsculas). No se aplica a `wa-sessions/` ni `csv-uploads/`: la sesión de WhatsApp se copia en la migración y los CSV ya se borran al procesarse.
+- **Migración:** `scripts/migrate-canonical-ids.ts` con la lógica pura exportada y probada (`precheck`, `planUser`, `rewriteMediaKey`, `targetKey`, `parseArgs`); `tsconfig.json` incluye `scripts/**` para el typecheck. Con colisiones, `--apply`/`--delete-source` se niegan (exit 2). Para un usuario cuyo username ya es canónico pero con caracteres especiales (solo cambia S3), `--apply` reescribe `mediaKey` en sus mensajes en el mismo ítem (no hay partición nueva). Se corre con `npx -y tsx@4` (no se agregó `tsx` como dependencia).
+- **Desktop:** `canonicalOperatorId` local en `electron/auth/session.ts`; `decideSetToken` compara `activeOperator` y `.ana-last-operator` canonizados, así que un archivo escrito por una versión previa con otra grafía no borra la sesión local.
+- **ANA Admin:** la validación de `srcKey` del BFF de revisión v4 acepta `~` en el segmento de operador.
+- **1.3 y 3.1:** script listo; quedan sin marcar porque su verificación es ejecutarlo contra dev/prod (precheck) y probarlo en dev con usuarios de prueba, lo cual no se hizo en este trabajo.

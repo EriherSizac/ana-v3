@@ -45,6 +45,12 @@ describe('/api/v4/campaigns/[campaign]/review', () => {
     expect(v4Calls(calls)).toHaveLength(0);
   });
 
+  it('srcKey con segmento de operador codificado (a~40b) → se acepta', async () => {
+    mockFetch(LEADER, { [`GET ${V4}/jobs/review`]: () => Response.json({ items: [] }) });
+    const key = encodeURIComponent('csv-uploads/a~40b/1_a.csv');
+    expect((await GET(authedRequest(`/x?srcKey=${key}`), ctx({ campaign: 'didi_vip' }))).status).toBe(200);
+  });
+
   it('sin permisos de Contactos → 403', async () => {
     mockFetch({ ...LEADER, permissions: ['ana:admin:agents:manage'], isLeader: false });
     expect((await GET(authedRequest('/x'), ctx({ campaign: 'didi_vip' }))).status).toBe(403);

@@ -65,6 +65,13 @@ Estados de un job: `pending` (o sin estado / `leased` heredado) → `sending` �
 - **Resumen**: `PUT /messages` solo actualiza la conversación si el mensaje es nuevo; `lastMessage`/`lastMessageTime` solo si es igual o más reciente; `unreadCount` +1 solo para entrantes. `POST /conversations/{chatId}/read` pone `unreadCount = 0` en la conversación propia (no la crea); el desktop la llama al abrir un chat propio.
 - **Mensajes propios de otros dispositivos**: el cliente escucha `message_create` con `fromMe` y los respalda igual que los entrantes. Los enviados por la app usan el `timestamp` de WhatsApp, así ambos caminos producen la misma `sk` y el mensaje queda una sola vez.
 
+## Identidad y llaves (`backend/src/lib/identity.ts`)
+
+- **operatorId canónico**: `cognito:username` (o `sub`) sin espacios laterales y en minúsculas (`Ana.Lopez` → `ana.lopez`). Lo aplican `claimUser`, `resolveUserAccess` (superadmin, caché, roles), los destinatarios del reparto (Dashboard y `assignments`, deduplicados y con pesos sumados) y el desktop (`usernameFromJwt`, `.ana-last-operator`).
+- **Segmento de operador en S3** (`media/<seg>/`, `wa-sessions/<seg>/session.zip`, `csv-uploads/<seg>/`): `encodeKeySegment` conserva `[a-z0-9._-]` y escribe cualquier otro byte UTF-8 como `~` + 2 hex (`a@b` → `a~40b`, `~` → `~7e`, `.`/`..` → `~2e`/`~2e~2e`). Es inyectiva: `a@b` y `a_b` ya no comparten prefijo ni sesión de WhatsApp. `GET /media/url` decodifica el dueño (`decodeKeySegment`; inválido → 400 `key inválida`). Durante la transición, `MEDIA_LEGACY_OWNER=true` acepta además el segmento saneado anterior del propio usuario.
+- **Campañas**: se comparan sin espacios laterales ni mayúsculas (`sameCampaign`) y se guardan/envían al CRM con la grafía del catálogo de PostgreSQL (`resolveCatalogCampaign`); `campaigns` de `/me` queda deduplicado y con esa grafía.
+- **Migración**: `backend/scripts/migrate-canonical-ids.ts` (dry-run por defecto, `--apply`, `--delete-source`); ver su encabezado.
+
 ## Roles & permisos
 
 Sigue `Implementar_roles_locales.md` (patrón local recomendado):

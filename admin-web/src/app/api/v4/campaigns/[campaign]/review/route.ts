@@ -7,8 +7,11 @@ import { HttpError, jsonResponse } from '@/server/errors';
 
 export const dynamic = 'force-dynamic';
 
-/** srcKey de una carga v4 (`csv-uploads/<usuario>/<epochMs>_<archivo>`). */
-const SRC_KEY_RE = /^csv-uploads\/[\w.-]+\/[\w.-]+$/;
+/**
+ * srcKey de una carga v4 (`csv-uploads/<usuario>/<epochMs>_<archivo>`); el
+ * segmento de usuario puede traer escapes `~xx` (v4-canonical-identity-keys).
+ */
+const SRC_KEY_RE = /^csv-uploads\/[\w.~-]+\/[\w.-]+$/;
 
 /**
  * GET /api/v4/campaigns/{campaign}/review[?srcKey=] → v4 `GET /jobs/review`

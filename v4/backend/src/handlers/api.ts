@@ -28,6 +28,14 @@ import { checkAssignmentsEnabled, getDistributableAgents } from '../lib/distribu
 import { campaignExists } from '../lib/campaignsDb';
 import { listAllRoles } from '../lib/roles';
 import { listUploads } from '../lib/uploads';
+import {
+  campaignIn,
+  canonicalOperatorId,
+  decodeKeySegment,
+  encodeKeySegment,
+  legacySafeSegment,
+  resolveCatalogCampaign,
+} from '../lib/identity';
 
 /**
  * Resuelve el operador cuyas conversaciones se van a leer y autoriza el acceso.
@@ -40,7 +48,7 @@ async function resolveViewTarget(
   access: UserAccess,
   requested?: string,
 ): Promise<string | null> {
-  const target = requested ?? access.username;
+  const target = requested ? canonicalOperatorId(requested) : access.username;
   if (target === access.username) return target;
   // "Ver como" (leer conversaciones de otro agente): SOLO admins.
   if (access.isAdmin) return target;
@@ -145,15 +153,16 @@ async function uploadsHistory(
       (own.includes('*') || own.includes(campaign.toLowerCase())));
   if (!allowed) return bad('sin permiso', 403);
   const srcKey = q.srcKey?.trim() || undefined;
-  return ok({ campaign, items: await listUploads(campaign, { srcKey }) });
+  const catalogName = await resolveCatalogCampaign(campaign);
+  return ok({ campaign: catalogName, items: await listUploads(catalogName, { srcKey }) });
 }
 
 // Conversaciones/mensajes (resumen, paginación, leída): ver lib/conversations.ts.
 
 // Key de la sesión WhatsApp del operador (un zip por usuario). El scope por
 // username del JWT aísla: un agente solo lee/escribe SU sesión.
-const waSessionKey = (user: string) =>
-  `wa-sessions/${user.replace(/[^\w.\-]/g, '_')}/session.zip`;
+// Segmento de operador inyectivo (v4-canonical-identity-keys D2).
+const waSessionKey = (user: string) => `wa-sessions/${encodeKeySegment(user)}/session.zip`;
 
 /** Presigned PUT/GET para el zip de sesión de WhatsApp (RemoteAuth). */
 async function presignWaSession(
@@ -203,7 +212,7 @@ async function presignCsv(
   },
 ): Promise<APIGatewayProxyResultV2> {
   const user = access.username;
-  const safeUser = user.replace(/[^\w.\-]/g, '_');
+  const safeUser = encodeKeySegment(user);
   const filename = (payload.filename ?? 'upload.csv').replace(/[^\w.\-]/g, '_');
   if (filename === '.' || filename === '..') return bad('filename inválido');
 
@@ -212,16 +221,14 @@ async function presignCsv(
   if (payload.distribute && !distribute) return bad('sin permiso para repartir', 403);
 
   // Campaña: siempre requerida (se usa para el registro CRM, no solo reparto).
-  const campaign = payload.campaign ?? access.campaigns[0] ?? '';
-  if (!campaign) return bad('falta campaign');
-  // Debe ser propia (o admin/global).
-  if (
-    !access.isAdmin &&
-    !access.campaigns.includes('*') &&
-    !access.campaigns.includes(campaign)
-  ) {
+  const requested = (payload.campaign ?? access.campaigns[0] ?? '').trim();
+  if (!requested) return bad('falta campaign');
+  // Debe ser propia (o admin/global), sin distinguir mayúsculas.
+  if (!access.isAdmin && !campaignIn(access.campaigns, requested)) {
     return bad('campaña no permitida', 403);
   }
+  // Jobs, historial e interacciones usan la grafía del catálogo.
+  const campaign = await resolveCatalogCampaign(requested);
   // Y debe EXISTIR en la DB de campañas (typos no generan jobs huérfanos).
   if (!(await campaignExists(campaign))) {
     return bad(`la campaña "${campaign}" no existe`, 400);
@@ -231,10 +238,12 @@ async function presignCsv(
   let assignments = '';
   if (payload.assignments && Object.keys(payload.assignments).length > 0) {
     if (!distribute) return bad('assignments requiere distribute', 403);
+    // Destinatarios canónicos; los repetidos tras canonizar suman sus pesos.
     const clean: Record<string, number> = {};
-    for (const [op, w] of Object.entries(payload.assignments)) {
+    for (const [rawOp, w] of Object.entries(payload.assignments)) {
+      const op = canonicalOperatorId(rawOp);
       const n = Math.floor(Number(w));
-      if (op && Number.isFinite(n) && n > 0) clean[op] = n;
+      if (op && Number.isFinite(n) && n > 0) clean[op] = (clean[op] ?? 0) + n;
     }
     if (Object.keys(clean).length === 0) return bad('assignments sin pesos válidos');
     // Con AGENT_ROSTER_FILTER: solo destinatarios habilitados (400) y lista sana (503).
@@ -298,8 +307,7 @@ async function deleteCsv(
   payload: { key?: string },
 ): Promise<APIGatewayProxyResultV2> {
   const key = payload.key ?? '';
-  const safeUser = user.replace(/[^\w.\-]/g, '_');
-  if (!key.startsWith(`csv-uploads/${safeUser}/`)) return bad('key no permitida', 403);
+  if (!key.startsWith(`csv-uploads/${encodeKeySegment(user)}/`)) return bad('key no permitida', 403);
   await s3.send(new DeleteObjectCommand({ Bucket: CSV_BUCKET, Key: key }));
   return ok({ deleted: key });
 }
@@ -325,7 +333,7 @@ async function presignMedia(
   user: string,
   payload: { filename?: string; mimetype?: string },
 ): Promise<APIGatewayProxyResultV2> {
-  const safeUser = user.replace(/[^\w.\-]/g, '_');
+  const safeUser = encodeKeySegment(user);
   const filename = (payload.filename ?? 'media.bin').replace(/[^\w.\-]/g, '_');
   if (filename === '.' || filename === '..') return bad('filename inválido');
   // nonce server-side → evita que un cliente sobrescriba media existente.
@@ -352,8 +360,14 @@ async function presignMediaGet(
   key?: string,
 ): Promise<APIGatewayProxyResultV2> {
   if (!key || !key.startsWith('media/')) return bad('key inválida');
-  const owner = key.split('/')[1]; // media/<owner>/...
-  const target = await resolveViewTarget(access, owner);
+  const segment = key.split('/')[1] ?? ''; // media/<owner codificado>/...
+  // Transición (design D6): llaves con el segmento saneado de antes del cambio.
+  const legacyOwn =
+    process.env.MEDIA_LEGACY_OWNER === 'true' &&
+    segment.toLowerCase() === legacySafeSegment(access.username).toLowerCase();
+  const owner = decodeKeySegment(segment);
+  if (owner === null && !legacyOwn) return bad('key inválida');
+  const target = legacyOwn ? access.username : await resolveViewTarget(access, owner!);
   if (!target) return bad('sin permiso', 403);
   const url = await getSignedUrl(
     s3,

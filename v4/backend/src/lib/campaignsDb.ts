@@ -20,7 +20,9 @@ let cachedAt = 0;
 export async function campaignExists(name: string): Promise<boolean> {
   const all = await listCampaignsDb();
   if (all.length === 0) return true;
-  return all.includes(name);
+  // Sin distinguir mayúsculas ni espacios laterales (v4-canonical-identity-keys D4).
+  const k = String(name ?? '').trim().toLowerCase();
+  return all.some((c) => c.trim().toLowerCase() === k);
 }
 
 /** Nombres de campañas desde PostgreSQL (con caché de 10 min). [] si falla. */

@@ -81,6 +81,9 @@ provider:
     COGNITO_USER_POOL_ID: ${self:custom.userPoolId}
     # Reparto solo a agentes habilitados. 'false' al desplegar (design D6).
     AGENT_ROSTER_FILTER: ${param:agentRosterFilter, 'false'}
+    # Transición de llaves S3 (v4-canonical-identity-keys D6): GET /media/url
+    # acepta el segmento saneado propio. 'true' entre la migración y --delete-source.
+    MEDIA_LEGACY_OWNER: ${param:mediaLegacyOwner, 'false'}
   httpApi:
     cors: true
     authorizers:

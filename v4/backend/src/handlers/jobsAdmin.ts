@@ -17,6 +17,7 @@ import { promoteToReview } from '../lib/jobReview';
 import { checkAssignmentsEnabled } from '../lib/distribution';
 import { ok, bad, claimUser } from '../lib/http';
 import { resolveUserAccess, type UserAccess } from '../lib/access';
+import { campaignIn, canonicalOperatorId, resolveCatalogCampaign, sameCampaign } from '../lib/identity';
 
 export const REASSIGN_CONCURRENCY = 10;
 export const REASSIGN_BUDGET_MS = 25_000;
@@ -64,7 +65,8 @@ export const handler = async (
 function canManageCampaign(access: UserAccess, campaign: string): boolean {
   if (access.isAdmin) return true;
   if (!access.isLeader) return false;
-  return access.campaigns.includes('*') || access.campaigns.includes(campaign);
+  return campaignIn(access.campaigns, campaign); // sin distinguir mayúsculas
+
 }
 
 type JobRef = Pick<SendJob, 'operatorId' | 'jobId' | 'campaignId' | 'ttl' | 'status' | 'srcKey'>;
@@ -78,7 +80,9 @@ async function queryPendingCampaignJobs(campaign: string, operatorId?: string): 
  * Jobs vigentes (TTL) de una campaña vía el índice por campaña; los `sending`
  * vencidos pasan a `review` en el camino (paso perezoso, design D2).
  */
-async function queryCampaignJobs(campaign: string, operatorId?: string): Promise<JobRef[]> {
+async function queryCampaignJobs(rawCampaign: string, operatorId?: string): Promise<JobRef[]> {
+  // Los jobs se escriben con la grafía del catálogo (v4-canonical-identity-keys D4).
+  const campaign = await resolveCatalogCampaign(rawCampaign);
   const items: any[] = [];
   let ExclusiveStartKey: Record<string, any> | undefined;
   do {
@@ -250,7 +254,7 @@ async function resolveOne(
   );
   const job = Item as SendJob | undefined;
   // Solo jobs de ESTA campaña (la autorización es por campaña) y aún por revisar.
-  if (!job || job.campaign !== campaign) return { ...base, ok: false, error: 'no encontrado' };
+  if (!job || !sameCampaign(job.campaign, campaign)) return { ...base, ok: false, error: 'no encontrado' };
   if (job.status !== 'review') return { ...base, ok: false, error: 'ya no está por revisar' };
 
   const cond = {
@@ -332,7 +336,7 @@ async function resolveReview(
     if (typeof op !== 'string' || !op || typeof id !== 'string' || !id) return bad('item inválido');
     refs.push({ operatorId: op, jobId: id });
   }
-  const to = typeof payload.to === 'string' && payload.to.trim() ? payload.to.trim() : undefined;
+  const to = typeof payload.to === 'string' && payload.to.trim() ? canonicalOperatorId(payload.to) : undefined;
   if (payload.to !== undefined && payload.to !== null && !to) return bad('to inválido');
   if (!canManageCampaign(access, campaign)) return bad('sin permiso', 403);
   // Con AGENT_ROSTER_FILTER el destino del reencolado debe estar habilitado.
@@ -393,7 +397,9 @@ async function reassign(
   access: UserAccess,
   payload: { campaign?: string; from?: string; to?: string },
 ): Promise<APIGatewayProxyResultV2> {
-  const { campaign, from, to } = payload;
+  const campaign = payload.campaign;
+  const from = canonicalOperatorId(payload.from);
+  const to = canonicalOperatorId(payload.to);
   if (!campaign || !from || !to) return bad('faltan campaign/from/to');
   if (from === to) return bad('from y to son el mismo operador');
   if (!canManageCampaign(access, campaign)) return bad('sin permiso', 403);

@@ -12,6 +12,7 @@ import { ok, bad } from '../lib/http';
 import { campaignExists } from '../lib/campaignsDb';
 import { fetchEligibleAgents } from '../lib/dashboard';
 import { matchesApiKey } from '../lib/apiKey';
+import { resolveCatalogCampaign } from '../lib/identity';
 
 // Endpoint sistema-a-sistema (sin Cognito): autentica por X-Api-Key contra
 // SEND_API_KEY y, solo durante una rotación, SEND_API_KEY_NEXT. Ambas llegan
@@ -56,14 +57,16 @@ export const handler = async (
 
   try {
     const p = JSON.parse(event.body ?? '{}') as DirectSendPayload;
-    const { message, username, phone, campaign, idempotencyKey } = p;
-    if (!message || !username || !phone || !campaign)
+    const { message, username, phone, idempotencyKey } = p;
+    if (!message || !username || !phone || !p.campaign)
       return bad('faltan message/username/phone/campaign');
     if (
       idempotencyKey !== undefined &&
       (typeof idempotencyKey !== 'string' || !IDEMPOTENCY_KEY_RE.test(idempotencyKey))
     )
       return bad('idempotencyKey inválida');
+    // Grafía del catálogo para el job y el CRM (v4-canonical-identity-keys D4).
+    const campaign = await resolveCatalogCampaign(String(p.campaign));
     // La campaña debe existir en la DB (validada contra SELECT name FROM campaigns).
     if (!(await campaignExists(campaign)))
       return bad(`la campaña "${campaign}" no existe`, 400);
