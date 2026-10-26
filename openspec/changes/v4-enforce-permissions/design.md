@@ -22,16 +22,15 @@
 - **D5. Desktop.** El main consulta `GET /me` al recibir el token (y en cada renovación) y guarda los permisos; `wa:send-reply` y `wa:send-media` responden `{ok:false, error:"sin permiso para responder"}` sin `ana:chats:message:reply`. El renderer usa `access.permissions` para pestañas y paneles con la misma regla que el backend (admin = todo).
 - **D6. Editor de roles.** Catálogo de 9 en `src/lib/permissions.ts`; al guardar, la lista enviada = casillas + valores leídos del rol que no están en el catálogo mostrado (grants y denies), para no borrar permisos administrados por otras vías.
 
+- **D7. Superadmin por rol, no por permiso.** `isSuperadminRole(name)`: minúsculas, sin diacríticos y sin espacios, guiones ni guiones bajos, contiene `superadmin` (como `isLeaderRole`). Si algún rol coincide, el acceso resuelto es el del superadmin fijo (`campaigns: ["*"]`, todos los permisos, `isAdmin` e `isLeader`) conservando sus `roleIds`/`roleNames` reales. A diferencia del fijo, depende de la API de Roles y se cachea como cualquier acceso (L1/L2 con invalidación por rol), así que quitar el rol surte efecto en ≤ 15 min (o al invalidar). Alternativa descartada: permiso `ana:superadmin` en el catálogo, porque los permisos locales se editan desde el editor de roles con `ana:admin:console:manage` y cualquier admin podría elevarse a superadmin; el nombre del rol lo controla la API de Roles de Pernexium, fuera de ANA. El superadmin fijo `erick.silva` se conserva sin cambios (acceso aun con la API caída).
+
 ## Risks / Trade-offs
 
 - [Pasar a `true` deja sin jobs a agentes cuyos roles no tienen "agente" en el nombre] → Revisión de `perm_would_deny` por usuario durante 5 días hábiles; grant explícito `ana:campaign:message:send` a esos roles antes de activar.
 - [Latencia extra de la consulta al roster en "ver como"] → Un `GetItem` por solicitud de otro operador; caché del acceso ya existente.
-- [Superadmin por nombre] → Fuera de alcance; ver Open Questions.
+- [Un rol "Superadmin" mal asignado en la API de Roles da acceso total] → Se registra `evt:"superadmin_role"` con username y rol cada vez que se resuelve un acceso de superadmin por rol (no en aciertos de caché); la asignación de ese rol queda bajo control de quien administra la API de Roles.
 
 ## Migration Plan
 
 1. Deploy del backend con `permissionsEnforced: report` (dev y prod). 2. Release del desktop. 3. Revisión de registros y ajuste de roles. 4. Redeploy con `permissionsEnforced: true` en dev, prueba con usuarios de cada rol, luego prod. Rollback: redeploy con `report`.
 
-## Open Questions
-
-- ¿Se mantiene el superadmin fijo `erick.silva` o se reemplaza por el permiso `ana:admin:console:manage` en un rol? No afecta este diseño; se puede resolver en un cambio aparte.

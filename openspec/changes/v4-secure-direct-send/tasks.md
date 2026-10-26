@@ -2,7 +2,7 @@
 
 ## 1. Preparación
 
-- [ ] 1.1 Revisar en CloudWatch (`/aws/lambda/ana-backend-prod-directSend`, 30 días) quién llama `POST /send` (IP de origen, User-Agent, volumen) y listar los integradores a contactar; verificar dejando la lista en el PR
+- [ ] 1.1 Registrar en el PR la evidencia de que no hay consumidores conocidos (0 invocaciones de `ana-backend-prod-directSend` en 90 días según CloudWatch, ningún llamador en otros repositorios); verificar con la métrica `Invocations` de la función en el PR
 - [ ] 1.2 Agregar `vitest` y `aws-sdk-client-mock` como devDependencies de `v4/backend` con script `test` (solo si ningún cambio previo lo hizo); verificar con `npm test` en verde con una prueba vacía
 
 ## 2. Autenticación y límite de tasa
@@ -22,10 +22,9 @@
 
 ## 5. Despliegue y rotación
 
-- [ ] 5.1 Crear en SSM `us-east-2` (perfil `pernexium`) los SecureString de dev y prod: `send-api-key` = key actual expuesta, `send-api-key-next` = key nueva de 32 bytes aleatorios; verificar con `aws ssm get-parameter --with-decryption` que existen (sin pegar valores en el PR)
-- [ ] 5.2 Desplegar en dev (`npx serverless deploy --stage dev` en `v4/backend`) y probar con `curl`: key nueva 200, key incorrecta 401, ráfaga → 429, agente inexistente 400; registrar evidencia
-- [ ] 5.3 Desplegar en prod (`npx serverless deploy --stage prod`) y entregar la key nueva a los integradores de 1.1 por canal seguro; verificar en logs que llegan solicitudes 200 con la key nueva
-- [ ] 5.4 Promover la rotación: `send-api-key` = nueva, `send-api-key-next` vacío, redeploy prod; verificar con `curl` que la key expuesta responde 401 y monitorear 401 en CloudWatch durante una semana
+- [ ] 5.1 Crear en SSM `us-east-2` (perfil `pernexium`) los SecureString de dev y prod: `send-api-key` = key nueva de 32 bytes aleatorios y `send-api-key-next` vacío (la key expuesta no se guarda); verificar con `aws ssm get-parameter --with-decryption` que existen (sin pegar valores en el PR)
+- [ ] 5.2 Desplegar en dev (`npx serverless deploy --stage dev` en `v4/backend`) y probar con `curl`: key nueva 200, key expuesta 401, ráfaga → 429, agente inexistente 400; registrar evidencia
+- [ ] 5.3 Desplegar en prod (`npx serverless deploy --stage prod`); verificar con `curl` que la key expuesta responde 401 y monitorear 401 de `directSend` en CloudWatch durante una semana (la key nueva se entrega por canal seguro solo a quien la solicite)
 
 ## Workflow follow-up
 

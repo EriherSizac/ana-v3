@@ -4,7 +4,7 @@
 
 - [ ] 1.1 Agregar `vitest` y `aws-sdk-client-mock` a `v4/backend` si ningún cambio previo lo hizo; verificar con `npm test`
 - [ ] 1.2 Crear `src/lib/identity.ts` (`canonicalOperatorId`, `encodeKeySegment`, `decodeKeySegment`, `sameCampaign`, `resolveCatalogCampaign`); verificar con vitest: `Ana.Lopez` → `ana.lopez`; `a@b` → `a~40b`; `~` → `~7e`; `.`/`..` codificados; ida y vuelta para 1000 strings aleatorios; escape inválido → `null`; `DIDI_VIP ` vs `didi_vip` iguales
-- [ ] 1.3 Crear `scripts/migrate-canonical-ids.ts` con el precheck de design D5 paso 1 (dry-run por defecto) y ejecutarlo contra dev y prod con el perfil `pernexium`; verificar adjuntando al PR el reporte (valor de `CaseSensitive`, usuarios afectados, colisiones = 0); si hay colisiones, detener el cambio y escalar
+- [ ] 1.3 Crear `scripts/migrate-canonical-ids.ts` con el precheck de design D5 paso 1 (dry-run por defecto) y ejecutarlo contra dev y prod con el perfil `pernexium`; verificar adjuntando al PR el reporte informativo (valor de `CaseSensitive`, usuarios afectados, colisiones esperadas = 0; cualquier colisión se revisa a mano antes de 3.1)
 
 ## 2. Backend
 
@@ -35,5 +35,4 @@
 
 ## Workflow follow-up
 
-- Si `add-agent-roster-management` ya fue archivado cuando se aplique este cambio, agregar aquí un delta MODIFIED de `v4/agent-roster` ("Excepciones administrativas en el roster v4": `operatorId` canónico) antes de archivar; si no, ajustar esa redacción en su PR.
 - Tras archivar, quitar de la nota de Purpose de `openspec/specs/v4/media-and-session-storage/spec.md` la mención al saneado y las colisiones.
