@@ -7,6 +7,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { requireAdmin } from '../lib/adminAuth';
+import { requireAgent } from '../lib/agentAuth';
 
 const s3Client = new S3Client({ region: 'us-east-2' });
 const TEMPLATES_BUCKET = process.env.TEMPLATES_BUCKET || '';
@@ -26,6 +27,10 @@ export const getTemplates = async (
       body: JSON.stringify({ error: 'campaign y channel son requeridos' }),
     };
   }
+
+  // Token + roster de `campaign` (la ruta no tiene agente propio), también con `key`
+  const denied = await requireAgent(event, { route: 'GET /templates', campaign });
+  if (denied) return denied;
 
   // GET con key → devuelve contenido del archivo
   if (key) {

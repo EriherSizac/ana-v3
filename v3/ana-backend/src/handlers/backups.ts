@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { normalizeCampaign, normalizeAgent, normalizePathSegment } from '../lib/campaign';
+import { requireAgent } from '../lib/agentAuth';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -25,6 +26,9 @@ export const uploadBackup = async (event: APIGatewayProxyEvent): Promise<APIGate
         body: JSON.stringify({ error: 'campaign, agent_id and data fields are required' }),
       };
     }
+
+    const denied = await requireAgent(event, { route: 'POST /backups', agent: agent_id, campaign });
+    if (denied) return denied;
 
     const now = new Date();
     const month = now.toISOString().slice(0, 7); // YYYY-MM
@@ -72,6 +76,9 @@ export const getLatestBackup = async (
         body: JSON.stringify({ error: 'agentId y campaign son requeridos' }),
       };
     }
+
+    const denied = await requireAgent(event, { route: 'GET /backups/latest', agent: agentId, campaign });
+    if (denied) return denied;
 
     const now = new Date();
     const MAX_DAYS_BACK = 4;

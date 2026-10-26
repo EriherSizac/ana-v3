@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { normalizeCampaign, normalizeAgent } from '../lib/campaign';
+import { requireAgent } from '../lib/agentAuth';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -25,6 +26,9 @@ export const uploadMedia = async (event: APIGatewayProxyEvent): Promise<APIGatew
         body: JSON.stringify({ error: 'campaign, agent_id, filename and data fields are required' }),
       };
     }
+
+    const denied = await requireAgent(event, { route: 'POST /media', agent: agent_id, campaign });
+    if (denied) return denied;
 
     // data viene en base64
     const buffer = Buffer.from(data, 'base64');

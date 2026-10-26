@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { normalizeCampaign, normalizeAgent, normalizePathSegment } from '../lib/campaign';
+import { requireAgent } from '../lib/agentAuth';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -40,6 +41,10 @@ export const saveChatBackup = async (
         body: JSON.stringify({ error: 'messages must be an array' }),
       };
     }
+
+    // Sin token válido del agente dueño no se lee ni se escribe su Historial (v3/agent-auth)
+    const denied = await requireAgent(event, { route: 'POST /backups/chat', agent: agent_id, campaign });
+    if (denied) return denied;
 
     const key = `backups/${campaign}/${agent_id}/${contact_phone}/chat_backup.json`;
 
@@ -151,6 +156,9 @@ export const listChatBackups = async (
       };
     }
 
+    const denied = await requireAgent(event, { route: 'GET /backups/chats', agent: agentId, campaign });
+    if (denied) return denied;
+
     const prefix = `backups/${campaign}/${agentId}/`;
 
     // List all objects under the agent's backup folder
@@ -252,6 +260,9 @@ export const getChatBackup = async (
         }),
       };
     }
+
+    const denied = await requireAgent(event, { route: 'GET /backups/chat', agent: agentId, campaign });
+    if (denied) return denied;
 
     const key = `backups/${campaign}/${agentId}/${contactPhone}/chat_backup.json`;
     console.log('Key:', key);

@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { normalizeCampaign, normalizeAgent } from '../lib/campaign';
+import { requireAgent } from '../lib/agentAuth';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
@@ -57,6 +58,10 @@ export const updatePendingContacts = async (
         body: JSON.stringify({ error: 'review inválido' }),
       };
     }
+
+    // Autenticación de agente antes de escribir en S3 (v3/agent-auth)
+    const denied = await requireAgent(event, { route: 'POST /contacts/pending', agent: agentKey, campaign: campaignKey });
+    if (denied) return denied;
 
     // Generar CSV desde los contactos
     const csvLines: string[] = [];

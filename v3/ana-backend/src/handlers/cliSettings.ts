@@ -69,9 +69,8 @@ export const updateCliSettingsHandler = async (event: AdminEvent): Promise<Admin
 
 /**
  * Cuerpo de `GET /agent/settings` (configuración efectiva para el CLI).
- * La autenticación de agente (`requireAgentToken` + authorizer `cognitoAgentJwt`)
- * la aporta `migrate-cli-to-cognito-login`; esta función se envuelve con ella
- * cuando exista (tarea 1.3).
+ * Se sirve envuelta con la autenticación de agente (`requireAgentToken` +
+ * authorizer `cognitoAgentJwt`) en `src/handlers/agent.ts` (`getAgentSettings`).
  */
 export async function agentSettingsResponse(): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
   const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };

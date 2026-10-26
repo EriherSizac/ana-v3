@@ -47,6 +47,18 @@ provider:
         issuerUrl: https://cognito-idp.us-east-2.amazonaws.com/us-east-2_UepfOyKpd
         audience:
           - ${env:COGNITO_ADMIN_CLIENT_IDS, '1r6niimhkl2fmias6kk85n4ou4'}
+      # Rutas de agente del CLI v3 (migrate-cli-to-cognito-login D4): id token del
+      # mismo pool emitido para el App Client público `ana-v3-cli`. Adjunto desde el
+      # inicio a /agent/*; al resto de rutas de agente solo al activar el modo
+      # estricto (tarea 7.5). La audiencia admite UN client id por elemento: si
+      # COGNITO_AGENT_CLIENT_IDS llega a tener varios, agregar un elemento por id.
+      # Sin configurar, la audiencia placeholder rechaza todo (fail-closed).
+      cognitoAgentJwt:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.us-east-2.amazonaws.com/${env:COGNITO_USER_POOL_ID, 'us-east-2_UepfOyKpd'}
+        audience:
+          - ${env:COGNITO_AGENT_CLIENT_IDS, 'ana-v3-cli-pendiente'}
   environment:
     BUCKET_NAME: ${self:service}-storage-${sls:stage}
     # Llave de administración (supervisores). Va en .env, NO se commitea.
@@ -55,6 +67,12 @@ provider:
     TEMPLATES_BUCKET: s3-motor-509399624341-prod
     # Autorización de /admin/*: acceso ANA vía v4 GET /me (design D4).
     ANA_V4_API_BASE: ${env:ANA_V4_API_BASE, 'https://njpfef2qna.execute-api.us-east-2.amazonaws.com'}
+    # Autenticación de agente del CLI (migrate-cli-to-cognito-login D6).
+    # 'false' = modo reporte (registra y atiende); 'true' = estricto (401/403/503).
+    AGENT_AUTH_ENFORCED: ${env:AGENT_AUTH_ENFORCED, 'false'}
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, 'us-east-2_UepfOyKpd'}
+    # App Client(s) del CLI aceptados, separados por coma (id de `ana-v3-cli`).
+    COGNITO_AGENT_CLIENT_IDS: ${env:COGNITO_AGENT_CLIENT_IDS, ''}
   iam:
     role:
       statements:
@@ -271,8 +289,27 @@ functions:
           authorizer:
             name: cognitoAdminJwt
 
-  # add-cli-remote-settings (GET /agent/settings se registra con el authorizer
-  # de agentes de migrate-cli-to-cognito-login cuando exista).
+  # Rutas /agent/* del CLI (siempre estrictas, authorizer cognitoAgentJwt) —
+  # migrate-cli-to-cognito-login y add-cli-remote-settings.
+  agentCampaigns:
+    handler: src/handlers/agent.getAgentCampaigns
+    events:
+      - httpApi:
+          path: /agent/campaigns
+          method: get
+          authorizer:
+            name: cognitoAgentJwt
+
+  agentSettings:
+    handler: src/handlers/agent.getAgentSettings
+    events:
+      - httpApi:
+          path: /agent/settings
+          method: get
+          authorizer:
+            name: cognitoAgentJwt
+
+  # add-cli-remote-settings
   adminGetCliSettings:
     handler: src/handlers/cliSettings.getCliSettings
     events:
@@ -344,3 +381,212 @@ resources:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:service}-storage-${sls:stage}
+
+    # Observabilidad de la autenticación de agente (migrate-cli-to-cognito-login 4.1):
+    # cada línea {"evt":"agent_auth",...} (stdout, sin prefijo) suma 1 a
+    # AnaAgentAuth/Requests con dimensiones reason y cliVersion.
+    AgentAuthMetricUploadBackup:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: UploadBackupLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-uploadBackup
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricGetLatestBackup:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: GetLatestBackupLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-getLatestBackup
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricSaveChatBackup:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: SaveChatBackupLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-saveChatBackup
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricGetChatBackup:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: GetChatBackupLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-getChatBackup
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricListChatBackups:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: ListChatBackupsLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-listChatBackups
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricGetChats:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: GetChatsLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-getChats
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricUploadMedia:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: UploadMediaLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-uploadMedia
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricUpdatePendingContacts:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: UpdatePendingContactsLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-updatePendingContacts
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricGetTemplates:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: GetTemplatesLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-getTemplates
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricAgentCampaigns:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: AgentCampaignsLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-agentCampaigns
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthMetricAgentSettings:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: AgentSettingsLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-${sls:stage}-agentSettings
+        FilterPattern: '{ $.evt = "agent_auth" }'
+        MetricTransformations:
+          - MetricNamespace: AnaAgentAuth
+            MetricName: Requests
+            MetricValue: '1'
+            Unit: Count
+            Dimensions:
+              - Key: reason
+                Value: $.reason
+              - Key: cliVersion
+                Value: $.cliVersion
+    AgentAuthQuery:
+      Type: AWS::Logs::QueryDefinition
+      DependsOn:
+        - UploadBackupLogGroup
+        - GetLatestBackupLogGroup
+        - SaveChatBackupLogGroup
+        - GetChatBackupLogGroup
+        - ListChatBackupsLogGroup
+        - GetChatsLogGroup
+        - UploadMediaLogGroup
+        - UpdatePendingContactsLogGroup
+        - GetTemplatesLogGroup
+        - AgentCampaignsLogGroup
+        - AgentSettingsLogGroup
+      Properties:
+        Name: ana-backend-${sls:stage}/agent-auth
+        LogGroupNames:
+          - /aws/lambda/${self:service}-${sls:stage}-uploadBackup
+          - /aws/lambda/${self:service}-${sls:stage}-getLatestBackup
+          - /aws/lambda/${self:service}-${sls:stage}-saveChatBackup
+          - /aws/lambda/${self:service}-${sls:stage}-getChatBackup
+          - /aws/lambda/${self:service}-${sls:stage}-listChatBackups
+          - /aws/lambda/${self:service}-${sls:stage}-getChats
+          - /aws/lambda/${self:service}-${sls:stage}-uploadMedia
+          - /aws/lambda/${self:service}-${sls:stage}-updatePendingContacts
+          - /aws/lambda/${self:service}-${sls:stage}-getTemplates
+          - /aws/lambda/${self:service}-${sls:stage}-agentCampaigns
+          - /aws/lambda/${self:service}-${sls:stage}-agentSettings
+        QueryString: 'filter evt = "agent_auth" | stats count() by reason, cliVersion, agent'

@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { normalizePathSegment } from '../lib/campaign';
+import { requireAgent } from '../lib/agentAuth';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -19,6 +20,10 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
         body: JSON.stringify({ error: 'agentId and campaignId parameters are required' }),
       };
     }
+
+    // Autenticación de agente antes de listar, leer o consumir (v3/agent-auth)
+    const denied = await requireAgent(event, { route: 'GET /get/chats', agent: agentId, campaign: campaignId });
+    if (denied) return denied;
 
     const prefix = `agents/${campaignId}/`;
     const listRes = await s3Client.send(new ListObjectsV2Command({
