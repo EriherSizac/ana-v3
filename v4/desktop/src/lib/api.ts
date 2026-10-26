@@ -44,22 +44,53 @@ export async function getMediaUrl(key: string): Promise<string> {
   return (await res.json()).url;
 }
 
+const query = (params: Record<string, string | undefined>) => {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${k}=${encodeURIComponent(v!)}`)
+    .join('&');
+  return qs ? `?${qs}` : '';
+};
+
 // operatorId opcional: ver conversaciones de un agente (líder/admin).
-export async function getConversations(operatorId?: string): Promise<Conversation[]> {
-  const qs = operatorId ? `?operatorId=${encodeURIComponent(operatorId)}` : '';
-  const res = await fetch(`${API_BASE}/conversations${qs}`, { headers: await authHeaders() });
+// Paginado: `nextToken` de la respuesta anterior trae la página siguiente.
+export async function getConversationsPage(
+  operatorId?: string,
+  nextToken?: string,
+): Promise<{ conversations: Conversation[]; nextToken?: string }> {
+  const res = await fetch(`${API_BASE}/conversations${query({ operatorId, nextToken })}`, {
+    headers: await authHeaders(),
+  });
   if (!res.ok) throw new Error('no se pudieron cargar conversaciones');
-  return (await res.json()).conversations ?? [];
+  const data = await res.json();
+  return { conversations: data.conversations ?? [], nextToken: data.nextToken };
 }
 
-export async function getMessages(chatId: string, operatorId?: string): Promise<Message[]> {
-  const qs = operatorId ? `?operatorId=${encodeURIComponent(operatorId)}` : '';
+/** Página de mensajes: los más recientes en orden ascendente; nextToken = anteriores. */
+export async function getMessagesPage(
+  chatId: string,
+  operatorId?: string,
+  nextToken?: string,
+): Promise<{ messages: Message[]; nextToken?: string }> {
   const res = await fetch(
-    `${API_BASE}/conversations/${encodeURIComponent(chatId)}/messages${qs}`,
+    `${API_BASE}/conversations/${encodeURIComponent(chatId)}/messages${query({ operatorId, nextToken })}`,
     { headers: await authHeaders() },
   );
   if (!res.ok) throw new Error('no se pudieron cargar mensajes');
-  return (await res.json()).messages ?? [];
+  const data = await res.json();
+  return { messages: data.messages ?? [], nextToken: data.nextToken };
+}
+
+/** Marca la conversación propia como leída (unreadCount = 0). Errores ignorados. */
+export async function markConversationRead(chatId: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}/read`, {
+      method: 'POST',
+      headers: await authHeaders(),
+    });
+  } catch {
+    /* no crítico para la UI */
+  }
 }
 
 export interface AgentEntry {

@@ -29,3 +29,14 @@
 ## Migration Plan
 
 1. Deploy A: GSI. 2. Deploy B: código. 3. Release del desktop. Rollback del código: los desktops nuevos siguen funcionando con respuestas sin `nextToken` (no muestran "Cargar más").
+
+## Decisiones de implementación
+
+- **Lógica en `src/lib/conversations.ts`** (`listConversations`, `listMessages`, `putMessage`, `putConversationMeta`, `markRead`); `handlers/api.ts` solo delega y agrega el `case 'POST /conversations/{chatId}/read'` (cambio mínimo; el código de presign no se tocó). La ruta siempre usa el usuario del JWT e ignora `?operatorId=`.
+- **`nextToken`**: base64url del `LastEvaluatedKey`; se valida que sea JSON plano con valores string/number y que su `operatorId` (conversaciones) o `convKey` (mensajes) sea el de la partición pedida; si no → 400 `nextToken inválido`. `limit` no numérico o < 1 → default; mayor al máximo → máximo.
+- **`PUT /messages` duplicado** responde 201 `{ok:true, duplicate:true}` sin tocar la conversación (antes 201 `{ok:true}`); compatible con el desktop.
+- **IAM**: se agregó `${ConversationsTable.Arn}/index/*` a la política de la Lambda (necesario para consultar el GSI).
+- **Despliegue en dos pasos**: el GSI y el código nuevo están en el mismo `serverless.yml`; para respetar el plan (índice `ACTIVE` antes del código) el Deploy A debe hacerse con la versión de código anterior más solo los cambios de `resources` (GSI + atributo `lastMessageTime`) e IAM, y el Deploy B con este commit. Conversaciones viejas sin `lastMessageTime` (solo meta, sin mensajes) no aparecen en el índice hasta recibir un mensaje o un nuevo `PUT /conversations/meta`.
+- **Desktop**: `src/lib/chatPages.ts` (puro, probado) fusiona páginas; la recarga silenciosa reemplaza la primera página y conserva las ya cargadas después; la posición de lectura al anteponer mensajes se conserva compensando `scrollTop` en `useLayoutEffect`. La lista se recarga ante `wa:sent` exitoso.
+- **Mensajes propios**: `message_create` con `fromMe` se respalda con el mismo flujo que los entrantes. Para que un mensaje enviado por la app quede una sola vez aunque `message_create` llegue antes de que `sendMessage` resuelva, la app ahora persiste sus mensajes con el `timestamp` de WhatsApp (`sent.timestamp * 1000`, antes `Date.now()`): así ambos caminos generan la misma `sk`. Además se recuerdan los ids enviados por la app (hasta 500) para no volver a bajar/subir su media; en la carrera mencionada la media podría subirse dos veces a S3 (solo costo, no duplica el mensaje).
+- Pendientes manuales: Deploy A/B (2.1, 5.1), verificación en dev con chat de > 200 mensajes (3.2), mensaje desde el teléfono (3.3) y release (5.2).

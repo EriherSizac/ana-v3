@@ -54,6 +54,9 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 
 ### Restore conversaciones
 - UI pide `GET /conversations` y `GET /conversations/{chatId}/messages` → DynamoDB es la fuente de verdad. Local es solo caché de sesión viva.
+- **Paginación** (`backend/src/lib/conversations.ts`): `GET /conversations?limit=&nextToken=` consulta el GSI `operator-recent-index` (`operatorId` + `lastMessageTime`, más reciente primero; `limit` default 100, máx. 200). `GET /conversations/{chatId}/messages?limit=&nextToken=` devuelve los `limit` más recientes (default 200, máx. 500) en orden ascendente; `nextToken` (base64url de `LastEvaluatedKey`) trae la página siguiente/anterior; un token inválido o de otra partición → 400 `{"error":"nextToken inválido"}`. El desktop muestra "Cargar más" y "Ver mensajes anteriores".
+- **Resumen**: `PUT /messages` solo actualiza la conversación si el mensaje es nuevo; `lastMessage`/`lastMessageTime` solo si es igual o más reciente; `unreadCount` +1 solo para entrantes. `POST /conversations/{chatId}/read` pone `unreadCount = 0` en la conversación propia (no la crea); el desktop la llama al abrir un chat propio.
+- **Mensajes propios de otros dispositivos**: el cliente escucha `message_create` con `fromMe` y los respalda igual que los entrantes. Los enviados por la app usan el `timestamp` de WhatsApp, así ambos caminos producen la misma `sk` y el mensaje queda una sola vez.
 
 ## Roles & permisos
 

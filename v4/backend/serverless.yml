@@ -89,6 +89,7 @@ provider:
             - dynamodb:BatchWriteItem
           Resource:
             - !GetAtt ConversationsTable.Arn
+            - !Sub '${ConversationsTable.Arn}/index/*'
             - !GetAtt MessagesTable.Arn
             - !GetAtt JobsTable.Arn
             - !Sub '${JobsTable.Arn}/index/*'
@@ -127,6 +128,10 @@ functions:
       - httpApi:
           path: /conversations/meta
           method: put
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /conversations/{chatId}/read
+          method: post
           authorizer: { name: cognitoJwt }
       - httpApi:
           path: /uploads/presign
@@ -278,9 +283,19 @@ resources:
         AttributeDefinitions:
           - { AttributeName: operatorId, AttributeType: S }
           - { AttributeName: chatId, AttributeType: S }
+          - { AttributeName: lastMessageTime, AttributeType: N }
         KeySchema:
           - { AttributeName: operatorId, KeyType: HASH }
           - { AttributeName: chatId, KeyType: RANGE }
+        # Listado paginado por recientes (GET /conversations). Sparse: solo
+        # conversaciones con lastMessageTime (putConversationMeta fija 0).
+        GlobalSecondaryIndexes:
+          - IndexName: operator-recent-index
+            KeySchema:
+              - { AttributeName: operatorId, KeyType: HASH }
+              - { AttributeName: lastMessageTime, KeyType: RANGE }
+            Projection:
+              ProjectionType: ALL
 
     MessagesTable:
       Type: AWS::DynamoDB::Table

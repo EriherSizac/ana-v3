@@ -279,25 +279,48 @@ export class WaClient extends EventEmitter {
       // Libera el cliente para poder reconectar (cerró sesión / cayó la red).
       void this.reset();
     });
-    c.on('message', async (m) => {
-      const norm = this.normalize(m);
-      if (m.hasMedia) {
-        try {
-          const media = await m.downloadMedia();
-          if (media) {
-            norm._media = {
-              dataBase64: media.data,
-              mimetype: media.mimetype,
-              filename: media.filename ?? undefined,
-            };
-            norm.mimetype = media.mimetype;
-          }
-        } catch (e) {
-          this.emit('error', `downloadMedia: ${String(e)}`);
-        }
-      }
-      this.emit('message', norm);
+    // Entrantes.
+    c.on('message', (m) => void this.forward(m));
+    // Propios creados en CUALQUIER dispositivo (teléfono, otro WhatsApp Web):
+    // se respaldan igual que los entrantes. Los que envió esta app ya se
+    // persistieron (mismo id → el PUT condicional del backend los ignora); se
+    // saltan si ya se conoce el id para no re-subir su media.
+    c.on('message_create', (m) => {
+      if (!m.fromMe) return; // los entrantes llegan por 'message'
+      if (this.sentByApp.has(m.id._serialized)) return;
+      void this.forward(m);
     });
+  }
+
+  /** Ids enviados por la app (recientes), para no duplicar su respaldo. */
+  private sentByApp = new Set<string>();
+  private rememberSent(id: string) {
+    this.sentByApp.add(id);
+    if (this.sentByApp.size > 500) {
+      const first = this.sentByApp.values().next().value;
+      if (first !== undefined) this.sentByApp.delete(first);
+    }
+  }
+
+  /** Normaliza (y baja la media) y emite 'message' para respaldo + UI. */
+  private async forward(m: Message) {
+    const norm = this.normalize(m);
+    if (m.hasMedia) {
+      try {
+        const media = await m.downloadMedia();
+        if (media) {
+          norm._media = {
+            dataBase64: media.data,
+            mimetype: media.mimetype,
+            filename: media.filename ?? undefined,
+          };
+          norm.mimetype = media.mimetype;
+        }
+      } catch (e) {
+        this.emit('error', `downloadMedia: ${String(e)}`);
+      }
+    }
+    this.emit('message', norm);
   }
 
   private normalize(m: Message): NormalizedMessage {
@@ -360,13 +383,15 @@ export class WaClient extends EventEmitter {
       }
     }
     const sent = await this.client.sendMessage(jid, body);
+    this.rememberSent(sent.id._serialized);
     return {
       id: sent.id._serialized,
       chatId: jid,
       from: 'me',
       to: jid,
       body,
-      timestamp: Date.now(),
+      // Mismo timestamp que verá message_create → misma sk en el respaldo (una sola copia).
+      timestamp: sent.timestamp ? sent.timestamp * 1000 : Date.now(),
       fromMe: true,
       type: 'chat',
     };
@@ -380,13 +405,15 @@ export class WaClient extends EventEmitter {
     if (!this.client) throw new Error('WhatsApp no conectado');
     const media = new MessageMedia(m.mimetype, m.dataBase64, m.filename);
     const sent = await this.client.sendMessage(jid, media, { caption: m.caption });
+    this.rememberSent(sent.id._serialized);
     return {
       id: sent.id._serialized,
       chatId: jid,
       from: 'me',
       to: jid,
       body: m.caption ?? '',
-      timestamp: Date.now(),
+      // Mismo timestamp que verá message_create → misma sk en el respaldo (una sola copia).
+      timestamp: sent.timestamp ? sent.timestamp * 1000 : Date.now(),
       fromMe: true,
       type: m.mimetype.startsWith('image/') ? 'image' : 'document',
       mimetype: m.mimetype,

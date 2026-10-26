@@ -3,12 +3,13 @@
 // Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Skeleton } from '../ui/Skeleton';
 import {
-  getConversations,
-  getMessages,
+  getConversationsPage,
+  getMessagesPage,
+  markConversationRead,
   getMediaUrl,
   maskPhone,
   reportChatOpen,
@@ -22,6 +23,12 @@ import { TeamViewer } from './TeamViewer';
 import { SearchableSelect } from '../ui/SearchableSelect';
 import { Toggle } from '../ui/Toggle';
 import type { WaStatus } from '../App';
+import {
+  clearUnread,
+  mergeConversations,
+  prependMessages,
+  refreshConversations,
+} from '../lib/chatPages';
 
 export function Chats({
   access,
@@ -39,6 +46,16 @@ export function Chats({
   const [convos, setConvos] = useState<Conversation[] | null>(null);
   const [active, setActive] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[] | null>(null);
+  // Paginación: lista ("Cargar más") e hilo ("Ver mensajes anteriores").
+  const [convNext, setConvNext] = useState<string | undefined>(undefined);
+  const convPages = useRef(0); // páginas de la lista ya cargadas
+  const [convError, setConvError] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [msgNext, setMsgNext] = useState<string | undefined>(undefined);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const threadRef = useRef<HTMLDivElement>(null);
+  // Altura del hilo antes de anteponer mensajes (para conservar la posición).
+  const keepScrollFrom = useRef<number | null>(null);
   const [reply, setReply] = useState('');
   // Envío manual en curso: deshabilita campo/botones (evita doble Enter).
   const [replySending, setReplySending] = useState(false);
@@ -104,14 +121,67 @@ export function Chats({
     return off;
   }, [viewOperator]);
 
-  /** Re-consulta la lista sin vaciarla (nada de skeletons al recibir algo). */
+  // Envío de campaña exitoso → la conversación de ese contacto aparece o sube.
+  useEffect(() => {
+    const off = window.ana.onWaSent((d) => {
+      if (d?.success && !viewOperator) void refreshConvosSilent();
+    });
+    return off;
+  }, [viewOperator]);
+
+  /** Re-consulta la primera página sin vaciar la lista (nada de skeletons). */
   async function refreshConvosSilent() {
     try {
-      setConvos(await getConversations(viewOperator ?? undefined));
+      const page = await getConversationsPage(viewOperator ?? undefined);
+      setConvos((prev) => (prev ? refreshConversations(page.conversations, prev) : page.conversations));
+      // Con una sola página cargada, el token es el de la página nueva.
+      if (convPages.current <= 1) setConvNext(page.nextToken);
+      setConvError(false);
     } catch {
       /* conserva lo que ya se ve */
     }
   }
+
+  /** "Cargar más": agrega la página siguiente al final sin repetir. */
+  async function loadMoreConvos() {
+    if (!convNext || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await getConversationsPage(viewOperator ?? undefined, convNext);
+      setConvos((prev) => mergeConversations(prev ?? [], page.conversations));
+      setConvNext(page.nextToken);
+      convPages.current += 1;
+    } catch {
+      setConvError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  /** "Ver mensajes anteriores": antepone la página previa conservando la posición. */
+  async function loadOlderMessages() {
+    if (!active || !msgNext || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const page = await getMessagesPage(active, viewOperator ?? undefined, msgNext);
+      keepScrollFrom.current = threadRef.current?.scrollHeight ?? null;
+      setMessages((prev) => prependMessages(page.messages, prev ?? []));
+      setMsgNext(page.nextToken);
+    } catch {
+      /* se puede reintentar con el mismo botón */
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
+  // Tras anteponer mensajes, compensa el scroll para no mover la vista de lectura.
+  useLayoutEffect(() => {
+    const el = threadRef.current;
+    if (el && keepScrollFrom.current !== null) {
+      el.scrollTop += el.scrollHeight - keepScrollFrom.current;
+      keepScrollFrom.current = null;
+    }
+  }, [messages]);
 
   /** Agrega un mensaje al hilo abierto (dedupe por id). */
   function appendMessage(m: Message) {
@@ -131,10 +201,17 @@ export function Chats({
 
   async function loadConvos() {
     setConvos(null);
+    setConvError(false);
+    setConvNext(undefined);
+    convPages.current = 0;
     try {
-      setConvos(await getConversations(viewOperator ?? undefined));
+      const page = await getConversationsPage(viewOperator ?? undefined);
+      setConvos(page.conversations);
+      setConvNext(page.nextToken);
+      convPages.current = 1;
     } catch {
       setConvos([]);
+      setConvError(true);
     }
   }
 
@@ -144,10 +221,18 @@ export function Chats({
     setShowInteraction(false); // cierra el modal de gestión al cambiar de chat
     setReplyError(null);
     setFailedFile(null);
-    // Solo en mi sesión: registra atención en el CRM (como la ventana de v3).
-    if (!viewingOther) void reportChatOpen(chatId);
+    setMsgNext(undefined);
+    // Solo en mi sesión: registra atención en el CRM (como la ventana de v3) y
+    // marca la conversación como leída (sin bloquear la UI; errores ignorados).
+    if (!viewingOther) {
+      void reportChatOpen(chatId);
+      void markConversationRead(chatId);
+      setConvos((prev) => (prev ? clearUnread(prev, chatId) : prev));
+    }
     try {
-      setMessages(await getMessages(chatId, viewOperator ?? undefined));
+      const page = await getMessagesPage(chatId, viewOperator ?? undefined);
+      setMessages(page.messages);
+      setMsgNext(page.nextToken);
     } catch {
       setMessages([]);
     }
@@ -315,13 +400,43 @@ export function Chats({
                       active === c.chatId ? 'bg-primary-light-90' : ''
                     }`}
                   >
-                    <span className="text-sm font-semibold">{maskPhone(c.chatId)}</span>
+                    <span className="flex w-full items-center justify-between gap-2">
+                      <span className="text-sm font-semibold">{maskPhone(c.chatId)}</span>
+                      {(c.unreadCount ?? 0) > 0 && (
+                        <span
+                          className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold text-white"
+                          aria-label={`${c.unreadCount} no leídos`}
+                        >
+                          {c.unreadCount}
+                        </span>
+                      )}
+                    </span>
                     <span className="line-clamp-1 text-xs text-text-light">
                       {c.lastMessage ?? ''}
                     </span>
                   </button>
                 </li>
               ))}
+          {convError && (
+            <li className="space-y-2 px-4 py-3 text-xs text-error-70">
+              <p>No se pudieron cargar las conversaciones</p>
+              <Button variant="outline" onClick={() => void (convos?.length ? loadMoreConvos() : loadConvos())}>
+                Reintentar
+              </Button>
+            </li>
+          )}
+          {convos !== null && convNext && !convError && (
+            <li className="px-4 py-3">
+              <button
+                type="button"
+                disabled={loadingMore}
+                onClick={() => void loadMoreConvos()}
+                className="w-full text-center text-xs font-semibold text-primary hover:underline disabled:opacity-50"
+              >
+                {loadingMore ? 'Cargando…' : 'Cargar más'}
+              </button>
+            </li>
+          )}
         </ul>
       </aside>
 
@@ -344,7 +459,19 @@ export function Chats({
                 </button>
               )}
             </header>
-            <div className="flex-1 space-y-2 overflow-y-auto p-5">
+            <div ref={threadRef} className="flex-1 space-y-2 overflow-y-auto p-5">
+              {messages !== null && msgNext && (
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    disabled={loadingOlder}
+                    onClick={() => void loadOlderMessages()}
+                    className="rounded-full border border-neutral-50 bg-white px-3 py-1 text-xs font-semibold text-primary hover:bg-primary-light-90 disabled:opacity-50"
+                  >
+                    {loadingOlder ? 'Cargando…' : 'Ver mensajes anteriores'}
+                  </button>
+                </div>
+              )}
               {messages === null ? (
                 <Skeleton className="h-4 w-48" />
               ) : (
