@@ -1,0 +1,47 @@
+{
+  "name": "ana-admin-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ANA Admin: consola web de administración de ANA (Pernexium)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:design": "node scripts/check-design-tokens.mjs src",
+    "check:bundle": "node scripts/check-bundle-secrets.mjs"
+  },
+  "dependencies": {
+    "aws-amplify": "^6.15.0",
+    "aws-jwt-verify": "^5.1.0",
+    "lucide-react": "^0.577.0",
+    "next": "^15.5.28",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.30.0",
+    "eslint-config-next": "^15.5.28",
+    "jsdom": "^26.1.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

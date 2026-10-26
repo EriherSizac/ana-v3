@@ -1,0 +1,117 @@
+# ANA Admin (`admin-web/`)
+
+Consola web de administración de ANA (Pernexium). Next.js 15 (App Router) +
+TypeScript estricto + Tailwind 3, pensada para `https://ana-admin.pernexium.com.mx`.
+
+## Arquitectura
+
+```
+navegador ──(id token en Authorization)──▶ BFF (route handlers /api/*) ──(mismo id token)──▶ v3 / v4
+     │                                         │
+     └─ Amplify v6 + CookieStorage (.pernexium.com.mx)   └─ verifica JWT (aws-jwt-verify) → acceso vía v4 GET /me
+```
+
+- **SSO** (`src/lib/amplify.ts`, `src/components/system/AmplifyProvider.tsx`):
+  réplica de `docs/sso-cognito-cookie-storage.md`. Los tokens de Cognito
+  (pool `us-east-2_UepfOyKpd`) se guardan en cookie del apex común
+  (`domain=.pernexium.com.mx`, `secure`) solo en producción; en desarrollo sin
+  `domain` ni `secure`. ANA Admin usa el **mismo App Client** que v4
+  (`1r6niimhkl2fmias6kk85n4ou4`): Amplify nombra las cookies por client id, así
+  que un client distinto no vería la sesión de las demás apps.
+- **Login** (`/login`): fondo azul, campo *Usuario* (username, nunca correo),
+  challenges del pool (TOTP, SMS, selección de MFA, alta de TOTP, nueva
+  contraseña). Al montar comprueba la sesión y redirige a `next` (solo rutas
+  internas, `src/lib/safe-next.ts`).
+- **Gate** (`src/app/(console)/layout.tsx` → `ConsoleGate`): Skeleton mientras
+  resuelve la sesión, redirect a `/login?next=` sin sesión, carga `GET /api/me`
+  y muestra "Sin acceso" si el usuario no puede entrar o no tiene la sección.
+- **Cliente HTTP** (`src/lib/api-client.ts`): manda el id token en
+  `Authorization` (no cookie → sin superficie CSRF); ante 401 fuerza
+  `fetchAuthSession({ forceRefresh: true })`, reintenta una vez y si falla
+  redirige al login.
+- **BFF** (`src/app/api/**/route.ts`, `src/server/`):
+  - `auth/verifyIdToken.ts`: firma (JWKS del pool), emisor, `token_use=id`,
+    expiración y `aud` ∈ `COGNITO_ALLOWED_CLIENT_IDS`. Identidad = `cognito:username`.
+  - `access/resolveAccess.ts`: acceso efectivo = v4 `GET /me` con el token del
+    usuario (timeout 5 s, caché 60 s por usuario, errores no se cachean → 503).
+    `isDeveloper` se deriva de `roleNames` (sin mayúsculas ni acentos).
+  - `access/withAccess.ts`: `withAccess(handler, { permission, campaignFrom })`
+    aplica gate de entrada, permiso de la ruta y alcance de campaña (admin y
+    `*` pasan) antes de llamar a cualquier backend.
+  - `errors.ts`: errores uniformes `{"error":{"code","message"}}`.
+  - Los backends reciben el **id token del usuario**; nunca `X-Admin-Key`.
+    Solo las lecturas de directorio (Cognito `ListUsers`, API de Roles) usan
+    credenciales de servidor, y siempre después de autorizar.
+- **Entrada a la consola**: `isAdmin`, rol Developer, o permiso
+  `ana:admin:agents:manage` / `ana:contacts:list:upload`.
+- **Secciones**: `src/lib/sections.ts` registra `{href, label, description, isAllowed(access)}`;
+  la navegación y el gate por URL usan ese registro.
+
+## Variables de entorno
+
+Ver `.env.example`. Las `NEXT_PUBLIC_*` van al bundle del navegador (solo
+identificadores públicos); el resto solo existe en el servidor y
+`src/instrumentation.ts` hace fallar el arranque si falta alguna.
+
+| Variable | Ámbito | Uso |
+|---|---|---|
+| `NEXT_PUBLIC_COGNITO_USER_POOL_ID` | público | `us-east-2_UepfOyKpd` |
+| `NEXT_PUBLIC_COGNITO_CLIENT_ID` | público | App Client compartido `1r6niimhkl2fmias6kk85n4ou4` |
+| `NEXT_PUBLIC_COOKIE_DOMAIN` | público | `.pernexium.com.mx` en prod, `localhost` en dev |
+| `COGNITO_ALLOWED_CLIENT_IDS` | servidor | allowlist de `aud` (separada por comas) |
+| `ANA_V4_API_BASE` | servidor | backend v4 (`GET /me`, `GET /agents/campaigns`) |
+| `ANA_V3_API_BASE` | servidor | backend v3 (rutas `/admin/*`) |
+| `ROLES_API_BASE`, `ROLES_API_KEY` | servidor | API de Roles (directorio) |
+
+## Correr en local
+
+```bash
+cd admin-web
+npm ci
+cp .env.example .env.local     # completa ANA_V3_API_BASE, ROLES_API_* ; deja NEXT_PUBLIC_COOKIE_DOMAIN=localhost
+npm run dev                    # http://localhost:3000
+```
+
+Con `NEXT_PUBLIC_COOKIE_DOMAIN=localhost` y `NODE_ENV=development` la cookie se
+escribe sin `domain` ni `secure` (una cookie con dominio apex no se setea en
+`http://localhost`). El SSO con otras apps solo se puede probar en el dominio
+real.
+
+## Comandos
+
+| Comando | Qué hace |
+|---|---|
+| `npm run dev` | servidor de desarrollo |
+| `npm run build` | build de producción |
+| `npm run lint` | ESLint (incluye las reglas del sistema de diseño) |
+| `npm run check:design` | sin colores hex en `.tsx` ni clases de la paleta Tailwind por defecto |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Vitest + Testing Library |
+| `npm run check:bundle` | tras un build con `.env.test` cargado, falla si `ROLES_API_KEY`/`AWS_*` aparecen en `.next/static` |
+
+## Sistema de diseño
+
+Implementación local de `docs/design-system.md` (paquete compartido entre
+productos = otra iniciativa).
+
+- **Tokens** (`tailwind.config.ts`): `theme.colors` se **reemplaza** con
+  `primary`, `secondary`, `error`, `neutral`, `text` y variantes, más solo
+  `red/green 50/700` para mensajes inline (§7.5). `bg-blue-500`, `text-gray-700`,
+  etc. no generan CSS. Extras: `shadow-card`, `text-2xs`, keyframes §6.
+- **Utilidades** (`src/app/globals.css`): `pernexium-card`,
+  `pernexium-gradient`, `.jost`, keyframes `fadeIn/enter/leave/shimmer/pulse/glow/sweep/gradientAnimation/spin`.
+  Jost (Google Fonts) para encabezados, Inter (`next/font/google`) para el cuerpo.
+- **Componentes** (`src/components/ui/`):
+  `Button` (`default|outline|destructive|ghost|inverse`, `sm|default|lg|icon`, `loading`),
+  `Input`/`Textarea`/`Label`, `Card*`, `Badge`, `Skeleton`/`SkeletonRows`,
+  `Dialog`, `ConfirmDialog` (obligatorio para toda confirmación; Escape,
+  backdrop y Cancelar cierran; deshabilitado con `loading`), `ToastProvider`/`useToast`,
+  `InlineMessage`, `FilterPill`, `SearchableSelect` (un valor) y
+  `SearchableMultiselect` (varios; solo aceptan opciones de la lista),
+  `PageContainer`/`PageHeader`/`TableContainer`.
+- **Reglas verificadas en CI**:
+  - `npm run lint`: `no-alert`, `no-restricted-globals` (`alert`/`confirm`/`prompt`),
+    `no-restricted-properties` (`window.alert/confirm/prompt`) y
+    `no-restricted-syntax` para JSX `<select>`.
+  - `npm run check:design`: hex en `.tsx` y clases de paleta por defecto.
+  - Pruebas en `test/design/` con fixtures que demuestran que cada regla falla.

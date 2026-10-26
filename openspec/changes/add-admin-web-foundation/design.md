@@ -94,3 +94,17 @@ Vitest + Testing Library (jsdom) para componentes y helpers; los route handlers 
 ## Open Questions
 
 _Ninguna._ (Client compartido, hosting y dominio quedaron decididos en D2 y D8.)
+
+## Decisiones de implementación
+
+- **Versiones**: Next.js 15.5 (App Router), React 19, Tailwind 3.4 (config `tailwind.config.ts` con `theme.colors` reemplazado), ESLint 9 con flat config (`eslint.config.mjs` + `FlatCompat` de `next/core-web-vitals` y `next/typescript`), Vitest 3 + Testing Library + jsdom, TypeScript 5.9 estricto con `noUncheckedIndexedAccess`.
+- **Tonos `primary.10–90` y `primary.light/secondary.light.10–90`**: el design system no da hex; se interpolaron desde `#145CB3`/`#27A3D7` hacia casi negro (oscuros) y hacia blanco azulado (`light.90 = #EAF2FB`, mismo valor que usa `v4/desktop`).
+- **Paso de login no soportado**: a diferencia del desktop (que lo trata como completado), `mapStep` devuelve `unsupported` y `auth-client` llama `signOut()` para no dejar sesión a medias; la página muestra un mensaje inline.
+- **v4 `/me` responde 401/403 con un token ya verificado** → 503 `access_unavailable` (fail-closed), no 401, para no provocar un ciclo login → gate → login. Igual para cualquier backend que devuelva 401 con un token verificado (`upstream_unavailable`).
+- **`GET /api/me` sin gate de entrada** (`withAccess(..., { entry: false })`): la UI necesita el username para mostrar "Sin acceso"; el resto de rutas de negocio exigen el gate.
+- **Alcance de campaña**: `withAccess` normaliza la campaña con la regla de v3 (`trim` + `toLowerCase()`, `fix-campaign-case-normalization` D1), compara contra `campaigns` también normalizadas y rechaza con 400 identificadores que no cumplan `^[a-z0-9][a-z0-9._-]{0,99}$` (evita `/`, `..` y espacios en llaves S3).
+- **Validador de entorno**: exige las seis variables de servidor de la tabla (incluidas `ANA_V3_API_BASE` y `ROLES_API_*`, porque las changes dependientes se implementan en la misma app); se ejecuta al arrancar con `src/instrumentation.ts` (no en `next build`).
+- **Chequeo de secretos en el bundle**: `.env.test` (versionado) trae valores FALSOS de `ROLES_API_KEY` y `AWS_*`; CI hace el build con esas variables cargadas y `npm run check:bundle` falla si aparecen en `.next/static`.
+- **Reglas de lint**: además de `no-alert` y `no-restricted-globals`, se agregó `no-restricted-properties` para `window.alert/confirm/prompt` (cubre llamadas explícitas por `window`).
+- **Extras de componentes**: variante `inverse` de `Button` (botón blanco sobre el fondo azul del login), `InlineMessage` (§7.5), `PageContainer`/`PageHeader`/`TableContainer` y el código de error `payload_too_large` (413) que usará la carga de contactos.
+- **CI** (6.1): el workflow existe y sus pasos se verificaron localmente (lint, check:design, typecheck, test, build con `.env.test`, check:bundle); falta la verificación con un PR real en GitHub.
