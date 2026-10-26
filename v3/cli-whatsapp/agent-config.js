@@ -285,7 +285,8 @@ export async function sendBackup(data) {
 
 /**
  * Obtiene chats asignados desde el servidor
- * @returns {Promise<Array|null>} Array de contactos o null si falla
+ * @returns {Promise<{ csvText: string, contacts: Array }|null>} CSV crudo recibido y
+ *   contactos parseados, o null si no hay asignación o falla
  */
 export async function fetchAssignedChats() {
   const config = loadAgentConfig();
@@ -308,7 +309,7 @@ export async function fetchAssignedChats() {
       console.log(csvText);
       const contacts = parseAssignmentCsv(csvText);
       console.log(`✅ ${contacts.length} contactos parseados del servidor`);
-      return contacts;
+      return { csvText, contacts };
     } else if (response.status === 404) {
       console.log('ℹ️  No hay contactos asignados aún para este agente/campaña');
       return null;
@@ -327,10 +328,12 @@ export async function fetchAssignedChats() {
 
 /**
  * Actualiza los contactos pendientes en el servidor
- * @param {Array} contacts - Array de contactos restantes
+ * @param {Array} contacts - Filas originales de los contactos restantes
+ * @param {{ assignment_id: string, contacts: Array }} [review] - Contactos por revisar
+ *   de la asignación (solo se envía si viene)
  * @returns {Promise<boolean>} true si la actualización fue exitosa
  */
-export async function updatePendingContacts(contacts) {
+export async function updatePendingContacts(contacts, review) {
   const config = loadAgentConfig();
   if (!config) {
     console.error('❌ No hay configuración de agente para actualizar contactos');
@@ -350,6 +353,7 @@ export async function updatePendingContacts(contacts) {
         campaign: config.campaign,
         agent_id: config.agent_id,
         contacts: contacts,
+        ...(review ? { review } : {}),
       }),
     });
 

@@ -159,6 +159,14 @@ functions:
           path: /supervisors/assignments/agents/{agent}/{campaign}/contacts
           method: get
 
+  # Supervisores - Contactos por revisar (envío interrumpido por cierre del CLI)
+  listReviewContacts:
+    handler: src/handlers/supervisors.listReviewContacts
+    events:
+      - httpApi:
+          path: /supervisors/review/{campaign}
+          method: get
+
   # Agentes - Publicar selección final hacia key legacy/deprecated
   publishAgentContactsDeprecated:
     handler: src/handlers/supervisors.publishAgentContactsDeprecated

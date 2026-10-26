@@ -333,6 +333,59 @@ phone,first_name,credit,total_balance,discount,product,message
 
 ---
 
+### 3. Recuperar pendientes y contactos por revisar
+
+El servidor entrega cada asignación **una sola vez** (`GET /get/chats` borra el archivo al entregarlo). El CLI guarda la asignación en curso en un registro local del equipo y la reanuda solo si se vuelve a abrir en ese mismo equipo. Además, tras cada contacto reporta al backend:
+
+- **Pendientes** → `chats/{agent_id}-{campaign}.csv` (S3): filas originales de los contactos que faltan, con las mismas columnas de la asignación. Se sobrescribe tras cada contacto y queda solo con el encabezado `contact_phone,contact_name` al terminar la asignación.
+- **Por revisar** → `review/{campaign}/{agent_id}/{assignment_id}.csv` (S3): contactos cuyo envío se interrumpió por un cierre del CLI. **No se sabe si el mensaje salió**, por eso el CLI no los reenvía.
+
+**Recuperar los pendientes de un agente cuyo equipo se perdió** (formateo, robo, reinstalación):
+
+```bash
+# 1. Descargar el CSV de pendientes (requiere acceso al bucket)
+aws s3 cp s3://ana-backend-storage-prod/chats/erick-prueba.csv ./pendientes-erick.csv
+
+# 2. Revisar el CSV (trae las columnas originales de la asignación, incluida `message`)
+#    y re-subirlo como asignación con "1. Subir Contactos de Agente" (al mismo u otro agente)
+```
+
+> Limitación conocida: el CSV de `chats/` y `review/` no escapa comillas internas ni saltos de línea; revisa filas con mensajes multilínea antes de re-subir.
+
+> Si el agente sigue usando su equipo, **no re-subas** los pendientes: el CLI los retoma solo al abrirse y una re-subida duplicaría mensajes.
+
+**Consultar los contactos por revisar de una campaña:**
+
+```
+GET /supervisors/review/{campaign}
+```
+
+```bash
+curl -X GET \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
+  https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/review/prueba
+```
+
+**Respuesta Exitosa (200)** (más reciente primero; `items` vacío si no hay registros):
+```json
+{
+  "success": true,
+  "items": [
+    {
+      "agent": "erick",
+      "assignmentId": "20261026T1530-ab12cd34",
+      "updatedAt": "2026-10-26T16:02:11.000Z",
+      "count": 1,
+      "csv": "contact_phone,contact_name,message\n5215512345678,Juan Pérez,Hola {{name}}"
+    }
+  ]
+}
+```
+
+Para cada contacto por revisar: confirma en el WhatsApp del agente si el mensaje salió. Si **no** salió, copia sus filas del campo `csv` a un CSV nuevo y súbelo como asignación ("1. Subir Contactos de Agente"). Si sí salió, no hagas nada. Los registros de `review/` no se borran automáticamente.
+
+---
+
 ## 🔑 Autenticación
 
 ### Verificar Credenciales

@@ -108,6 +108,7 @@ $filesToCopy = @(
     "dom-safety.js",
     "manual-key-policy.js",
     "no-whatsapp-registry.js",
+    "assignment-journal.js",
     "agent-config.js",
     "package.json",
     "package-lock.json"

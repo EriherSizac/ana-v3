@@ -88,6 +88,8 @@ function parseCSVLine(line) {
  * saltos de línea dentro de comillas). El campo `message` de cada contacto queda ya
  * renderizado (una sola pasada, ver template-utils.js).
  * @param {string} csvText - Texto CSV
+ * Cada contacto lleva además, como propiedades no enumerables, `__rowIndex` (posición
+ * entre los contactos parseados) y `__raw` (fila original por nombre de columna).
  * @returns {Array<Object>} Contactos
  */
 export function parseAssignmentCsv(csvText) {
@@ -115,6 +117,10 @@ export function parseAssignmentCsv(csvText) {
       if (contact.message) {
         contact.message = renderTemplate(contact.message, { fields: contact, raw: rawValues });
       }
+
+      // Índice y fila original (no enumerables: no aparecen en resultados.csv ni en logs JSON)
+      Object.defineProperty(contact, '__rowIndex', { value: contacts.length, enumerable: false });
+      Object.defineProperty(contact, '__raw', { value: rawValues, enumerable: false });
 
       contacts.push(contact);
     }

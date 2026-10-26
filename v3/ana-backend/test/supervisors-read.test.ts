@@ -6,7 +6,9 @@ import {
   getAgentContacts,
   listAgentAssignments,
   getAgentAssignments,
+  listReviewContacts,
 } from '../src/handlers/supervisors';
+import { installMemS3 } from './helpers/memS3';
 
 const s3 = mockClient(S3Client);
 const KEY = 'test-admin-key';
@@ -23,6 +25,7 @@ const handlers = {
   getAgentContacts,
   listAgentAssignments,
   getAgentAssignments,
+  listReviewContacts,
 };
 
 beforeEach(() => {
@@ -101,5 +104,47 @@ describe('con llave válida conserva el comportamiento actual', () => {
     const res = await getAgentAssignments(ok());
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body).message).toBe('CSV assignment no encontrado');
+  });
+});
+
+describe('listReviewContacts (GET /supervisors/review/{campaign})', () => {
+  const ok = (campaign = 'prueba') =>
+    ({ headers: { 'X-Admin-Key': KEY }, pathParameters: { campaign } }) as unknown as APIGatewayProxyEvent;
+
+  it('responde items vacío si no hay registros', async () => {
+    installMemS3(s3);
+    const res = await listReviewContacts(ok());
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ success: true, items: [] });
+  });
+
+  it('lista registros paginando, ordenados por updatedAt desc, con count', async () => {
+    installMemS3(
+      s3,
+      {
+        'review/prueba/erick/20261026T1530-ab12cd34.csv': {
+          body: 'contact_phone,contact_name\n5500000001,A\n5500000002,B',
+          lastModified: new Date('2026-10-26T15:30:00Z'),
+        },
+        'review/prueba/ana/20261027T0900-0011aabb.csv': {
+          body: 'contact_phone,contact_name\n5500000003,C\n',
+          lastModified: new Date('2026-10-27T09:00:00Z'),
+        },
+        'review/otra/erick/x.csv': 'contact_phone\n1',
+        'review/prueba/suelto.csv': 'contact_phone\n1',
+      },
+      1
+    );
+    const res = await listReviewContacts(ok('%20Prueba'));
+    expect(res.statusCode).toBe(200);
+    const { success, items } = JSON.parse(res.body);
+    expect(success).toBe(true);
+    expect(items.map((i: any) => [i.agent, i.assignmentId, i.count, i.updatedAt])).toEqual([
+      ['ana', '20261027T0900-0011aabb', 1, '2026-10-27T09:00:00.000Z'],
+      ['erick', '20261026T1530-ab12cd34', 2, '2026-10-26T15:30:00.000Z'],
+    ]);
+    expect(items[1].csv).toBe('contact_phone,contact_name\n5500000001,A\n5500000002,B');
+    // Paginación: una llamada List por objeto (pageSize 1) + 1 Get por registro válido
+    expect(s3.commandCalls(ListObjectsV2Command).length).toBeGreaterThan(1);
   });
 });
