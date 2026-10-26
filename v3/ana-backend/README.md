@@ -2,6 +2,10 @@
 
 Base URL: **`https://ow24p7ablb.execute-api.us-east-1.amazonaws.com`**
 
+## **Agente y campaña: insensibles a mayúsculas**
+
+En **todas** las rutas de las tablas de abajo que reciben agente (`{agent}`, `{agentId}`, `agent_id`) o campaña (`{campaign}`, `{campaignId}`, `campaign`), en la ruta o en el body, el backend quita espacios laterales y convierte a minúsculas antes de construir llaves S3: `Erick`/` Prueba ` se guardan y se leen como `erick`/`prueba` (p. ej. `agents/prueba/credentials.csv`, `agents/prueba/erick-contacts-{ts}.csv`, `backups/prueba/erick/…`). Las respuestas devuelven los valores normalizados; un valor vacío tras normalizar responde el 400 de campo requerido de cada ruta. Excepción: `/templates` (bucket del motor) no se normaliza. Los objetos antiguos con mayúsculas se rescatan con `scripts/migrate-campaign-case.ts` (ver [README-SUPERVISORES.md](README-SUPERVISORES.md#migración-de-llaves-con-mayúsculas)).
+
 ## **Autenticación de supervisor**
 
 Las rutas de administración exigen el header `X-Admin-Key` con la llave `ADMIN_API_KEY`, definida en el `.env` de despliegue de `v3/ana-backend` (ver `.env.example`). Sin header o con llave incorrecta responden **401**; si el backend no tiene llave configurada responden **503**.
@@ -36,6 +40,8 @@ chmod +x setup-campaign.sh
 Detalle y opciones (`BASE_URL`) en [README-SUPERVISORES.md](README-SUPERVISORES.md#ejemplo-3-script-completo-de-configuración).
 
 ### **Contactos & Chats (flujo principal)**
+
+Agente y campaña se normalizan a minúsculas en todas estas rutas (ver arriba).
 
 | **Método** | **Ruta** | **Handler** | **S3 Path** | **Descripción** |
 | --- | --- | --- | --- | --- |

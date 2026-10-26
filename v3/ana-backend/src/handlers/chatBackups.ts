@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { normalizeCampaign, normalizeAgent, normalizePathSegment } from '../lib/campaign';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -20,7 +21,9 @@ export const saveChatBackup = async (
     }
 
     const body = JSON.parse(event.body);
-    const { campaign, agent_id, contact_phone, messages } = body;
+    const { contact_phone, messages } = body;
+    const campaign = normalizeCampaign(body.campaign);
+    const agent_id = normalizeAgent(body.agent_id);
 
     if (!campaign || !agent_id || !contact_phone || !messages) {
       return {
@@ -138,7 +141,8 @@ export const listChatBackups = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
   try {
-    const { campaign, agentId } = event.pathParameters || {};
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
+    const agentId = normalizePathSegment(event.pathParameters?.agentId);
 
     if (!campaign || !agentId) {
       return {
@@ -236,7 +240,9 @@ export const getChatBackup = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
   try {
-    const { campaign, agentId, contactPhone } = event.pathParameters || {};
+    const { contactPhone } = event.pathParameters || {};
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
+    const agentId = normalizePathSegment(event.pathParameters?.agentId);
 
     if (!campaign || !agentId || !contactPhone) {
       return {

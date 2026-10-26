@@ -415,6 +415,37 @@ ana-backend-storage-dev/
         └── cobrador2-contacts.csv
 ```
 
+### Agente y campaña: insensibles a mayúsculas
+
+Todas las rutas (credenciales, `/auth/verify`, contactos y asignaciones de supervisor, `/get/chats`, `/contacts/pending`, respaldos y `/media`) quitan espacios laterales y convierten a minúsculas el agente y la campaña antes de usar S3. Subir con `Erick`/`Prueba` escribe en `…/prueba/erick-contacts-{ts}.csv`, y consultar con `ERICK`/`PRUEBA` lee esa misma llave. Las respuestas (`agent`, `campaign`, `key`, `prefix`) muestran el valor en minúsculas. Un agente o campaña vacío (p. ej. solo espacios) responde 400. No aplica a `/templates`.
+
+### Migración de llaves con mayúsculas
+
+Los objetos subidos antes de este cambio con mayúsculas o espacios en la campaña (`agents/Prueba/…`, `assignments/agents/Prueba/…`) o en el agente (`Erick-contacts-*.csv`) dejan de verse por la API. El script `scripts/migrate-campaign-case.ts` los copia a la llave en minúsculas:
+
+- Dry-run por defecto: solo imprime el plan (`COPIAR`, `CONFLICT`, `READY-SKIPPED`, `IGNORED`), nunca el contenido.
+- `--apply` ejecuta las copias. Nunca borra el original ni sobrescribe: si el destino existe o dos orígenes (`Prueba` y `PRUEBA`) colapsan en el mismo destino, lo reporta como `CONFLICT` para resolverlo a mano.
+- Los contactos listos (`agents/{campaña}/{agente}-contacts-*.csv`) entran a la cola consume-once del CLI; solo se copian con `--include-ready` (opcional `--ready-since <ISO>` para copiar solo los posteriores a esa fecha). Revisa su `LastModified` en el dry-run antes de decidir.
+
+Desde `v3/ana-backend` (requiere `npm ci`; el perfil `pernexium` debe existir en `~/.aws` de la máquina donde corre Node):
+
+```bash
+# Dry-run (solo lectura)
+npx tsx scripts/migrate-campaign-case.ts --bucket ana-backend-storage-prod --profile pernexium
+
+# Aplicar (justo después del deploy)
+npx tsx scripts/migrate-campaign-case.ts --bucket ana-backend-storage-prod --profile pernexium --apply
+# ...incluyendo contactos listos recientes
+npx tsx scripts/migrate-campaign-case.ts --bucket ana-backend-storage-prod --profile pernexium --apply --include-ready --ready-since 2026-10-01T00:00:00Z
+```
+
+Para otro stage cambia `--bucket` (p. ej. `ana-backend-storage-dev`, si existe). Inventario previo de solo lectura con AWS CLI (desde WSL):
+
+```bash
+aws s3 ls s3://ana-backend-storage-prod/agents/ --recursive --profile pernexium
+aws s3 ls s3://ana-backend-storage-prod/assignments/agents/ --recursive --profile pernexium
+```
+
 ---
 
 ## 📚 Ejemplos Completos

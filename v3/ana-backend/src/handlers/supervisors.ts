@@ -1,6 +1,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { requireAdmin } from '../lib/adminAuth';
+import { normalizePathSegment } from '../lib/campaign';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3Client = new S3Client({ region: 'us-east-1' });
@@ -124,7 +125,8 @@ export const listAgentAssignments = async (
   const denied = requireAdmin(event);
   if (denied) return denied;
   try {
-    const { agent, campaign } = event.pathParameters || {};
+    const agent = normalizePathSegment(event.pathParameters?.agent);
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
 
     if (!agent || !campaign) {
       return {
@@ -284,7 +286,8 @@ export const getAgentAssignments = async (
   const denied = requireAdmin(event);
   if (denied) return denied;
   try {
-    const { agent, campaign } = event.pathParameters || {};
+    const agent = normalizePathSegment(event.pathParameters?.agent);
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
 
     if (!agent || !campaign) {
       return {
@@ -374,7 +377,8 @@ export const publishAgentContactsDeprecated = async (
   const denied = requireAdmin(event);
   if (denied) return denied;
   try {
-    const { agent, campaign } = event.pathParameters || {};
+    const agent = normalizePathSegment(event.pathParameters?.agent);
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
 
     console.log('[publishAgentContactsDeprecated] start', {
       agent,
@@ -567,7 +571,8 @@ export const uploadAgentContactsLogging = async (
   const denied = requireAdmin(event);
   if (denied) return denied;
   try {
-    const { agent, campaign } = event.pathParameters || {};
+    const agent = normalizePathSegment(event.pathParameters?.agent);
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
 
     console.log('[uploadAgentContactsLogging] start', {
       agent,
@@ -760,7 +765,8 @@ export const uploadAgentContacts = async (
   const denied = requireAdmin(event);
   if (denied) return denied;
   try {
-    const { agent, campaign } = event.pathParameters || {};
+    const agent = normalizePathSegment(event.pathParameters?.agent);
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
 
     console.log('[uploadAgentContacts] start', {
       agent,
@@ -1089,7 +1095,8 @@ export const getAgentContacts = async (
   const denied = requireAdmin(event);
   if (denied) return denied;
   try {
-    const { agent, campaign } = event.pathParameters || {};
+    const agent = normalizePathSegment(event.pathParameters?.agent);
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
     
     if (!agent || !campaign) {
       return {

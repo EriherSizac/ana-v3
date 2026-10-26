@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { normalizeCampaign, credentialsKey } from '../lib/campaign';
 
 const s3Client = new S3Client({ region: 'us-east-1' });
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
@@ -8,7 +9,7 @@ const BUCKET_NAME = process.env.BUCKET_NAME || '';
  * Obtiene las credenciales de una campaña desde S3
  */
 async function getCampaignCredentials(campaign: string): Promise<Map<string, string>> {
-  const key = `agents/${campaign}/credentials.csv`;
+  const key = credentialsKey(campaign);
   const credentials = new Map<string, string>();
   
   try {
@@ -65,7 +66,8 @@ export const verifyCredentials = async (
       };
     }
 
-    const { user, campaign, dailyPassword } = JSON.parse(event.body);
+    const { user, campaign: rawCampaign, dailyPassword } = JSON.parse(event.body);
+    const campaign = normalizeCampaign(rawCampaign);
 
     // Validar que todos los campos estén presentes
     if (!user || !campaign || !dailyPassword) {
@@ -82,7 +84,7 @@ export const verifyCredentials = async (
     }
 
     // Obtener credenciales de la campaña desde S3
-    const campaignCredentials = await getCampaignCredentials(campaign.toLowerCase());
+    const campaignCredentials = await getCampaignCredentials(campaign);
 
     if (campaignCredentials.size === 0) {
       return {
@@ -138,7 +140,7 @@ export const verifyCredentials = async (
         message: 'Credenciales verificadas correctamente',
         data: {
           user: userLower,
-          campaign: campaign.toLowerCase(),
+          campaign,
           timestamp: new Date().toISOString()
         }
       })

@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { normalizeCampaign, normalizeAgent } from '../lib/campaign';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
@@ -15,7 +16,9 @@ export const updatePendingContacts = async (
     const body = JSON.parse(event.body || '{}');
     const { campaign, agent_id, contacts } = body;
 
-    if (!campaign || !agent_id) {
+    const campaignKey = normalizeCampaign(campaign);
+    const agentKey = normalizeAgent(agent_id);
+    if (!campaignKey || !agentKey) {
       return {
         statusCode: 400,
         body: JSON.stringify({ error: 'campaign y agent_id son requeridos' }),
@@ -52,7 +55,7 @@ export const updatePendingContacts = async (
     }
 
     const csvContent = csvLines.join('\n');
-    const key = `chats/${agent_id}-${campaign}.csv`;
+    const key = `chats/${agentKey}-${campaignKey}.csv`;
 
     // Subir a S3
     const command = new PutObjectCommand({

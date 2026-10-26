@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { requireAdmin } from '../lib/adminAuth';
+import { normalizeCampaign, normalizePathSegment, credentialsKey } from '../lib/campaign';
 import { randomInt } from 'crypto';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
@@ -59,7 +60,7 @@ export const getCampaignCredentials = async (
   const denied = requireAdmin(event);
   if (denied) return denied;
   try {
-    const { campaign } = event.pathParameters || {};
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
     
     if (!campaign) {
       return {
@@ -74,7 +75,7 @@ export const getCampaignCredentials = async (
       };
     }
 
-    const key = `agents/${campaign}/credentials.csv`;
+    const key = credentialsKey(campaign);
     
     try {
       const response = await s3Client.send(new GetObjectCommand({
@@ -145,7 +146,7 @@ export const regenerateDailyPasswords = async (
       };
     }
 
-    const { campaign } = requestData;
+    const campaign = normalizeCampaign(requestData.campaign);
     
     if (!campaign) {
       return {
@@ -160,7 +161,7 @@ export const regenerateDailyPasswords = async (
       };
     }
 
-    const key = `agents/${campaign}/credentials.csv`;
+    const key = credentialsKey(campaign);
     
     // Obtener CSV actual
     let csvContent: string;
@@ -292,7 +293,8 @@ export const uploadCampaignCredentials = async (
       };
     }
 
-    const { campaign, csv } = requestData;
+    const { csv } = requestData;
+    const campaign = normalizeCampaign(requestData.campaign);
     
     if (!campaign || !csv) {
       return {
@@ -336,7 +338,7 @@ export const uploadCampaignCredentials = async (
       };
     }
 
-    const key = `agents/${campaign}/credentials.csv`;
+    const key = credentialsKey(campaign);
     
     await s3Client.send(new PutObjectCommand({
       Bucket: BUCKET_NAME,
