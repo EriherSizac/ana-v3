@@ -115,3 +115,37 @@ productos = otra iniciativa).
     `no-restricted-syntax` para JSX `<select>`.
   - `npm run check:design`: hex en `.tsx` y clases de paleta por defecto.
   - Pruebas en `test/design/` con fixtures que demuestran que cada regla falla.
+
+## Sección Agentes (`/agentes`)
+
+Requiere `isAdmin` o `ana:admin:agents:manage` (alcance: campañas del usuario o `*`).
+
+- **Directorio** (`src/server/directory/`): `cognito.ts` hace `ListUsers`
+  paginado (60 por página) sobre `us-east-2_UepfOyKpd`; `rolesApi.ts` lee la API
+  de Roles con `X-Api-Key` (`GET /users` normalizado `id/name/campaign` →
+  `role_id/role_name/campaign_name`; `GET /users/{username}` con permisos
+  inline para el detalle; nunca `/roles/{id}/permissions`). Ambos con caché de
+  5 min; el botón **Actualizar** (`?refresh=1`) la invalida. Si la API de Roles
+  falla, la tabla se muestra con "Roles no disponibles".
+- **Estado por flota** (`src/server/backends/rosters.ts`): v3
+  `GET/POST /admin/campaigns/{c}/roster[/agents]` y v4
+  `GET/POST /admin/agent-roster`, en paralelo y con el id token del usuario.
+- **BFF**: `GET /api/users?search=&page=&campaign=&filter=v3:agent`,
+  `GET /api/users/{username}` y `POST /api/campaigns/{campaign}/agents`
+  (`{fleet:"v3"|"v4", agents:[{username, enabled}]}`, 1–100).
+- ANA Admin **no** crea, edita ni borra usuarios, no resetea contraseñas ni
+  asigna roles.
+
+### IAM del hosting (rol de cómputo de Amplify Hosting)
+
+El BFF necesita **solo** `cognito-idp:ListUsers` sobre el pool:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "cognito-idp:ListUsers",
+  "Resource": "arn:aws:cognito-idp:us-east-2:<account-id>:userpool/us-east-2_UepfOyKpd"
+}
+```
+
+Sin esa política `/api/users` responde 503 ("No se pudo leer el directorio de usuarios").

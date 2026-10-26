@@ -174,3 +174,68 @@ Implementación: `backend/src/handlers/csvTrigger.ts`, `backend/src/lib/dashboar
 | `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE` o `DATABASE_URL` | catálogo de campañas (PostgreSQL) |
 
 > Todas son secretos de **backend** (`backend/.env`), nunca del cliente. El desktop solo manda el JWT; el backend resuelve identidad, catálogo y roster.
+
+## 7. Agentes derivados de roles
+
+(`add-agent-roster-management`.) Los agentes de una campaña ya no se dan de alta a mano: se **derivan** de los roles del pool.
+
+### Definición
+
+Agente de la campaña X = usuario del pool `us-east-2_UepfOyKpd` con `Enabled` y estado `CONFIRMED` o `FORCE_CHANGE_PASSWORD` **∧** algún rol de la API de Roles con `campaign_name` normalizado (trim + minúsculas) = X que sea **rol de agente** y otorgue envío:
+
+- **Rol de agente** = `role_name` contiene "agente" sin importar mayúsculas ni acentos (`isAgentRole`, misma normalización que `isLeaderRole`): `Agente DIDI VIP`, `agente prueba`, `AGENTE Prueba`.
+- Un rol de agente otorga `ana:campaign:message:send` **por defecto** (también en `GET /me`). El deny `-ana:campaign:message:send` del rol (almacén local por `role_id` o inline `permission_name`) lo quita.
+- Roles sin "agente" (`Líder …`, `Calidad …`, `Admin …`) nunca derivan agentes, aunque tengan el permiso explícito. Roles con `campaign_name` `*` tampoco.
+- Lectura: `GET /users` (forma `id`/`name`/`campaign`, normalizada) para enumerar y `GET /users/{username}` (forma `role_id`/`role_name`/`campaign_name` con permisos inline) como fuente de cada candidato, concurrencia 5. Nunca `/roles/{id}/permissions`.
+
+Ejemplos (cubiertos por `backend/test/campaignAgents.test.ts`):
+
+| Usuario / rol | ¿Agente? |
+|---|---|
+| `Ana.Lopez` (CONFIRMED) con `Agente DIDI VIP` (`DIDI_VIP`), sin configuración | sí, de `didi_vip` (`username: "ana.lopez"`, `cognitoUsername: "Ana.Lopez"`) |
+| `luis` solo con `Líder DIDI VIP` | no |
+| `erick.silva` con rol `*` | no, de ninguna |
+| usuario `FORCE_CHANGE_PASSWORD` con `Agente Prueba` | sí |
+| usuario `Enabled:false` o `RESET_REQUIRED` | no |
+| `Agente DIDI VIP` con `-ana:campaign:message:send` | no |
+| `Calidad DIDI VIP` con `ana:campaign:message:send` explícito | no |
+
+### Sincronización
+
+`syncCampaignAgents` (EventBridge, cada 5 min) calcula la lista de **cada campaña del catálogo** (también vacía) y la escribe en el bucket de v3 (`ana-backend-storage-<stage>`, us-east-1):
+
+```json
+// campaign-agents/didi_vip.json
+{ "schemaVersion": 1, "campaign": "didi_vip", "generatedAt": "2026-10-26T12:00:00.000Z",
+  "agents": [ { "username": "ana.lopez", "cognitoUsername": "Ana.Lopez", "roleIds": ["r1"] } ] }
+```
+
+- Corrida atómica: si falla `ListUsers`, `GET /users`, algún `GET /users/{username}`, el catálogo o el almacén de permisos, **no escribe nada** (log `{"evt":"agent_sync","status":"failed"}`) y la invocación termina en error; 3 fallos seguidos disparan la alarma `ana-backend-<stage>-agent-sync-failing`.
+- Roles de agente de campañas fuera del catálogo se ignoran y se cuentan en el log `{"evt":"agent_sync","status":"ok","rolesOutsideCatalog":…}`.
+- Vigencia: los lectores aceptan listas de ≤ 24 h; más antiguas = error de roster (fail-closed).
+- IAM: la función tiene un rol propio (`SyncCampaignAgentsRole`) con `cognito-idp:ListUsers` sobre el pool, lectura de `roleperms` y `s3:PutObject` **solo** sobre `campaign-agents/*`; el rol compartido de las demás funciones solo puede leer `campaign-agents/*`.
+
+### Excepciones (habilitación)
+
+La tabla `ana-backend-agents-<stage>` (PK `campaign`, SK `operatorId` = username tal como lo emite el pool) admite `enabled`, `enabledUpdatedAt`, `enabledUpdatedBy`. El heartbeat solo hace `SET lastSeen` y no toca la excepción.
+
+**Habilitado en v4** = username normalizado en la lista derivada vigente **∧** su entrada no tiene `enabled:false` (`Ana.Lopez` coincide con `ana.lopez`).
+
+Rutas (JWT; admin en cualquier campaña, `ana:admin:agents:manage` solo en campañas propias o `*`; no dependen de `PERMISSIONS_ENFORCED`):
+
+- `GET /admin/agent-roster?campaign=didi_vip` → `{campaign, generatedAt, agents:[{operatorId, enabled, override, lastSeen, active}], inactiveOverrides:[…]}`. Sin `campaign` → 400 `{"error":"falta campaign"}`.
+- `POST /admin/agent-roster` `{"campaign":"didi_vip","agents":[{"operatorId":"luis","enabled":false}]}` (1–100, `enabled` booleano) → roster actualizado. Campaña fuera del catálogo → 400 `la campaña "<c>" no existe`; `enabled:true` a quien no es agente → 409 `no es agente de la campaña: <operatorId>`; lista ilegible o vencida → 503 `roster no disponible`.
+
+### Permiso nuevo
+
+`ana:admin:agents:manage` (`AGENTS_MANAGE`): lo reciben los líderes (por nombre de rol) y los admins (todo el catálogo); también se puede asignar a un rol con `PUT /admin/role-permissions/{roleId}`.
+
+### `AGENT_ROSTER_FILTER`
+
+Flag de transición (default `false`, `--param="agentRosterFilter=true"`):
+
+- **Apagado**: el reparto usa los elegibles del Dashboard como antes.
+- **Encendido**: el reparto automático (`distribute` sin `assignments`) usa elegibles del Dashboard **∩** habilitados, en el preview del presign y en `csvTrigger`; si no queda nadie o la lista está en error, los jobs van al uploader. `POST /uploads/presign` con `assignments` rechaza destinatarios no habilitados (400 `agente no habilitado: <operatorId>`) y responde 503 `roster no disponible` si la lista está en error.
+- Encenderlo después de comparar las listas derivadas con los agentes reales (Migration Plan paso 6).
+
+Variables nuevas: `V3_BUCKET` (`ana-backend-storage-<stage>`, override `--param="v3Bucket=…"`), `V3_BUCKET_REGION` (`us-east-1`), `COGNITO_USER_POOL_ID`, `AGENT_ROSTER_FILTER`.

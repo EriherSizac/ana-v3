@@ -823,3 +823,19 @@ El script aborta (código distinto de 0) si `ADMIN_API_KEY` no está definida o 
 
 **Última actualización**: Diciembre 20, 2024
 **Versión**: 1.0.0
+
+---
+
+## ANA Admin (vía principal)
+
+La administración de agentes se hace en **ANA Admin** (`https://ana-admin.pernexium.com.mx`)
+con tu usuario de Pernexium, no con `X-Admin-Key`:
+
+- **Los agentes salen de los roles**: un usuario es agente de una campaña si
+  tiene un rol "Agente <Campaña>" de esa campaña en la API de Roles. Ya no se
+  dan de alta en `credentials.csv`.
+- En la sección **Agentes** puedes deshabilitar/rehabilitar agentes por
+  campaña (v3 y v4). Las rutas que usa están documentadas en `README.md`
+  ("ANA Admin: rutas `/admin/*`").
+- La llave `X-Admin-Key` y `setup-campaign.sh` quedan solo como respaldo
+  temporal hasta su retiro.

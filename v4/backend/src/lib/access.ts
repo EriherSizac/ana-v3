@@ -11,6 +11,7 @@ import {
   DEFAULT_PERMISSIONS,
   SUPERADMIN_USERNAME,
   isLeaderRole,
+  isAgentRole,
   type AnaPermission,
 } from './permissions';
 
@@ -73,6 +74,18 @@ export async function resolveUserAccess(username: string): Promise<UserAccess> {
     for (const p of r.permissions ?? [])
       if (/^-?ana:/.test(p.permission_name ?? '')) consume(p.permission_name);
 
+  // 3) Rol de agente ("Agente <Campaña>"): envío de campaña por defecto, POR ROL.
+  //    Un deny `-ana:campaign:message:send` de ESE rol (local o inline) lo quita.
+  const sendDeny = `-${ANA_PERMISSIONS.CAMPAIGN_SEND}`;
+  for (const r of roles) {
+    if (!isAgentRole(r.role_name)) continue;
+    const local = permsByRole.get(r.role_id) ?? [];
+    const inline = (r.permissions ?? []).map((p) => p.permission_name);
+    if (!local.includes(sendDeny) && !inline.includes(sendDeny)) {
+      explicitGrants.add(ANA_PERMISSIONS.CAMPAIGN_SEND);
+    }
+  }
+
   // Base = defaults (chats view/reply) ∪ grants explícitos.
   const permissions = new Set<string>([...DEFAULT_PERMISSIONS, ...explicitGrants]);
   // Aplica denies: quita lo desactivado salvo que algún rol lo otorgue explícito.
@@ -87,6 +100,8 @@ export async function resolveUserAccess(username: string): Promise<UserAccess> {
     permissions.add(ANA_PERMISSIONS.CHATS_TEAM_VIEW);
     permissions.add(ANA_PERMISSIONS.TEAM_JOBS_VIEW);
     permissions.add(ANA_PERMISSIONS.TEAM_JOBS_MANAGE);
+    // Gestiona excepciones de agentes en sus campañas.
+    permissions.add(ANA_PERMISSIONS.AGENTS_MANAGE);
   }
 
   const isAdmin = explicitGrants.has(ANA_PERMISSIONS.ADMIN_CONSOLE);

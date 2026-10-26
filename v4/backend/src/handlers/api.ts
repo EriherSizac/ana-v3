@@ -22,10 +22,10 @@ import {
 import { s3, CSV_BUCKET, MEDIA_BUCKET } from '../lib/s3';
 import { ok, created, bad, claimUser } from '../lib/http';
 import { resolveUserAccess, can, type UserAccess } from '../lib/access';
-import { ANA_PERMISSIONS } from '../lib/permissions';
+import { ANA_PERMISSIONS, sanitizeRolePermissions } from '../lib/permissions';
 import { setRolePermissions, getRolePermissions } from '../lib/rolePerms';
 import { invalidateByRole } from '../lib/accessCache';
-import { getEligibleAgents } from '../lib/dashboard';
+import { checkAssignmentsEnabled, getDistributableAgents } from '../lib/distribution';
 import { campaignExists } from '../lib/campaignsDb';
 import { listAllRoles } from '../lib/roles';
 
@@ -322,6 +322,9 @@ async function presignCsv(
       if (op && Number.isFinite(n) && n > 0) clean[op] = n;
     }
     if (Object.keys(clean).length === 0) return bad('assignments sin pesos válidos');
+    // Con AGENT_ROSTER_FILTER: solo destinatarios habilitados (400) y lista sana (503).
+    const check = await checkAssignmentsEnabled(campaign, Object.keys(clean));
+    if (!check.ok) return bad(check.error, check.status);
     assignments = JSON.stringify(clean);
     // Metadata S3 cabe en ~2KB total: acotar el tamaño del reparto.
     if (assignments.length > 1500) return bad('assignments demasiado grande');
@@ -353,7 +356,7 @@ async function presignCsv(
   // Preview del reparto: a quién irían los jobs (misma fuente que csvTrigger),
   // para que la UI lo muestre ANTES de subir el archivo.
   const eligibleAgents =
-    distribute && !assignments ? await getEligibleAgents(campaign) : undefined;
+    distribute && !assignments ? await getDistributableAgents(campaign) : undefined;
   return ok({ url, key, maxBytes: MAX_CSV_BYTES, metadata, eligibleAgents });
 }
 
@@ -362,12 +365,8 @@ async function setRolePerms(
   payload: { permissions?: string[]; roleName?: string },
 ): Promise<APIGatewayProxyResultV2> {
   if (!roleId) return bad('falta roleId');
-  const valid = new Set<string>(Object.values(ANA_PERMISSIONS));
-  // Acepta grants (`perm`) y denies (`-perm`) de permisos válidos.
-  const permissions = (payload.permissions ?? []).filter((p) => {
-    const bare = p.startsWith('-') ? p.slice(1) : p;
-    return valid.has(bare);
-  });
+  // Acepta grants (`perm`) y denies (`-perm`) de permisos del catálogo.
+  const permissions = sanitizeRolePermissions(payload.permissions ?? []);
   await setRolePermissions(roleId, permissions, payload.roleName);
   await invalidateByRole(roleId); // usuarios con ese rol re-resuelven acceso
   return ok({ roleId, permissions });

@@ -37,12 +37,24 @@ provider:
         - POST
         - OPTIONS
       maxAge: 3600
+    authorizers:
+      # Rutas /admin/* (ANA Admin): id token del pool compartido de Pernexium
+      # emitido para el App Client de ANA Admin/v4 (add-agent-roster-management D3).
+      # X-Admin-Key NO sustituye al token en estas rutas.
+      cognitoAdminJwt:
+        type: jwt
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.us-east-2.amazonaws.com/us-east-2_UepfOyKpd
+        audience:
+          - ${env:COGNITO_ADMIN_CLIENT_IDS, '1r6niimhkl2fmias6kk85n4ou4'}
   environment:
     BUCKET_NAME: ${self:service}-storage-${sls:stage}
     # Llave de administración (supervisores). Va en .env, NO se commitea.
     ADMIN_API_KEY: ${env:ADMIN_API_KEY, ''}
     ANA_API_URL: https://ow24p7ablb.execute-api.us-east-1.amazonaws.com
     TEMPLATES_BUCKET: s3-motor-509399624341-prod
+    # Autorización de /admin/*: acceso ANA vía v4 GET /me (design D4).
+    ANA_V4_API_BASE: ${env:ANA_V4_API_BASE, 'https://njpfef2qna.execute-api.us-east-2.amazonaws.com'}
   iam:
     role:
       statements:
@@ -211,6 +223,25 @@ functions:
       - httpApi:
           path: /templates
           method: post
+
+  # ANA Admin (/admin/*, authorizer cognitoAdminJwt) — add-agent-roster-management
+  adminGetRoster:
+    handler: src/handlers/adminRoster.getRoster
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/roster
+          method: get
+          authorizer:
+            name: cognitoAdminJwt
+
+  adminUpdateRosterAgents:
+    handler: src/handlers/adminRoster.updateRosterAgents
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/roster/agents
+          method: post
+          authorizer:
+            name: cognitoAdminJwt
 
 resources:
   Resources:

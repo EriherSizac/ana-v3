@@ -78,3 +78,75 @@ Agente y campaña se normalizan a minúsculas en todas estas rutas (ver arriba).
 | **GET** | **`/credentials/{campaign}`** | **`getCampaignCredentials`** | Obtener credenciales de campaña |
 | **POST** | **`/credentials/upload`** | **`uploadCampaignCredentials`** | Subir credenciales |
 | **POST** | **`/credentials/regenerate`** | **`regenerateDailyPasswords`** | Regenerar passwords diarios |
+## **ANA Admin: rutas `/admin/*` (id token de Cognito)**
+
+Las rutas bajo `/admin/` las usa ANA Admin (`admin-web/`). **No aceptan
+`X-Admin-Key`**: API Gateway exige un id token del pool `us-east-2_UepfOyKpd`
+emitido para el App Client de ANA Admin/v4 (authorizer `cognitoAdminJwt`,
+audiencia `COGNITO_ADMIN_CLIENT_IDS`, por defecto `1r6niimhkl2fmias6kk85n4ou4`).
+Sin token → `401 {"message":"Unauthorized"}` sin invocar la función.
+
+Autorización: cada handler llama a v4 `GET /me` (`ANA_V4_API_BASE`) con el
+mismo token (timeout 5 s, caché 60 s por usuario) y decide con `permissions`,
+`campaigns` e `isAdmin` (`src/lib/adminAccess.ts`). v4 caído →
+`503 {"success":false,"message":"Autorización no disponible"}`; sin permiso →
+`403 "Sin permiso"`; campaña fuera de alcance → `403 "Sin permiso para esta campaña"`.
+Errores: siempre `{"success":false,"message"}` sin trazas.
+
+Campaña y agente se normalizan (trim + minúsculas) y se validan:
+campaña `^[a-z0-9][a-z0-9._-]{0,63}$`, username `^[a-z0-9][a-z0-9._@+-]{0,127}$`
+(si no, 400 sin tocar S3).
+
+### Agentes = usuarios con rol "Agente <Campaña>"
+
+El alta de agentes **ya no** se hace con `credentials.csv`: agente de la campaña X
+es un usuario del pool habilitado (`CONFIRMED` o `FORCE_CHANGE_PASSWORD`) con un
+rol de la API de Roles cuyo `campaign_name` es X y cuyo nombre contiene
+"agente" (envío por defecto, salvo deny `-ana:campaign:message:send`). Roles `*`,
+líderes y admins no son agentes.
+
+| Objeto S3 | Escritor | Forma |
+|---|---|---|
+| `campaign-agents/{campaign}.json` | solo la sincronización de v4 (cada 5 min) | `{"schemaVersion":1,"campaign","generatedAt","agents":[{"username","cognitoUsername","roleIds"}]}` |
+| `rosters/{campaign}.json` | rutas `/admin/*` | `{"schemaVersion":2,"campaign","updatedAt","updatedBy","overrides":{"<username>":{"enabled","updatedAt","updatedBy"}}}` |
+
+Regla efectiva (`src/lib/roster.ts`, la usan la autenticación del CLI y la carga
+de contactos): **habilitado = figura en la lista derivada vigente (≤ 24 h) y no
+tiene `enabled:false`**. Lista inexistente = sin agentes; lista o roster
+ilegibles, de otra versión o vencidos = error (no se habilita a nadie).
+
+| Método | Ruta | Permiso | Descripción |
+|---|---|---|---|
+| GET | `/admin/campaigns/{campaign}/roster` | `ana:admin:agents:manage` | lista derivada con estado efectivo + `inactiveOverrides` |
+| POST | `/admin/campaigns/{campaign}/roster/agents` | `ana:admin:agents:manage` | `{"agents":[{"username","enabled"}]}` (1–200); `enabled:true` a quien no es agente → 409 |
+
+```bash
+TOKEN=<id token de ANA Admin>
+curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/roster
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"agents":[{"username":"ana.lopez","enabled":false}]}' \
+  https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/roster/agents
+```
+
+### Renombrado de campañas al catálogo de v4
+
+`scripts/rename-campaigns.ts` copia todos los prefijos de una campaña v3 fuera
+del catálogo al nombre del catálogo (mapeo `campaign-renames.json` revisado por
+una persona). Dry-run por defecto; `--apply`; `--delete-source` solo si la
+verificación no encuentra diferencias. Correr **después** de
+`scripts/migrate-campaign-case.ts`.
+
+```bash
+npx tsx scripts/rename-campaigns.ts --bucket ana-backend-storage-prod --profile pernexium \
+  --mapping campaign-renames.json --catalog catalog.json          # dry-run + inventario
+npx tsx scripts/rename-campaigns.ts ... --apply                   # primera pasada
+npx tsx scripts/rename-campaigns.ts ... --apply --delete-source   # tras el modo estricto del CLI
+```
+
+### Retiro de `X-Admin-Key`
+
+`/supervisors/*`, `/agents/{agent}/{campaign}/contacts` y `POST /templates`
+siguen con llave hasta que ANA Admin cubra carga de contactos, revisión y
+plantillas, `setup-campaign.sh` deje de usarse y los logs muestren 30 días sin
+llamadas con llave; entonces una change dedicada las retira. `/credentials/*`
+las retira `migrate-cli-to-cognito-login`.

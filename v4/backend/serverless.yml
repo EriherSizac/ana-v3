@@ -16,6 +16,11 @@ custom:
   prune:
     automatic: true
     number: 3
+  # Bucket de almacenamiento de v3 (us-east-1) donde vive campaign-agents/.
+  # Mismo nombre de servicio/stage que v3 (ana-backend-storage-<stage>).
+  v3BucketDefault: ana-backend-storage-${self:provider.stage}
+  v3Bucket: ${param:v3Bucket, self:custom.v3BucketDefault}
+  userPoolId: us-east-2_UepfOyKpd
 
 provider:
   name: aws
@@ -61,6 +66,12 @@ provider:
     INTERACTIONS_USER_ID: ${env:INTERACTIONS_USER_ID, ''}
     # Key del endpoint sistema-a-sistema POST /send (backend/.env).
     SEND_API_KEY: ${env:SEND_API_KEY, ''}
+    # Lista derivada de agentes (add-agent-roster-management): bucket de v3.
+    V3_BUCKET: ${self:custom.v3Bucket}
+    V3_BUCKET_REGION: ${param:v3BucketRegion, 'us-east-1'}
+    COGNITO_USER_POOL_ID: ${self:custom.userPoolId}
+    # Reparto solo a agentes habilitados. 'false' al desplegar (design D6).
+    AGENT_ROSTER_FILTER: ${param:agentRosterFilter, 'false'}
   httpApi:
     cors: true
     authorizers:
@@ -100,6 +111,13 @@ provider:
           Resource:
             - !Sub '${CsvBucket.Arn}/*'
             - !Sub '${MediaBucket.Arn}/*'
+        # Lectores de la lista derivada (reparto, /admin/agent-roster): solo
+        # lectura. La escritura la tiene SOLO SyncCampaignAgentsRole.
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+          Resource:
+            - arn:aws:s3:::${self:custom.v3Bucket}/campaign-agents/*
 
 package:
   individually: true
@@ -186,6 +204,25 @@ functions:
           path: /agents/campaigns
           method: get
           authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/agent-roster
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/agent-roster
+          method: post
+          authorizer: { name: cognitoJwt }
+
+  syncCampaignAgents:
+    handler: src/handlers/syncCampaignAgents.handler
+    description: Deriva agentes por campaña (pool + API de Roles) y escribe campaign-agents/ en el bucket de v3
+    timeout: 120
+    # Rol propio: único con escritura en campaign-agents/* (no hereda el rol compartido).
+    role: SyncCampaignAgentsRole
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
 
   jobsPoll:
     handler: src/handlers/jobsPoll.handler
@@ -253,6 +290,60 @@ functions:
 
 resources:
   Resources:
+    # Rol exclusivo de syncCampaignAgents (design D12): ListUsers del pool,
+    # lectura del almacén rol→permisos y escritura SOLO en campaign-agents/*.
+    SyncCampaignAgentsRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal: { Service: lambda.amazonaws.com }
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        Policies:
+          - PolicyName: sync-campaign-agents
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - cognito-idp:ListUsers
+                  Resource:
+                    - !Sub 'arn:aws:cognito-idp:us-east-2:${AWS::AccountId}:userpool/${self:custom.userPoolId}'
+                - Effect: Allow
+                  Action:
+                    - dynamodb:BatchGetItem
+                    - dynamodb:GetItem
+                  Resource:
+                    - !GetAtt RolePermsTable.Arn
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                  Resource:
+                    - arn:aws:s3:::${self:custom.v3Bucket}/campaign-agents/*
+
+    # Tres corridas fallidas seguidas (3 periodos de 5 min con Errors ≥ 1).
+    SyncCampaignAgentsFailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-agent-sync-failing
+        AlarmDescription: syncCampaignAgents falló 3 veces seguidas; las listas campaign-agents/ no se actualizan (vencen a las 24 h).
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:service}-${self:provider.stage}-syncCampaignAgents
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 3
+        DatapointsToAlarm: 3
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: missing
+
     # Aislamiento multi-operador: operatorId en la PK → un operador solo
     # puede Query su propia partición. Sin GSI, sin Scan cross-tenant.
     ConversationsTable:

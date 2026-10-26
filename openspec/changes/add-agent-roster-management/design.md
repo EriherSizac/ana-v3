@@ -116,3 +116,34 @@ Las campañas v3 cuyo nombre no está en el catálogo PostgreSQL de v4 se **reno
 ## Open Questions
 
 _Ninguna._ (Client de `/admin/*` en D3, dependencia de v4 en D4, derivación en D11, fallos y vigencia en D12, renombrado en D13.)
+
+## Decisiones de implementación
+
+**v4 (`v4/backend`)**
+- La sincronización usa un rol IAM propio (`SyncCampaignAgentsRole`, recurso nativo con `functions.syncCampaignAgents.role`, sin plugins). Es el único con `s3:PutObject` sobre `campaign-agents/*`; el rol compartido de las demás funciones solo tiene `s3:GetObject` ahí. Como `serverless package` exige login en Serverless v4, la política se verifica con una prueba que parsea `serverless.yml` (tarea 1.3 queda abierta hasta correr `serverless package` con credenciales).
+- Bucket de v3: `V3_BUCKET` = `ana-backend-storage-${stage}` (override `--param="v3Bucket=..."`), con un cliente S3 dedicado en `V3_BUCKET_REGION` (default `us-east-1`).
+- Un catálogo vacío cuenta como fallo de la corrida (no se escribe nada), igual que un error de PostgreSQL; el catálogo se lee con una consulta estricta y no con `listCampaignsDb` (que traga errores y sirve caché).
+- Un error de escritura a mitad de la corrida se registra (`phase:"write"`) y se relanza; las listas ya escritas se quedan (cada una es independiente y válida).
+- Antes de pedir `GET /users/{username}`, los candidatos se filtran por elegibilidad en el pool (Enabled + estado): ahorra llamadas sin cambiar el resultado.
+- El envío por defecto del rol de agente se evalúa por rol: un deny en otro rol del mismo usuario no lo anula; un deny en ese mismo rol sí.
+- Alarma: Errors ≥ 1 en 3 de 3 periodos de 5 min (`TreatMissingData: missing`), sin acción de notificación (falta definir el destino SNS).
+- En `/admin/agent-roster` la autorización (403) se evalúa antes de validar body y catálogo; `operatorId` repetidos tras normalizar → 400; la excepción se guarda con el `operatorId` del pool cuando el usuario está en la lista derivada.
+- `GET /admin/agent-roster` con lista ilegible o vencida responde 503 `roster no disponible` (el spec no fijaba código).
+- Con `AGENT_ROSTER_FILTER` encendido, `csvTrigger` no revalida `assignments`; la validación ocurre en el presign, donde el spec la exige.
+
+**v3 (`v3/ana-backend`)**
+- Código en archivos nuevos (`src/lib/{identifiers,adminHttp,adminAccess,s3Json,roster}.ts`, `src/handlers/adminRoster.ts`) para no chocar con los cambios concurrentes; la normalización reutiliza `src/lib/campaign.ts` (`normalizeKeySegment`/`normalizePathSegment`) de `fix-campaign-case-normalization`.
+- Orden de validación en `/admin/*`: campaña (400) → autorización vía v4 `/me` (401/403/503) → body (400) → S3. Así un usuario sin permiso no recibe detalles de validación.
+- `requireAdminAccess(event, { permissions, campaign, check })`: `permissions` se exigen todos (admin los tiene); `check` permite reglas como rol Developer o admin/líder para las changes siguientes.
+- El authorizer `cognitoAdminJwt` admite un solo client id por variable (`- ${env:COGNITO_ADMIN_CLIENT_IDS, '1r6niimhkl2fmias6kk85n4ou4'}`); para varios clients hay que agregar más entradas a la lista. Verificado con `serverless package` (Framework 3.40 local): solo las dos rutas `/admin/*` quedan con `AuthorizationType: JWT`, audiencia `1r6niimhkl2fmias6kk85n4ou4`, y las demás rutas no cambian.
+- `@aws-sdk/client-s3` pasa a `^3.700.0` (el lock ya resolvía 3.952, con `IfMatch`/`IfNoneMatch`). Conflicto de escritura = `PreconditionFailed` (412) o `ConditionalRequestConflict` (409).
+- `roster.ts` exporta además `getEnabledAgentsCached` (caché 60 s sin cachear errores) para la autenticación del CLI de `migrate-cli-to-cognito-login`.
+- `scripts/rename-campaigns.ts`: `--catalog catalog.json` (lista de nombres del catálogo de v4) para el inventario de campañas fuera del catálogo; sin él se listan todas las campañas v3 con datos. Se rechazan además dos orígenes con el mismo destino. `--delete-source` solo borra orígenes cuya copia verificada es idéntica (tamaño + ETag), y nunca los contactos listos omitidos. Sale con código 2 si aborta o hay diferencias.
+- Documentación agregada al final de `README.md` y `README-SUPERVISORES.md` (para minimizar conflictos); la verificación con `curl` contra dev queda pendiente (tarea 3.7).
+
+**ANA Admin**
+- Los clientes de roster de ambas flotas viven en un solo archivo `src/server/backends/rosters.ts` (en lugar de `v3Roster.ts`/`v4Roster.ts`), con una forma normalizada común.
+- Listado: roles por `GET /users` (D8, caché 5 min) y detalle por usuario con `GET /api/users/{username}` → `GET /users/{username}` (permisos inline), en un `Dialog` de solo lectura.
+- Filtros en pills con valores `<flota>:<estado>` (`v3:agent`, `v4:disabled`, …); un usuario coincide si cumple cualquiera.
+- Acciones masivas: por flota se envían solo los seleccionados a los que la acción aplica (deshabilitar = estado "Agente", rehabilitar = "Deshabilitado"); el resto cuenta como "omitidos" en el resumen. Máximo 100 por llamada (límite de v4).
+- `/api/users` lista todo el pool a cualquier usuario con `ana:admin:agents:manage` (también líderes); el estado por flota solo se calcula para campañas en su alcance.

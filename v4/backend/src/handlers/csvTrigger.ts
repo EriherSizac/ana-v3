@@ -10,7 +10,7 @@ import { parse } from 'csv-parse/sync';
 import { s3 } from '../lib/s3';
 import { ddb } from '../lib/dynamo';
 import { JOBS_TABLE, JOB_TTL_DAYS, type SendJob } from '../lib/jobs';
-import { getEligibleAgents } from '../lib/dashboard';
+import { getDistributableAgents } from '../lib/distribution';
 import { normalizeContactRow } from '../lib/contacts';
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -94,8 +94,9 @@ export const handler = async (event: S3Event): Promise<void> => {
         targets = [operatorId];
       }
     } else if (distribute) {
-      // Agentes activos elegibles desde la API del dashboard (api-agentes.md).
-      const agents = await getEligibleAgents(campaign);
+      // Agentes activos elegibles desde la API del dashboard (api-agentes.md);
+      // con AGENT_ROSTER_FILTER, además habilitados (lista derivada − enabled:false).
+      const agents = await getDistributableAgents(campaign);
       if (agents.length > 0) targets = agents;
       else console.warn(`csvTrigger: sin agentes elegibles en ${campaign}, jobs al uploader`);
     }

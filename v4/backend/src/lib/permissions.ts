@@ -7,6 +7,8 @@
 // Formato: módulo:alcance:recurso:acción (ver Implementar_roles_locales.md §0).
 export const ANA_PERMISSIONS = {
   ADMIN_CONSOLE: 'ana:admin:console:manage',
+  // Gestionar excepciones de agentes (deshabilitar/rehabilitar) en sus campañas.
+  AGENTS_MANAGE: 'ana:admin:agents:manage',
   CONTACTS_UPLOAD: 'ana:contacts:list:upload',
   CONTACTS_DISTRIBUTE: 'ana:contacts:list:distribute',
   CHATS_VIEW: 'ana:chats:conversation:view',
@@ -40,3 +42,27 @@ export const isLeaderRole = (name?: string): boolean =>
       .replace(/[̀-ͯ]/g, '')
       .toLowerCase(),
   );
+
+/** Normaliza un nombre de rol: NFD, sin diacríticos, minúsculas (igual que isLeaderRole). */
+export const normalizeRoleName = (name?: string): string =>
+  (name ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+
+// Un rol cuyo nombre contiene "agente" ("Agente <Campaña>") es rol de agente:
+// otorga ana:campaign:message:send por defecto (deny `-perm` lo quita).
+export const isAgentRole = (name?: string): boolean => /agente/.test(normalizeRoleName(name));
+
+/**
+ * Filtra una lista de permisos para el almacén local: acepta grants (`perm`) y
+ * denies (`-perm`) solo de permisos del catálogo.
+ */
+export function sanitizeRolePermissions(permissions: string[]): string[] {
+  const valid = new Set<string>(Object.values(ANA_PERMISSIONS));
+  return permissions.filter((p) => {
+    if (typeof p !== 'string') return false;
+    const bare = p.startsWith('-') ? p.slice(1) : p;
+    return valid.has(bare);
+  });
+}
