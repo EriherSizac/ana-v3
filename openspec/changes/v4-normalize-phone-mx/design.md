@@ -28,3 +28,12 @@
 ## Migration Plan
 
 Backend primero (solo afecta la búsqueda de crédito), luego release del desktop. Rollback independiente por componente.
+
+## Decisiones de implementación
+
+- **Orden de D1 ajustado**: la regla "escrito con `+`/`00` y otra lada → extranjero" se evalúa **antes** que las reglas nacionales; con el orden literal de D1, `+1 305 555 1234` (11 dígitos que empiezan con `1`) se habría convertido en `523055551234`, contradiciendo el escenario "Número extranjero con más". Un extranjero debe empezar con un dígito 1–9 y tener 11–15 dígitos.
+- **Lada del job**: `normalizeDigits` reduce `countryCode` a dígitos (`+52` → `52`; vacío → `52`) antes de decidir entre `normalizeMx` y la regla genérica.
+- **Mapeo puro** `outcomeForResolve` en `desktop/electron/jobs/outcome.ts` (probado con vitest) traduce el resultado tipado de `resolveJid` a `error`/"Teléfono inválido" (reporte `error`) o `no_whatsapp`.
+- **Backend**: `searchCreditIdByPhone` no llama al CRM si `toE164Mx` devuelve `''` (teléfono inválido).
+- **Vectores**: `v4/shared/phone-mx-vectors.json` incluye además casos negativos (`0`+10, `046`+10, 11 dígitos sin `1`) y otra lada (`57`).
+- Verificación manual de 1.4 (CSV con `12345` en dev) y despliegue/release (4.x) pendientes.

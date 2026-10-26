@@ -182,3 +182,24 @@ Implementación: `backend/src/handlers/csvTrigger.ts`, `backend/src/lib/dashboar
 - **Reintento del desktop**: ante `retryable: true`, 5xx o red caída, el desktop reintenta el reporte del job a los 30 s, 2 min y 10 min, sin frenar el envío (solo en memoria).
 - **Gestión manual**: el desktop manda un `requestId` (UUID) por apertura del modal "Registrar gestión"; el mismo `requestId` registra una sola interacción.
 - **Interacciones anteriores al despliegue** (fecha/hora UTC): las de v4 con `contact_time` entre `00:00` y `05:59` registradas antes del despliegue corresponden a las 18:00–23:59 del **día anterior** en Ciudad de México (y en general toda hora previa está 6 h adelantada). No se corrigen automáticamente.
+
+## 8. Formatos de teléfono aceptados (lada 52)
+
+Reglas únicas en desktop (`desktop/electron/whatsapp/phone.ts`) y backend (`backend/src/lib/phone.ts`), probadas con los vectores compartidos `v4/shared/phone-mx-vectors.json`. Se decide por **longitud**, no por prefijo de texto; espacios, guiones y paréntesis se ignoran:
+
+| Escrito en el CSV | Se consulta como |
+|---|---|
+| `5512345678` / `55 1234 5678` (10 dígitos) | `525512345678` |
+| `525512345678` / `+52 55 1234 5678` / `0052 55 1234 5678` | `525512345678` |
+| `5215512345678` / `+52 1 55 1234 5678` | `525512345678` |
+| `044 55 1234 5678` / `045 55 1234 5678` | `525512345678` |
+| `01 55 1234 5678` | `525512345678` |
+| `1 55 1234 5678` | `525512345678` |
+| `+1 305 555 1234` / `001 305 555 1234` (extranjero: **siempre con `+` o `00`**) | `13055551234` |
+| `12345`, `05512345678`, vacío… | inválido |
+
+- Un teléfono **inválido** deja el job en `error` con "Teléfono inválido": no se consulta WhatsApp, se reporta al CRM como `error` (no contactable) y **no** se marca el teléfono sin WhatsApp.
+- Un número extranjero escrito sin `+`/`00` (p. ej. `13055551234`) se interpreta como `1` + 10 dígitos de México.
+- La búsqueda del `credit_id` en el CRM usa `+` + el número normalizado (`0445512345678` → `+525512345678`, reintentando sin `+52` ante 404).
+
+**Teléfonos marcados sin WhatsApp por error antes de este cambio**: revisar en el historial de jobs (TTL 7 días, tabla `ana-backend-jobs-<stage>`) los jobs con `status = no_whatsapp` cuyo `phone` crudo empieza con `044`, `045` o `01` (o tiene 11 dígitos y empieza con `1`), y pedir a operación que revise esos teléfonos en el CRM (`PATCH /phone` los dejó con `has_whatsapp: false`).

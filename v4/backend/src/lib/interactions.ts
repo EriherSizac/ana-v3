@@ -6,6 +6,8 @@
 // Mismo API que usaba v3-cli, pero la key vive aquí (env del Lambda, backend/.env)
 // y nunca en el desktop. Gotcha heredado de v3: el CRM a veces guarda teléfonos
 // sin el prefijo +52 → todo lookup/insert con 404 reintenta sin el prefijo.
+import { normalizeMx } from './phone';
+
 const BASE = process.env.INTERACTIONS_API_BASE!;
 const KEY = process.env.INTERACTIONS_API_KEY!;
 // user_id del CRM con el que se registran interacciones (mapa por operador: pendiente).
@@ -13,14 +15,13 @@ export const CRM_USER_ID = process.env.INTERACTIONS_USER_ID ?? '';
 
 const headers = { 'content-type': 'application/json', 'X-Api-Key': KEY };
 
-/** +52XXXXXXXXXX a partir de un crudo MX (10/12/13 dígitos). */
+/**
+ * `+` + teléfono normalizado con las reglas de México (lib/phone.ts, las mismas
+ * del desktop). '' si no se puede normalizar (no se busca en el CRM).
+ */
 export function toE164Mx(rawPhone: string): string {
-  const digits = String(rawPhone || '').replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.length === 10) return `+52${digits}`;
-  if (digits.startsWith('521') && digits.length === 13) return `+52${digits.slice(3)}`;
-  if (digits.startsWith('52') && digits.length === 12) return `+${digits}`;
-  return `+${digits}`;
+  const n = normalizeMx(rawPhone);
+  return n ? `+${n}` : '';
 }
 
 /** Últimos 10 dígitos (formato que el CRM usa en phone_number). */
@@ -45,6 +46,7 @@ export async function searchCreditIdByPhone(
       }),
     });
 
+  if (!phoneE164) return ''; // teléfono inválido: no se busca
   try {
     let res = await post(phoneE164);
     if (res.status === 404 && phoneE164.startsWith('+52')) res = await post(phoneE164.slice(3));

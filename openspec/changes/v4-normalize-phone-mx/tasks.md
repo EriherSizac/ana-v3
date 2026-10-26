@@ -2,19 +2,19 @@
 
 ## 1. Vectores y desktop
 
-- [ ] 1.1 Crear `v4/shared/phone-mx-vectors.json` con al menos: 10 dígitos, `52`+10, `+52 1`+10, `044`/`045`+10, `01`+10, `1`+10, `+1 305…`, `0052…`, `12345`, vacío, 10 dígitos que empiezan con `52`, y casos de otra lada (`57`); verificar que el JSON es válido (`node -e "require('./v4/shared/phone-mx-vectors.json')"`)
-- [ ] 1.2 Agregar `vitest` a `v4/desktop` si ningún cambio previo lo hizo; verificar con `npm test`
-- [ ] 1.3 Reescribir `electron/whatsapp/phone.ts` según design D1/D2; verificar con vitest que recorre todos los vectores compartidos
+- [x] 1.1 Crear `v4/shared/phone-mx-vectors.json` con al menos: 10 dígitos, `52`+10, `+52 1`+10, `044`/`045`+10, `01`+10, `1`+10, `+1 305…`, `0052…`, `12345`, vacío, 10 dígitos que empiezan con `52`, y casos de otra lada (`57`); verificar que el JSON es válido (`node -e "require('./v4/shared/phone-mx-vectors.json')"`)
+- [x] 1.2 Agregar `vitest` a `v4/desktop` si ningún cambio previo lo hizo; verificar con `npm test`
+- [x] 1.3 Reescribir `electron/whatsapp/phone.ts` según design D1/D2; verificar con vitest que recorre todos los vectores compartidos
 - [ ] 1.4 Cambiar `resolveJid` a resultado tipado y `runJob` para mapear `invalid` → `error` "Teléfono inválido" (reporte `error`, nunca `no_whatsapp`); verificar con vitest de la función de mapeo y manualmente en dev con un CSV que trae `12345` (historial "Error", sin `PATCH /phone` en logs del backend)
 
 ## 2. Backend
 
-- [ ] 2.1 Agregar `vitest` a `v4/backend` si ningún cambio previo lo hizo; verificar con `npm test`
-- [ ] 2.2 Crear `src/lib/phone.ts` con `normalizeMx` y hacer que `toE164Mx` delegue (vacío si inválido, sin búsqueda en el CRM); verificar con vitest que recorre los vectores compartidos y que `0445512345678` busca `+525512345678`
+- [x] 2.1 Agregar `vitest` a `v4/backend` si ningún cambio previo lo hizo; verificar con `npm test`
+- [x] 2.2 Crear `src/lib/phone.ts` con `normalizeMx` y hacer que `toE164Mx` delegue (vacío si inválido, sin búsqueda en el CRM); verificar con vitest que recorre los vectores compartidos y que `0445512345678` busca `+525512345678`
 
 ## 3. Documentación
 
-- [ ] 3.1 Documentar en `v4/CAMPANAS_Y_ASIGNACION.md` los formatos aceptados (incluido `+` para extranjeros) y cómo listar jobs `no_whatsapp` con teléfono `044`/`045`/`01` previos al cambio; verificar que los ejemplos están en los vectores
+- [x] 3.1 Documentar en `v4/CAMPANAS_Y_ASIGNACION.md` los formatos aceptados (incluido `+` para extranjeros) y cómo listar jobs `no_whatsapp` con teléfono `044`/`045`/`01` previos al cambio; verificar que los ejemplos están en los vectores
 
 ## 4. Despliegue y release
 

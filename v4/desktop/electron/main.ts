@@ -10,6 +10,7 @@ import { WaClient } from './whatsapp/client';
 import { interpolate } from './whatsapp/template';
 import { Backend } from './backend';
 import { JobPoller, type SendJob } from './jobs/poller';
+import { outcomeForResolve } from './jobs/outcome';
 import { setupUpdater, retryUpdate, markUpdateBypassed, lastUpdateStatus } from './updater';
 import { TokenBroker, createAuthFetch } from './auth/tokenBroker';
 import { decideSetToken, shouldHeartbeat, type SetTokenReason } from './auth/session';
@@ -162,12 +163,16 @@ async function runJob(
       row: job.row,
     });
   try {
-    const jid = await wa.resolveJid(job.phone, job.countryCode);
-    if (!jid) {
-      send('wa:sent', { success: false, phone: job.phone, error: 'No tiene WhatsApp' });
-      report('no_whatsapp');
-      return { success: false, error: 'No tiene WhatsApp', noWhatsapp: true };
+    const resolved = await wa.resolveJid(job.phone, job.countryCode);
+    // Teléfono inválido → error (nunca "sin WhatsApp": no se marca en el CRM).
+    const early = outcomeForResolve(resolved);
+    if (early || resolved.kind !== 'ok') {
+      const o = early!;
+      send('wa:sent', { success: false, phone: job.phone, error: o.error });
+      report(o.report);
+      return { success: false, error: o.error, noWhatsapp: o.noWhatsapp };
     }
+    const jid = resolved.jid;
     const body = interpolate(job.template, job.row);
     const msg = await wa.sendText(jid, body); // simula escritura antes de enviar
     await backend.putMessage(msg);

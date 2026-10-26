@@ -20,6 +20,7 @@ const AUTH_DIR = path.join(app.getPath('userData'), 'wwebjs_auth');
 // mismo agente sin reescanear el QR.
 const BACKUP_SYNC_MS = 2 * 60 * 1000;
 import { normalizeDigits, toJid } from './phone';
+import type { ResolveResult } from '../jobs/outcome';
 
 export type WaState = 'idle' | 'qr' | 'authenticated' | 'connected' | 'disconnected';
 
@@ -313,13 +314,17 @@ export class WaClient extends EventEmitter {
     };
   }
 
-  /** Resuelve el JID real (WhatsApp decide el `1` de MX). null si no tiene WA. */
-  async resolveJid(rawPhone: string, countryCode: string): Promise<string | null> {
+  /**
+   * Resuelve el JID real (WhatsApp decide el `1` de MX). Distingue un teléfono
+   * que no se puede normalizar (`invalid`, sin consultar WhatsApp) de un número
+   * que WhatsApp no reconoce (`not_on_whatsapp`).
+   */
+  async resolveJid(rawPhone: string, countryCode: string): Promise<ResolveResult> {
     if (!this.client) throw new Error('WhatsApp no conectado');
     const digits = normalizeDigits(rawPhone, countryCode);
-    if (!digits) return null;
+    if (!digits) return { kind: 'invalid' };
     const numberId = await this.client.getNumberId(digits);
-    return numberId ? numberId._serialized : null;
+    return numberId ? { kind: 'ok', jid: numberId._serialized } : { kind: 'not_on_whatsapp' };
   }
 
   /** Muestra/oculta "escribiendo…" en un chat (typing en vivo del chat manual). */
