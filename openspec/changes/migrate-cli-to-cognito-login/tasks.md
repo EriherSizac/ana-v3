@@ -1,0 +1,62 @@
+# Tasks
+
+## 1. Preparación de Cognito y datos
+
+- [ ] 1.1 Crear en el pool `us-east-2_UepfOyKpd` el app client `ana-v3-cli` (sin secreto; `ALLOW_USER_PASSWORD_AUTH`, `ALLOW_REFRESH_TOKEN_AUTH`; revocación de tokens activa; prevent user existence errors; ID/access 60 min; refresh 1 día) y registrar su id y configuración en `v3/ana-backend/README.md`; verificar con `aws cognito-idp describe-user-pool-client --region us-east-2` que los flujos y duraciones coinciden y que no tiene secreto
+- [ ] 1.2 Inventariar agentes activos (usuarios de los `credentials.csv` de prod, sin imprimir frases) y comparar con los usernames del pool; dar de alta los faltantes con contraseña temporal; verificar con `aws cognito-idp admin-get-user` que cada agente activo existe y dejar el inventario (sin secretos) en `PLAN_SEGURIDAD_Y_DEUDA.md`
+- [ ] 1.3 Confirmar que los rosters (`v3/agent-roster`) de cada campaña activa contienen a sus agentes habilitados; verificar leyendo cada roster en el bucket de prod que ningún agente activo falta
+
+## 2. Backend: infraestructura de pruebas y verificación de token
+
+- [ ] 2.1 Si `v3/ana-backend` aún no tiene suite (otro cambio pudo agregarla), agregar `vitest` y `aws-sdk-client-mock` como devDependencies, `"test": "vitest run"` y `vitest.config.ts` con `include: ['test/**/*.test.ts']`; verificar que `npm test` corre y que `npm run build` no compila `test/`
+- [ ] 2.2 Agregar la dependencia `aws-jwt-verify` y crear `src/lib/agentAuth.ts` con la verificación de ID token (design.md D4) y motivos `missing|invalid|expired|wrong_client`; verificar con `test/agentAuth.test.ts` usando un JWKS y tokens firmados de prueba: token válido, vencido, firma alterada, `token_use=access`, `aud` fuera de la lista, otro emisor, header sin `Bearer`, header en minúsculas
+- [ ] 2.3 Agregar a `agentAuth.ts` la propiedad (`cognito:username` normalizado vs agente de la solicitud, motivo `mismatch`) y la lectura de roster con caché de 60 s (D5, motivos `not_in_roster|roster_error`, campaña sin roster = sin agentes); verificar en `test/agentAuth.test.ts` los casos `Erick`→`erick`, agente ajeno, deshabilitado, sin roster, error de S3 y expiración de la caché con reloj simulado
+- [ ] 2.4 Implementar `requireAgent` / `requireAgentToken` con modo reporte/estricto, 401/403/503 y el log `evt:"agent_auth"` con `cliVersion` (D6); verificar en `test/requireAgent.test.ts` cada motivo en ambos modos, 503 sin `COGNITO_USER_POOL_ID`/`COGNITO_AGENT_CLIENT_IDS` en estricto, que `X-Admin-Key` sola cuenta como `missing` y que ninguna línea de log contiene el token
+- [ ] 2.5 Declarar en `serverless.yml` `AGENT_AUTH_ENFORCED`, `COGNITO_USER_POOL_ID`, `COGNITO_AGENT_CLIENT_IDS` y el authorizer `cognitoAgentJwt` (issuer del pool, audience desde la lista), y agregarlas a `.env.example`; verificar con `npx serverless print --stage dev` que aparecen en `provider.environment` y en `httpApi.authorizers`
+
+## 3. Backend: rutas de agente
+
+- [ ] 3.1 Proteger `GET /get/chats` (`chats.ts`) y `POST /contacts/pending` (`contacts.ts`) con `requireAgent` antes de cualquier S3; verificar en `test/chats.test.ts` y `test/contacts.test.ts` (mock S3): estricto sin token → 401 y cero llamadas S3 (la asignación sigue en el mock), token ajeno o fuera de roster → 403 sin S3, token válido → 200 y objeto consumido, reporte sin token → 200 con log `missing`
+- [ ] 3.2 Proteger `POST /backups`, `GET /backups/latest/...` (`backups.ts`), `POST /backups/chat`, `GET /backups/chat/...`, `GET /backups/chats/...` (`chatBackups.ts`) y `POST /media` (`media.ts`) tomando agente/campaña del path o body según `backend-api-security`; verificar en `test/backups.test.ts` y `test/media.test.ts` que en estricto `POST /backups/chat` sin token → 401 y a nombre de otro agente → 403 sin `PutObject`, las lecturas ajenas → 403 sin `GetObject`/`ListObjectsV2`, y que el agente dueño conserva las respuestas actuales (200/404/400)
+- [ ] 3.3 Proteger `GET /templates` (`templates.ts`) con token + roster de `campaign` (sin agente en la solicitud); verificar en `test/templates.test.ts` que en estricto campaña fuera de roster → 403 sin S3 (también con `key`) y que `POST /templates` sigue exigiendo solo `X-Admin-Key`
+- [ ] 3.4 Crear `src/handlers/agent.ts` con `GET /agent/campaigns` (siempre estricto, D5) y su ruta en `serverless.yml` con el authorizer adjunto; verificar en `test/agent.test.ts` el orden alfabético, deshabilitados excluidos, lista vacía y 401 sin token en modo reporte
+- [ ] 3.5 Documentar en `v3/ana-backend/README.md` la autenticación de cada ruta, las variables nuevas, los códigos 401/403/503 y la consulta de Logs Insights; verificar que `npm test` y `npm run build` pasan y que los `curl` documentados responden lo indicado contra dev
+
+## 4. Observabilidad del despliegue
+
+- [ ] 4.1 Agregar en `serverless.yml` (`resources`) metric filters sobre los log groups de las funciones de agente que publiquen `AnaAgentAuth/Requests` con dimensiones `reason` y `cliVersion`, y un dashboard o consulta guardada de Logs Insights `filter evt="agent_auth" | stats count() by reason, cliVersion, agent`; verificar en dev, tras llamadas con y sin token, que la métrica y la consulta muestran `ok` y `missing`
+
+## 5. CLI: cliente Cognito y sesión
+
+- [ ] 5.1 Crear `v3/cli-whatsapp/cognito-auth.js` (D2) con `startLogin`, `respondChallenge` (SMS, TOTP, selección, alta TOTP, contraseña nueva), `refresh` y `revoke`, y la configuración de pool/región/client en `config.js` con overrides `ANA_COGNITO_*`; verificar con un script manual contra el pool de dev o un usuario de prueba: login simple, login con TOTP, usuario con contraseña temporal, contraseña incorrecta y refresh, revisando que la consola no imprime contraseña, códigos, sesión de desafío ni tokens
+- [ ] 5.2 Crear `session-store.js` (D7, DPAPI vía PowerShell con stdin) y el módulo de sesión en memoria con renovación single-flight a ≤ 5 min de expiración; verificar que `%APPDATA%\ANA\.agent-session` no contiene tokens en claro (`Select-String` del refresh token devuelve vacío), que copiado a otro usuario de Windows se descarta, y con dos llamadas simultáneas que solo hay una renovación
+- [ ] 5.3 Crear `backendFetch` (wrapper único) que agrega `Authorization`, `X-Ana-Cli-Version`, reintento tras 401 con renovación forzada y señal de 401/403 (D9), y que registra solo URL y estado; reemplazar con él todas las llamadas al backend de `agent-config.js`, `whatsapp-manual.js` y `whatsapp-monitor.js`, tomando `agent_id`/`campaign` de la sesión en lugar de los argumentos de la página; verificar con `rg "fetch\(" v3/cli-whatsapp/*.js` que ninguna llamada al backend v3 queda fuera del wrapper y, en modo reporte, que CloudWatch registra `reason:"ok"` para todas las rutas usadas en una jornada de prueba
+- [ ] 5.4 Mostrar "Sesión expirada: cierra ANA y vuelve a iniciar sesión" (401 persistente) o "Tu usuario no está habilitado en esta campaña" (403) en consola y widget, sin procesar contactos y manteniendo el polling; verificar deshabilitando al agente de prueba en el roster de dev con el estricto activo y comprobando el aviso en ≤ 60 s
+
+## 6. CLI: overlay de login
+
+- [ ] 6.1 Reescribir el overlay de `whatsapp.js` (D8): usuario+contraseña con fondo azul, pasos de MFA (código, selección, alta TOTP con QR vía `qrcode` y clave), contraseña nueva con confirmación, mensajes de error de `cli-agent-session`; la página solo intercambia entradas y `{step, error}` vía `exposeFunction`; verificar manualmente cada paso con usuarios de prueba (sin MFA, con TOTP, con SMS, con alta TOTP, con contraseña temporal) y, con `page.evaluate`, que `window` no contiene contraseña ni tokens
+- [ ] 6.2 Agregar la selección de campaña con búsqueda desde `GET /agent/campaigns` (preselección, aviso sin campañas) y la pantalla "Sesión activa" con "Continuar"/"Cambiar de usuario"; guardar `agent_id` (username en minúsculas) y `campaign` en `.agent-config.json` sin secretos; verificar reabriendo ANA el mismo día (sin contraseña), con un usuario de una sola campaña (preseleccionada) y con uno sin campañas
+- [ ] 6.3 Agregar el flag `--logout` (revoca, borra `.agent-session`, imprime "Sesión cerrada" y termina) y conectar "Cambiar de usuario"; verificar que tras `--logout` el refresh token anterior es rechazado por Cognito y que sin red el archivo se borra igual
+- [ ] 6.4 Eliminar los overlays de login muertos de `whatsapp-manual.js` y `whatsapp-monitor.js` (`verifyManualCredentialsBackend`, `verifyMonitorCredentialsBackend`) y toda llamada a `/auth/verify`; verificar con `rg "auth/verify|dailyPassword" v3/cli-whatsapp/*.js` que no quedan referencias salvo la limpieza de campos legados en `saveAgentConfig`
+- [ ] 6.5 Actualizar `README-USUARIO.md` (primer login, contraseña temporal, MFA, cambiar de usuario, `--logout`, avisos de sesión) y `HISTORIAL.md` con la versión; verificar que ambos mencionan la versión que se publicará
+
+## 7. Despliegue por etapas
+
+- [ ] 7.1 Desplegar el backend en prod con `AGENT_AUTH_ENFORCED=false` y `COGNITO_AGENT_CLIENT_IDS=<ana-v3-cli>`; verificar con `curl` que `GET /get/chats/...` sin token sigue respondiendo (200/404), que `GET /agent/campaigns` sin token da 401 y que aparece `reason:"missing"` con `cliVersion:"unknown"` de la flota 1.0.46
+- [ ] 7.2 Piloto con 1–2 agentes usando el build nuevo con `--no-self-update` durante una jornada; verificar en Logs Insights que todas sus solicitudes son `reason:"ok"` y que reciben asignaciones, respaldan y suben media
+- [ ] 7.3 Publicar el CLI (bump, `build-completo.ps1`, subida a S3 según `cli-distribution`); verificar que `versions/latest.json` anuncia la versión y que un 1.0.46 se actualiza al reiniciar
+- [ ] 7.4 Monitorear hasta cumplir el criterio acordado; verificar con la consulta de 4.1 que no quedan `missing` ni `not_in_roster` de agentes activos y registrar el resultado en `PLAN_SEGURIDAD_Y_DEUDA.md`
+- [ ] 7.5 Activar `AGENT_AUTH_ENFORCED=true` y adjuntar `cognitoAgentJwt` a todas las rutas de agente; redeploy; verificar que sin token las rutas responden 401 (incluido `POST /backups/chat`), que con token ajeno responden 403 y que un CLI actualizado sigue operando; documentar el rollback (flag `false`, quitar authorizer, redeploy) en `README.md`
+
+## 8. Retiro de palabra del día y credenciales
+
+- [ ] 8.1 Tras el periodo sin invocaciones de `ana-backend-prod-verifyCredentials` (métrica `Invocations`), eliminar las funciones y rutas `/auth/verify` y `/credentials/*`, los handlers `auth.ts` y `credentials.ts` y sus pruebas; verificar con `npm test`, `npm run build` y que `POST /auth/verify` y `GET /credentials/prueba` responden 404 en prod
+- [ ] 8.2 Quitar de `setup-campaign.sh`, `README-SUPERVISORES.md`, `SUPERVISORES.md` y `README.md` toda referencia a credenciales y palabra del día, remitiendo al roster; verificar con `rg -i "credentials|palabra del d|dailyPassword" v3/ana-backend --glob '!node_modules'` que no quedan referencias vigentes
+- [ ] 8.3 Borrar los `agents/*/credentials.csv` del bucket de prod (listado previo sin contenido, confirmado contra el roster poblado); verificar con `aws s3 ls --recursive` que no queda ninguno y anotar F1.x en `PLAN_SEGURIDAD_Y_DEUDA.md` con fecha y commit
+
+## Workflow follow-up
+
+- Archivar antes `secure-assignment-consumption` y `fix-campaign-case-normalization` (o recortarle la parte de credenciales si no se desplegó antes del modo estricto); el archivo de este cambio retira `v3/campaign-credentials` (`retire_capabilities: true`).
+- Al archivar, actualizar las notas de Purpose de `openspec/specs/v3/agent-auth` (ya no es palabra del día), `cli-agent-session` (login Cognito), `backend-api-security`, `chat-backups`, `agent-assignments` y `message-templates` (las notas de "sin autenticación").
+- Cambio posterior: `user_id` del CRM desde la identidad de Cognito y retirar la `X-Api-Key` del CRM embebida en el CLI.
