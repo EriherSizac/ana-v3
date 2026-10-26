@@ -64,3 +64,13 @@ Línea JSON `evt:"legacy_chat_access"` por consulta (usuario del token, campaña
 3. Ejecutar el índice en dry-run y luego `--apply` contra prod.
 4. Habilitar la sección en ANA Admin; probar con un admin y un líder.
 - Rollback: ocultar la sección y quitar las funciones; `legacy/` no se modifica (el índice se puede borrar sin pérdida).
+
+## Decisiones de implementación
+
+- **Fechas de los mensajes**: los CLIs guardaron `timestamp` como epoch, ISO o el texto de WhatsApp Web (`data-pre-plain-text`, p. ej. `10:30 a. m., 5/9/2026`). `parseMessageTime` acepta las tres formas; el texto se interpreta como **día/mes/año** en hora de Ciudad de México. Lo no reconocible no cuenta para `firstMessageAt`/`lastMessageAt` (si ningún mensaje tiene fecha, quedan `null`).
+- **Forma de los mensajes**: además de `{id,timestamp,from,body}` se aceptan los campos del respaldo de la ventana de automatización (`text`, `type`/`direction` `incoming|outgoing`, `mediaUrl`, `mediaType`). La respuesta agrega `hasMedia` (el mensaje tenía multimedia) para que la UI muestre "Multimedia no disponible" solo cuando `media` es `null` por referencia faltante o ajena, y no en cada mensaje de texto.
+- **Referencias de media**: se aceptan URL completa (virtual-host o path-style), `media/...` y `legacy/media/...`; se rechazan `..` y `\`. El tipo se deduce de la extensión (o de `mediaType` como respaldo); desconocido → `application/octet-stream` y descarga.
+- **Filtro de fechas** `from`/`to` se compara contra el día de `lastMessageAt` en Ciudad de México. `agent` y `phone` inválidos o fechas mal formadas → 400 antes de autorizar y sin S3.
+- **Lista de agentes legados**: la ruta devuelve solo `agents` (normalizados, únicos, ordenados) y `extractedAt`, aunque el objeto tuviera otros campos.
+- El script de índice escribe **una sola vez por campaña** el índice completo (no fusiona con uno previo) y cuenta los respaldos ilegibles; `--campaign` limita el listado.
+- La regla de acceso del BFF (`legacyAllowed`) es admin o líder; el alcance por campaña lo aplica `withAccess` (admin y `*` pasan), igual que v3.

@@ -196,3 +196,18 @@ líderes y admins lo tienen).
   dígitos) o, en v3, un campo con salto de línea. Solo las válidas se entregan.
 - Ejemplos con datos falsos: `test/fixtures/contacts/*.example.csv`
   (`clean`, `dirty`, `espanol` para v4 y `newline`).
+
+## Sección Configuración (`/configuracion`)
+
+Solo rol **Developer** (`isDeveloper`; admin o líder no bastan). Se arma desde
+el catálogo que devuelve v3 `GET /admin/cli-settings` (vía `GET/POST /api/cli-settings`);
+cada cambio pide `ConfirmDialog` y aplica a todos los CLIs v3 en ≤ 5 min.
+
+## Sección Historial legacy (`/historial-legacy`)
+
+Solo `isAdmin` o `isLeader` (líderes únicamente en sus campañas). Búsqueda de
+solo lectura en el índice legado de v3 (`/api/campaigns/{c}/legacy-chats`,
+`.../legacy-chats/{agent}/{phone}`, `.../legacy-agents`), sin caché. Los
+mensajes se renderizan **solo como texto** (regla ESLint `react/no-danger`); la
+multimedia usa URLs prefirmadas de 5 min y, si una vence, la conversación se
+vuelve a pedir.

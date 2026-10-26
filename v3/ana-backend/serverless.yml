@@ -291,6 +291,34 @@ functions:
           authorizer:
             name: cognitoAdminJwt
 
+  # add-legacy-chat-history (solo lectura)
+  adminSearchLegacyChats:
+    handler: src/handlers/adminLegacyChats.searchLegacyChats
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/legacy-chats
+          method: get
+          authorizer:
+            name: cognitoAdminJwt
+
+  adminGetLegacyChat:
+    handler: src/handlers/adminLegacyChats.getLegacyChat
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/legacy-chats/{agent}/{phone}
+          method: get
+          authorizer:
+            name: cognitoAdminJwt
+
+  adminGetLegacyAgents:
+    handler: src/handlers/adminLegacyChats.getLegacyAgents
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/legacy-agents
+          method: get
+          authorizer:
+            name: cognitoAdminJwt
+
 resources:
   Resources:
     StorageBucket:

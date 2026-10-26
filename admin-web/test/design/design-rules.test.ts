@@ -74,6 +74,7 @@ describe('ESLint: reglas obligatorias', () => {
     ['confirm()', `export function f() { return confirm('x'); }`, 'no-restricted-globals'],
     ['prompt()', `export function f() { return prompt('x'); }`, 'no-restricted-globals'],
     ['<select>', `export function F() { return <select><option>a</option></select>; }`, 'no-restricted-syntax'],
+    ['dangerouslySetInnerHTML', `export function F({ h }: { h: string }) { return <div dangerouslySetInnerHTML={{ __html: h }} />; }`, 'react/no-danger'],
   ])('%s falla', async (_n, code, rule) => {
     expect(await lint(code)).toContain(rule);
   }, 60_000);

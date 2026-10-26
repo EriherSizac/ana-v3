@@ -10,6 +10,8 @@ const compat = new FlatCompat({ baseDirectory: __dirname });
  * sin diálogos nativos del navegador y sin <select> nativo.
  */
 const designSystemRules = {
+  // Nunca HTML crudo (add-legacy-chat-history D4): el contenido de chats se renderiza como texto.
+  'react/no-danger': 'error',
   'no-alert': 'error',
   'no-restricted-globals': [
     'error',

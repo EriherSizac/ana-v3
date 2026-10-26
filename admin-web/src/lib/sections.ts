@@ -1,4 +1,5 @@
 import { hasPermission, PERMISSIONS, type Access } from './access';
+import { legacyAllowed } from './legacy';
 
 /**
  * Registro de secciones de la consola. Cada change que agrega una sección la
@@ -30,6 +31,12 @@ export const SECTIONS: Section[] = [
     label: 'Configuración',
     description: 'Configuración remota del CLI v3 (solo rol Developer).',
     isAllowed: (a) => a.isDeveloper,
+  },
+  {
+    href: '/historial-legacy',
+    label: 'Historial legacy',
+    description: 'Conversaciones de agentes anteriores al login Cognito (solo lectura).',
+    isAllowed: (a) => legacyAllowed(a),
   },
 ];
 

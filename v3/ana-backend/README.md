@@ -209,3 +209,28 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
 ```
 
 Se edita desde ANA Admin → **Configuración**.
+
+### Historial legado de chats (solo lectura)
+
+Respaldos de `agent_id` anteriores al login Cognito, movidos por
+`migrate-cli-to-cognito-login` a `legacy/backups/{campaign}/{agent}/{phone}/chat_backup.json`
+y `legacy/media/{campaign}/{agent}/{filename}`. Ninguna ruta escribe en `legacy/`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/admin/campaigns/{campaign}/legacy-chats?agent=&phone=&from=&to=&page=` | búsqueda en `legacy/index/{campaign}.json` (teléfono por dígitos contenidos; `from`/`to` `YYYY-MM-DD` sobre el último mensaje; 50 por página) |
+| GET | `/admin/campaigns/{campaign}/legacy-chats/{agent}/{phone}` | mensajes `{id,timestamp,from,body,media}`; media con URL prefirmada de 5 min (no imagen/audio/video → descarga); 404 `{"error":"not_found"}` |
+| GET | `/admin/campaigns/{campaign}/legacy-agents` | `{campaign, agents, extractedAt}` desde `legacy/agents/{campaign}.json` |
+
+Acceso: `isAdmin` en cualquier campaña; `isLeader` solo en sus campañas (o
+`*`), según v4 `GET /me`; v4 caído → 503. Cada consulta registra
+`{"evt":"legacy_chat_access","user","campaign","agent","phone","route","status"}`
+sin contenido.
+
+Regenerar el índice (idempotente; repetir tras cualquier movimiento nuevo a `legacy/`):
+
+```bash
+npx tsx scripts/build-legacy-chat-index.ts --bucket ana-backend-storage-dev --profile pernexium            # dry-run
+npx tsx scripts/build-legacy-chat-index.ts --bucket ana-backend-storage-prod --profile pernexium --apply   # escribe legacy/index/*.json
+npx tsx scripts/build-legacy-chat-index.ts --bucket ... --campaign prueba --apply                        # una campaña
+```
