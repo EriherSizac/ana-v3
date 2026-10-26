@@ -24,10 +24,11 @@ provider:
     # API Gateway responde el preflight; los handlers ya no ponen cabeceras CORS.
     cors:
       allowedOrigins:
+        # HTTP API no acepta comodines de subdominio: orígenes explícitos.
+        # ANA Admin llama desde su servidor (BFF) y el CLI no envía Origin.
         - https://pernexium.com.mx
-        - https://*.pernexium.com.mx
         - https://pernexium.com
-        - https://*.pernexium.com
+        - https://ana-admin.pernexium.com.mx
       allowedHeaders:
         - Content-Type
         - Authorization
