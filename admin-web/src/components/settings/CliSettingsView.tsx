@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, ConfirmDialog, InlineMessage, PageContainer, PageHeader, Skeleton } from '@/components/ui';
 import { formatDate } from '@/lib/agents';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
@@ -28,7 +28,7 @@ const LABELS: Record<string, string> = {
 
 const onOff = (v: boolean) => (v ? 'Activado' : 'Desactivado');
 
-function Toggle({ checked, label, onChange, disabled }: { checked: boolean; label: string; onChange: () => void; disabled?: boolean }) {
+export function Toggle({ checked, label, onChange, disabled }: { checked: boolean; label: string; onChange: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"
@@ -48,7 +48,7 @@ function Toggle({ checked, label, onChange, disabled }: { checked: boolean; labe
 }
 
 /** Configuración remota del CLI v3 (solo Developer). La página se arma desde el catálogo. */
-export function CliSettingsView() {
+export function CliSettingsView({ children }: { children?: ReactNode } = {}) {
   const [data, setData] = useState<CliSettingsData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pending, setPending] = useState<{ key: string; value: boolean } | null>(null);
@@ -152,6 +152,7 @@ export function CliSettingsView() {
           onConfirm={save}
         />
       )}
+      {children}
     </PageContainer>
   );
 }

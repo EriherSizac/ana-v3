@@ -62,6 +62,15 @@ export interface PollerDeps {
   onProgress: (p: Progress) => void;
   /** Jobs del operador (pendientes + historial). El renderer los separa. */
   onAssignment: (jobs: SendJob[], info: AssignmentInfo) => void;
+  /** Ritmo vigente (configuración remota); se lee en cada cálculo de espera. */
+  pace?: () => Pace;
+}
+
+/** Ritmo anti-bloqueo en ms (v4-add-desktop-remote-settings). */
+export interface Pace {
+  minGapMs: number;
+  windowMs: number;
+  maxPerWindow: number;
 }
 
 /** Totales del último poll (`truncated` = quedaron pendientes sin entregar). */
@@ -74,9 +83,8 @@ export interface AssignmentInfo {
 const EMPTY_INFO: AssignmentInfo = { truncated: false, pendingTotal: 0, historyTotal: 0 };
 
 const POLL_INTERVAL_MS = 5000;
-const MIN_GAP_MS = 2 * 60 * 1000; // ≥2 min entre mensajes
-const WINDOW_MS = 20 * 60 * 1000; // ventana de 20 min
-const MAX_PER_WINDOW = 7; // máx 7 mensajes por ventana
+// Ritmo por defecto: ≥2 min entre mensajes, máx 7 por ventana de 20 min.
+export const DEFAULT_PACE: Pace = { minGapMs: 2 * 60 * 1000, windowMs: 20 * 60 * 1000, maxPerWindow: 7 };
 
 /** Esperas entre reintentos del acuse (v4-review-interrupted-sends D3). */
 export const ACK_RETRY_DELAYS_MS = [1000, 5000, 30_000];
@@ -340,15 +348,16 @@ export class JobPoller {
   ) {
     for (;;) {
       const now = Date.now();
-      this.sentAt = this.sentAt.filter((t) => now - t < WINDOW_MS);
+      const { minGapMs, windowMs, maxPerWindow } = this.deps.pace?.() ?? DEFAULT_PACE;
+      this.sentAt = this.sentAt.filter((t) => now - t < windowMs);
       const last = this.sentAt[this.sentAt.length - 1] ?? 0;
 
       let waitMs = 0;
       // gap mínimo entre mensajes
-      if (last) waitMs = Math.max(waitMs, MIN_GAP_MS - (now - last));
+      if (last) waitMs = Math.max(waitMs, minGapMs - (now - last));
       // ventana llena → espera a que salga el más viejo
-      if (this.sentAt.length >= MAX_PER_WINDOW) {
-        waitMs = Math.max(waitMs, this.sentAt[0] + WINDOW_MS - now);
+      if (this.sentAt.length >= maxPerWindow) {
+        waitMs = Math.max(waitMs, this.sentAt[this.sentAt.length - maxPerWindow] + windowMs - now);
       }
       if (waitMs <= 0) return;
 

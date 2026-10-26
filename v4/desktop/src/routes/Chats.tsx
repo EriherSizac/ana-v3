@@ -19,6 +19,7 @@ import {
   type UserAccess,
 } from '../lib/api';
 import { canReply, teamPanel } from '../lib/permissions';
+import { shouldReportOpen } from '../lib/chatOpen';
 import { TeamViewer } from './TeamViewer';
 import { SearchableSelect } from '../ui/SearchableSelect';
 import { Toggle } from '../ui/Toggle';
@@ -44,6 +45,12 @@ export function Chats({
   const showTeamPanel = teamPanel(access).show;
   // Sin ana:chats:message:reply: sin campo, adjunto ni "Registrar gestión".
   const mayReply = canReply(access);
+  // Registro de apertura de chat solo con openChatInteraction (default false).
+  const [openChatInteraction, setOpenChatInteraction] = useState(false);
+  useEffect(() => {
+    void window.ana.getSettings().then((s) => setOpenChatInteraction(s.openChatInteraction === true));
+    return window.ana.onSettings((s) => setOpenChatInteraction(s.openChatInteraction === true));
+  }, []);
 
   const [convos, setConvos] = useState<Conversation[] | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -227,7 +234,7 @@ export function Chats({
     // Solo en mi sesión: registra atención en el CRM (como la ventana de v3) y
     // marca la conversación como leída (sin bloquear la UI; errores ignorados).
     if (!viewingOther) {
-      void reportChatOpen(chatId);
+      if (shouldReportOpen({ openChatInteraction }, viewingOther)) void reportChatOpen(chatId);
       void markConversationRead(chatId);
       setConvos((prev) => (prev ? clearUnread(prev, chatId) : prev));
     }

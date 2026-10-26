@@ -62,6 +62,9 @@ export const isAgentRole = (name?: string): boolean => /agente/.test(normalizeRo
 export const isSuperadminRole = (name?: string): boolean =>
   normalizeRoleName(name).replace(/[\s_-]+/g, '').includes('superadmin');
 
+/** Rol Developer (misma regla que ANA Admin): sin acentos ni mayúsculas contiene "developer". */
+export const isDeveloperRole = (name?: string): boolean => normalizeRoleName(name).includes('developer');
+
 /**
  * Permiso de cada ruta para los chequeos NORMALES (sujetos a
  * PERMISSIONS_ENFORCED, design D2). Los chequeos explícitos (consola admin,

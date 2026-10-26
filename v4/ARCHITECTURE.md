@@ -159,6 +159,22 @@ rutas `GET /conversations` y `.../messages` aceptan `?operatorId=`:
 - La vista es **solo lectura** desde otra cuenta: responder requiere la sesión
   WhatsApp del agente dueño, que vive en la máquina de ese agente.
 
+## Configuración remota del desktop (`backend/src/lib/desktopSettings.ts`)
+
+Catálogo cerrado (cualquier otra llave → 400 `configuración desconocida: <llave>`):
+
+| Llave | Tipo | Límites | Por defecto |
+|---|---|---|---|
+| `sendMinGapSeconds` | entero | 60–600 | 120 |
+| `sendMaxPerWindow` | entero | 1–20 | 7 |
+| `sendWindowMinutes` | entero | 5–60 | 20 |
+| `openChatInteraction` | booleano | — | `false` |
+
+- Guardado en `RolePermsTable` (`PK=CONFIG`, `SK=DESKTOP_SETTINGS`) con `version` y auditoría por llave (`updatedBy`, `updatedAt`). Un valor guardado fuera de tipo o límites se ignora (se usa el por defecto).
+- `GET /settings`: valores efectivos, cualquier usuario autenticado. `GET`/`PUT /admin/desktop-settings`: solo rol **Developer** (nombre de rol con "developer", sin mayúsculas ni acentos; `isDeveloper` en `GET /me`), hard check; `PUT {version, values}` con versión condicional (409 `la configuración cambió`).
+- Desktop: el main (`electron/settings/remoteSettings.ts`) lee `GET /settings` tras el login y cada 5 min, conserva el último valor y usa los por defecto si nunca la leyó. El poller aplica el ritmo en cada cálculo de espera; `Chats` notifica `POST /interactions/open` solo con `openChatInteraction`. **Propagación ≤ 5 min.**
+- Se edita desde ANA Admin → "Configuración" → sección "Desktop v4" (solo Developer).
+
 ## Seguridad del desktop
 
 - **Ventana**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`; el renderer solo ve `window.ana` (preload).

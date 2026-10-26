@@ -202,6 +202,12 @@ líderes y admins lo tienen).
 Solo rol **Developer** (`isDeveloper`; admin o líder no bastan). Se arma desde
 el catálogo que devuelve v3 `GET /admin/cli-settings` (vía `GET/POST /api/cli-settings`);
 cada cambio pide `ConfirmDialog` y aplica a todos los CLIs v3 en ≤ 5 min.
+La sección **Desktop v4** de la misma página lee v4 `GET /admin/desktop-settings` (vía
+`GET/PUT /api/v4/desktop-settings`, solo Developer): ritmo de envío (`sendMinGapSeconds`
+60–600, `sendMaxPerWindow` 1–20, `sendWindowMinutes` 5–60) y `openChatInteraction`; cada
+cambio pide `ConfirmDialog` con el valor anterior y el nuevo, envía solo esa llave con la
+versión leída (409 → "La configuración cambió; recarga para ver el valor actual") y aplica
+a todos los desktops v4 en ≤ 5 min.
 
 ## Sección Historial legacy (`/historial-legacy`)
 

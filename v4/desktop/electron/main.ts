@@ -15,6 +15,7 @@ import { setupUpdater, retryUpdate, markUpdateBypassed, lastUpdateStatus } from 
 import { TokenBroker, createAuthFetch } from './auth/tokenBroker';
 import { decideSetToken, shouldHeartbeat, type SetTokenReason } from './auth/session';
 import { decideReply, type MainAccess } from './auth/replyGate';
+import { RemoteSettings, paceOf } from './settings/remoteSettings';
 import { BypassGuard, type AttemptState } from './update/bypass';
 import {
   createGuard,
@@ -255,11 +256,22 @@ async function runJob(
   }
 }
 
+// Configuración remota del desktop (v4-add-desktop-remote-settings): tras el
+// login y cada 5 min; defaults mientras nunca se haya leído.
+const remoteSettings = new RemoteSettings({
+  apiBase: API_BASE,
+  hasSession,
+  authFetch,
+  onChange: (s) => send('settings:changed', s),
+});
+
 const poller = new JobPoller({
   apiBase: API_BASE,
   hasSession,
   authFetch,
   runJob,
+  // Ritmo vigente en cada cálculo de espera.
+  pace: () => paceOf(remoteSettings.get()),
   onProgress: (p) => send('wa:progress', p),
   // Asignación pendiente del agente → vista "Mi asignación" en el renderer.
   onAssignment: (jobs, info) => {
@@ -284,6 +296,8 @@ handle(
 // Hidrata la vista al montarse (sin esperar al próximo poll).
 handle('jobs:get-assignment', noArgs, () => poller.getAssignment());
 handle('jobs:get-assignment-info', noArgs, () => poller.getAssignmentInfo());
+// Configuración remota vigente (el renderer la usa para openChatInteraction).
+handle('settings:get', noArgs, () => remoteSettings.get());
 // Recuerda el último operador que usó WhatsApp en esta máquina (persiste entre
 // reinicios) → al entrar OTRO usuario se bota el auth local del anterior.
 const LAST_OP_FILE = path.join(app.getPath('userData'), '.ana-last-operator');
@@ -340,6 +354,7 @@ handle(
         // Configura el respaldo de sesión a S3 (RemoteAuth) con el operador del JWT.
         wa.configure(API_BASE, { hasSession, authFetch }, action.operator);
         poller.start();
+        remoteSettings.start();
         // Reconecta WhatsApp restaurando la sesión (sin pedir QR si existe).
         if (!wa.isReady()) void wa.start();
         break;

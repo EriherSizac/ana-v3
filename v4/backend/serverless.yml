@@ -325,6 +325,25 @@ functions:
           method: post
           # Sin authorizer Cognito: autentica por X-Api-Key dentro del handler.
 
+  # Configuración remota del desktop (v4-add-desktop-remote-settings): item
+  # PK=CONFIG / SK=DESKTOP_SETTINGS en RolePermsTable. Admin = rol Developer.
+  settings:
+    handler: src/handlers/settings.handler
+    description: Configuración remota del desktop v4 (lectura y edición Developer)
+    events:
+      - httpApi:
+          path: /settings
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/desktop-settings
+          method: get
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /admin/desktop-settings
+          method: put
+          authorizer: { name: cognitoJwt }
+
   csvTrigger:
     handler: src/handlers/csvTrigger.handler
     description: S3 ObjectCreated en csv-uploads → parsea → escribe jobs en DynamoDB

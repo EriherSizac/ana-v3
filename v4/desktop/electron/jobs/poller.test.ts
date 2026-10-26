@@ -307,3 +307,47 @@ describe('JobPoller: reserva y acuse (v4-review-interrupted-sends)', () => {
     expect(runJob).not.toHaveBeenCalled();
   });
 });
+
+describe('JobPoller: ritmo configurable (v4-add-desktop-remote-settings)', () => {
+  const setup = async (n: number, pace: { minGapMs: number; windowMs: number; maxPerWindow: number }) => {
+    const jobs = Array.from({ length: n }, (_, i) => job(`p${i}`));
+    const runJob = vi.fn(async () => ({ success: true }));
+    const authFetch = vi.fn(async (url: string) => (url.endsWith('/jobs/poll') ? pollResponse(jobs) : new Response('{}')));
+    const { poller } = makePoller({ runJob, authFetch, pace: () => pace });
+    poller.start();
+    toStop.push(poller);
+    await poller.pollOnce();
+    expect((await poller.approve(jobs.map((j) => j.jobId))).ok).toBe(true);
+    return { runJob };
+  };
+
+  it('gap de 180 s: el segundo no sale antes', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runJob } = await setup(2, { minGapMs: 180_000, windowMs: 20 * 60_000, maxPerWindow: 7 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(runJob).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(177_000);
+      expect(runJob).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(runJob).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('máximo 5 por ventana: el sexto espera a que salga el primero', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runJob } = await setup(6, { minGapMs: 60_000, windowMs: 20 * 60_000, maxPerWindow: 5 });
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(runJob).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(14 * 60_000); // minuto ~19
+      expect(runJob).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      expect(runJob).toHaveBeenCalledTimes(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

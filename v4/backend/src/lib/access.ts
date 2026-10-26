@@ -14,6 +14,7 @@ import {
   isLeaderRole,
   isAgentRole,
   isSuperadminRole,
+  isDeveloperRole,
   ROUTE_PERMISSIONS,
   type AnaPermission,
 } from './permissions';
@@ -37,6 +38,8 @@ export interface UserAccess {
   permissions: string[];
   isAdmin: boolean;
   isLeader: boolean;
+  /** Rol cuyo nombre contiene "developer" (v4-add-desktop-remote-settings D3); no da permisos ana:*. */
+  isDeveloper: boolean;
 }
 
 const ALL_PERMS = Object.values(ANA_PERMISSIONS);
@@ -60,6 +63,7 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
       permissions: ALL_PERMS,
       isAdmin: true,
       isLeader: true,
+      isDeveloper: false,
     };
   }
 
@@ -84,6 +88,7 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
       permissions: ALL_PERMS,
       isAdmin: true,
       isLeader: true,
+      isDeveloper: roles.some((r) => isDeveloperRole(r.role_name)),
     };
     await putCached(access, startedAt);
     return access;
@@ -152,6 +157,7 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
     permissions: [...permissions],
     isAdmin,
     isLeader,
+    isDeveloper: roles.some((r) => isDeveloperRole(r.role_name)),
   };
   // No cachear lookups vacíos: un [] puede ser fallo transitorio de la API
   // externa, no "sin roles" real (guía §6: no convertir un outage en denegación).
