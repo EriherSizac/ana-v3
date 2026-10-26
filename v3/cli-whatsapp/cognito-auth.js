@@ -17,7 +17,7 @@ export const DEFAULT_COGNITO = Object.freeze({
   userPoolId: 'us-east-2_UepfOyKpd',
   // Id del App Client público `ana-v3-cli` (pendiente de crear, tarea 1.1):
   // se configura con ANA_COGNITO_CLIENT_ID hasta fijarlo aquí en el release.
-  clientId: '',
+  clientId: '1r6niimhkl2fmias6kk85n4ou4',
 });
 
 /** Configuración efectiva con overrides `ANA_COGNITO_*`. */

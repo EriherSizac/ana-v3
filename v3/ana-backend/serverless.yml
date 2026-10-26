@@ -58,11 +58,13 @@ provider:
         identitySource: $request.header.Authorization
         issuerUrl: https://cognito-idp.us-east-2.amazonaws.com/${env:COGNITO_USER_POOL_ID, 'us-east-2_UepfOyKpd'}
         audience:
-          - ${env:COGNITO_AGENT_CLIENT_IDS, 'ana-v3-cli-pendiente'}
+          - ${env:COGNITO_AGENT_CLIENT_IDS, '1r6niimhkl2fmias6kk85n4ou4'}
   environment:
     BUCKET_NAME: ${self:service}-storage-${sls:stage}
     # Llave de administración (supervisores). Va en .env, NO se commitea.
     ADMIN_API_KEY: ${env:ADMIN_API_KEY, ''}
+    # 'true' exige X-Admin-Key en rutas de supervisor; por ahora apagado (motor-de-gestion no la envía).
+    ADMIN_AUTH_ENFORCED: ${env:ADMIN_AUTH_ENFORCED, 'false'}
     ANA_API_URL: https://ow24p7ablb.execute-api.us-east-1.amazonaws.com
     TEMPLATES_BUCKET: s3-motor-509399624341-prod
     # Autorización de /admin/*: acceso ANA vía v4 GET /me (design D4).
@@ -72,7 +74,7 @@ provider:
     AGENT_AUTH_ENFORCED: ${env:AGENT_AUTH_ENFORCED, 'false'}
     COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, 'us-east-2_UepfOyKpd'}
     # App Client(s) del CLI aceptados, separados por coma (id de `ana-v3-cli`).
-    COGNITO_AGENT_CLIENT_IDS: ${env:COGNITO_AGENT_CLIENT_IDS, ''}
+    COGNITO_AGENT_CLIENT_IDS: ${env:COGNITO_AGENT_CLIENT_IDS, '1r6niimhkl2fmias6kk85n4ou4'}
   iam:
     role:
       statements:

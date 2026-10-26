@@ -26,7 +26,7 @@ function fakeFetch(handlers) {
 const err = (type, message) => ({ __status: 400, __type: type, message });
 
 test('config con overrides ANA_COGNITO_*', () => {
-  assert.deepEqual(cognitoConfigFromEnv({}), { region: 'us-east-2', userPoolId: 'us-east-2_UepfOyKpd', clientId: '' });
+  assert.deepEqual(cognitoConfigFromEnv({}), { region: 'us-east-2', userPoolId: 'us-east-2_UepfOyKpd', clientId: '1r6niimhkl2fmias6kk85n4ou4' });
   assert.deepEqual(cognitoConfigFromEnv({ ANA_COGNITO_CLIENT_ID: 'abc', ANA_COGNITO_REGION: 'us-east-1', ANA_COGNITO_USER_POOL_ID: 'p' }), {
     region: 'us-east-1',
     userPoolId: 'p',

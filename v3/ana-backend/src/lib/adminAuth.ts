@@ -5,11 +5,14 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
  * Guard para rutas de supervisor/administración.
  * Exige el header `X-Admin-Key` igual a env ADMIN_API_KEY.
  * Fail-closed: si ADMIN_API_KEY no está configurada, responde 503 (nunca abre la ruta).
+ * Desactivable: con ADMIN_AUTH_ENFORCED distinto de 'true' no se exige la llave
+ * (decisión 2026-10-26: integraciones como motor-de-gestion aún no la envían).
  * Devuelve `null` si está autorizado, o la respuesta de error a retornar.
  */
 export const requireAdmin = (
   event: Pick<APIGatewayProxyEvent, 'headers'>
 ): APIGatewayProxyResult | null => {
+  if (process.env.ADMIN_AUTH_ENFORCED !== 'true') return null;
   const expected = process.env.ADMIN_API_KEY || '';
   if (!expected) return json(503, { success: false, message: 'Admin key no configurada' });
 

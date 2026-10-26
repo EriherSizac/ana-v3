@@ -42,3 +42,5 @@ Si la suite ya existe (otro cambio pudo agregarla) se reutiliza; si no, este cam
 2. Desplegar el backend (`npm run deploy -- --stage prod`).
 3. Verificar con `curl` 401 sin llave y 200/404 con llave.
 4. Rollback: redeploy de la versión anterior (no hay cambios de datos).
+
+- **X-Admin-Key apagada (2026-10-26, decisión del usuario):** `requireAdmin` solo exige la llave con `ADMIN_AUTH_ENFORCED=true` (por defecto `false`) porque `motor-de-gestion-v2` (`master.ts`/`plannedMaster.ts`) sube contactos sin el header. Las pruebas corren con la llave exigida.

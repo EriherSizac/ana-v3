@@ -22,7 +22,7 @@ describe('serverless.yml: autenticación de agente', () => {
     const e = cfg.provider.environment;
     expect(e.AGENT_AUTH_ENFORCED).toBe("${env:AGENT_AUTH_ENFORCED, 'false'}");
     expect(e.COGNITO_USER_POOL_ID).toBe("${env:COGNITO_USER_POOL_ID, 'us-east-2_UepfOyKpd'}");
-    expect(e.COGNITO_AGENT_CLIENT_IDS).toBe("${env:COGNITO_AGENT_CLIENT_IDS, ''}");
+    expect(e.COGNITO_AGENT_CLIENT_IDS).toBe("${env:COGNITO_AGENT_CLIENT_IDS, '1r6niimhkl2fmias6kk85n4ou4'}");
     for (const k of ['AGENT_AUTH_ENFORCED', 'COGNITO_USER_POOL_ID', 'COGNITO_AGENT_CLIENT_IDS']) expect(env).toMatch(new RegExp(`^${k}=`, 'm'));
   });
 
@@ -31,8 +31,8 @@ describe('serverless.yml: autenticación de agente', () => {
     expect(a.type).toBe('jwt');
     expect(a.identitySource).toBe('$request.header.Authorization');
     expect(a.issuerUrl).toBe("https://cognito-idp.us-east-2.amazonaws.com/${env:COGNITO_USER_POOL_ID, 'us-east-2_UepfOyKpd'}");
-    expect(a.audience).toEqual(["${env:COGNITO_AGENT_CLIENT_IDS, 'ana-v3-cli-pendiente'}"]);
-    expect(JSON.stringify(a.audience)).not.toContain('1r6niimhkl2fmias6kk85n4ou4');
+    expect(a.audience).toEqual(["${env:COGNITO_AGENT_CLIENT_IDS, '1r6niimhkl2fmias6kk85n4ou4'}"]);
+    // CLI y ANA Admin comparten el App Client existente del pool (decisión 2026-10-26).
   });
 
   it('/agent/campaigns y /agent/settings con cognitoAgentJwt; el resto sin authorizer en modo reporte', () => {
