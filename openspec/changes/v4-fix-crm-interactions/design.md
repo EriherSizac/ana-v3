@@ -29,3 +29,13 @@
 ## Migration Plan
 
 1. Desplegar backend (compatible con desktops viejos). 2. Release del desktop con reintento y `requestId`. Rollback: redeploy de la versión anterior del backend; los marcadores nuevos con `status` son leídos por el código viejo como existentes ("ya reportado"), sin pérdida adicional.
+
+## Decisiones de implementación
+
+- **`withMarker` común** en `handlers/interactions.ts` aplica `claim` → inserción → `confirm`/`release` a los tres endpoints; si la inserción lanza excepción también se libera la reserva antes de responder 500.
+- **Condiciones**: `confirm` exige `claimedAt = :mine` (no confirma una reserva ajena); `release` exige `status = pending AND claimedAt = :mine`. Si el `Put` de `claim` falla por condición y el `Get` no encuentra el marcador (otra invocación lo liberó entre ambos), se reintenta el `claim` una vez; si vuelve a fallar se responde "en curso".
+- **Respuestas**: además de las del spec, la de fallo del CRM incluye `creditId` junto a `reported:false, retryable:true`. `requestId` se valida con `^[A-Za-z0-9-]{8,64}$` (UUID u otro id razonable); otro valor → 400 `requestId inválido`.
+- **Desktop**: `Backend.reportInteraction` hace el primer intento inline (como antes, sin bloquear el ritmo porque `runJob` no lo espera) y programa los reintentos con `setTimeout` (inyectable en pruebas). 4xx no se reintenta; un error de red o falta momentánea de sesión sí.
+- **Gestión manual**: el modal genera `crypto.randomUUID()` al montarse; si el backend responde `retryable`, `reportManualInteraction` lanza "El CRM no respondió; intenta de nuevo." y el modal queda abierto para reintentar con el mismo `requestId`.
+- **Pruebas**: `src/lib/__tests__/fakeJobsTable.ts` simula en memoria las condiciones exactas usadas por `idempotency.ts` sobre `aws-sdk-client-mock`, para probar los escenarios completos del spec.
+- La verificación manual de 3.2 (doble clic en dev con logs) y el despliegue/release (5.x) quedan pendientes.

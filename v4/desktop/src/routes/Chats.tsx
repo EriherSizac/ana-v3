@@ -1,6 +1,6 @@
 // File: lista
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { useEffect, useRef, useState } from 'react';
@@ -368,6 +368,9 @@ function InteractionModal({ chatId, onClose }: { chatId: string; onClose: () => 
   const [promiseAmount, setPromiseAmount] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Un requestId por apertura del modal: un doble clic o un reintento tras un
+  // error registran una sola gestión en el CRM.
+  const [requestId] = useState(() => crypto.randomUUID());
 
   const SUBDICTAMENES = [
     'Promesa de pago',
@@ -390,6 +393,7 @@ function InteractionModal({ chatId, onClose }: { chatId: string; onClose: () => 
         comments: comments.trim() || undefined,
         promiseDate: promiseDate || undefined,
         promiseAmount: promiseAmount ? Number(promiseAmount) : undefined,
+        requestId,
       });
       onClose();
     } catch (e: any) {

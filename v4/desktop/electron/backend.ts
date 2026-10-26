@@ -11,11 +11,16 @@ import type { AuthFetch } from './auth/tokenBroker';
  * Todas las llamadas usan `authFetch`: token fresco del broker y un reintento
  * ante 401 (ver auth/tokenBroker.ts).
  */
+/** Esperas entre reintentos del reporte al CRM (máximo 3 reintentos). */
+export const REPORT_RETRY_DELAYS_MS = [30_000, 2 * 60_000, 10 * 60_000];
+
 export class Backend {
   constructor(
     private apiBase: string,
     private hasSession: () => boolean,
     private authFetch: AuthFetch,
+    // Inyectable en pruebas; los reintentos corren fuera del ritmo de envío.
+    private schedule: (fn: () => void, ms: number) => void = (fn, ms) => void setTimeout(fn, ms),
   ) {}
 
   private json(method: string, body: unknown): RequestInit {
@@ -64,8 +69,11 @@ export class Backend {
 
   /**
    * Reporta al backend el resultado de un envío de campaña; el Lambda lo
-   * registra en el CRM (interacción + teléfono sin WhatsApp). Fire-and-forget:
-   * un fallo del CRM no frena el ritmo de envío (igual que en v3).
+   * registra en el CRM (interacción + teléfono sin WhatsApp). No bloquea el
+   * ritmo de envío: el primer intento se hace ya y, si el CRM falló
+   * (`retryable: true`), hubo 5xx o falló la red, se reintenta en segundo plano
+   * hasta 3 veces (30 s, 2 min, 10 min). Solo en memoria: si la app se cierra,
+   * los reintentos pendientes se pierden. Resuelve tras el PRIMER intento.
    */
   async reportInteraction(r: {
     jobId: string;
@@ -75,10 +83,30 @@ export class Backend {
     row: Record<string, string>;
   }): Promise<void> {
     if (!this.hasSession()) return;
+    const attempt = async (n: number): Promise<void> => {
+      const retry = await this.reportOnce(r);
+      if (!retry) return;
+      const wait = REPORT_RETRY_DELAYS_MS[n];
+      if (wait === undefined) {
+        console.error('[backend] reportInteraction agotó reintentos', r.jobId);
+        return;
+      }
+      this.schedule(() => void attempt(n + 1), wait);
+    };
+    await attempt(0);
+  }
+
+  /** Un intento de reporte. true = reintentable (retryable, 5xx o red). */
+  private async reportOnce(r: unknown): Promise<boolean> {
     try {
-      await this.authFetch(`${this.apiBase}/interactions/report`, this.json('POST', r));
+      const res = await this.authFetch(`${this.apiBase}/interactions/report`, this.json('POST', r));
+      if (res.status >= 500) return true;
+      if (!res.ok) return false; // 4xx: no se arregla reintentando
+      const body = (await res.json().catch(() => ({}))) as { retryable?: boolean };
+      return body.retryable === true;
     } catch (e) {
       console.error('[backend] reportInteraction falló:', e);
+      return true; // red caída o sin sesión momentánea
     }
   }
 

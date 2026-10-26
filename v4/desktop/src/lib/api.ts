@@ -1,6 +1,6 @@
 // File: Pide presign, sube el CSV a S3 (dispara csvTrigger → tabla jobs).
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { currentToken } from './auth';
@@ -105,12 +105,14 @@ export interface ManualInteraction {
   contactable?: boolean;
   promiseDate?: string;
   promiseAmount?: number;
+  /** UUID por apertura del modal: el backend registra una sola vez por requestId. */
+  requestId?: string;
 }
 
 /** Registra una gestión manual en el CRM desde el chat. */
 export async function reportManualInteraction(
   i: ManualInteraction,
-): Promise<{ reported: boolean; creditId?: string }> {
+): Promise<{ reported: boolean; creditId?: string; reason?: string }> {
   const res = await fetch(`${API_BASE}/interactions/manual`, {
     method: 'POST',
     headers: await authHeaders(),
@@ -120,7 +122,10 @@ export async function reportManualInteraction(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error ?? 'no se pudo registrar la gestión');
   }
-  return await res.json();
+  const out = await res.json();
+  // El CRM falló y el backend liberó la reserva: reintentar con el MISMO requestId.
+  if (out?.retryable) throw new Error('El CRM no respondió; intenta de nuevo.');
+  return out;
 }
 
 // --- Líder/admin: send-jobs por campaña ---

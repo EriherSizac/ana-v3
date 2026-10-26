@@ -1,6 +1,6 @@
 // File: Cliente del API de interactions del CRM (registro de envíos de campaña).
 // Created: 2026-06-10
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 // Mismo API que usaba v3-cli, pero la key vive aquí (env del Lambda, backend/.env)
@@ -58,6 +58,33 @@ export async function searchCreditIdByPhone(
   }
 }
 
+// Zona de Ciudad de México (sin horario de verano desde 2022; se usa la base
+// de zonas de Intl, no un offset fijo). Independiente de TZ de la Lambda (UTC).
+const MX_TZ = 'America/Mexico_City';
+const mxFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: MX_TZ,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** Fecha/hora de un instante en Ciudad de México: YYYY-MM-DD, HH:MM y franja HH:00 - HH+1:00. */
+export function mxDateParts(at: Date): { date: string; time: string; range: string } {
+  const parts: Record<string, string> = {};
+  for (const p of mxFormatter.formatToParts(at)) parts[p.type] = p.value;
+  const hour = Number(parts.hour) % 24; // algunos runtimes devuelven "24" a medianoche
+  const hh = String(hour).padStart(2, '0');
+  const next = String((hour + 1) % 24).padStart(2, '0');
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${hh}:${parts.minute}`,
+    range: `${hh}:00 - ${next}:00`,
+  };
+}
+
 export interface InteractionInput {
   creditId: string;
   campaign: string;
@@ -73,17 +100,16 @@ export interface InteractionInput {
 
 /** Inserta la interacción outbound en el CRM (shape idéntico al de v3-cli). */
 export async function insertInteraction(i: InteractionInput): Promise<boolean> {
-  const hh = String(i.at.getHours()).padStart(2, '0');
-  const mm = String(i.at.getMinutes()).padStart(2, '0');
-  const nextH = String((i.at.getHours() + 1) % 24).padStart(2, '0');
+  // Fecha y hora de México (no de la Lambda, que corre en UTC).
+  const mx = mxDateParts(i.at);
   const interaction = {
     credit_id: i.creditId,
     campaign_name: i.campaign,
     user_id: CRM_USER_ID,
     subdictamen: i.subdictamen,
-    contact_date: i.at.toISOString().slice(0, 10),
-    contact_time: `${hh}:${mm}`,
-    range_time: `${hh}:00 - ${nextH}:00`,
+    contact_date: mx.date,
+    contact_time: mx.time,
+    range_time: mx.range,
     action_channel: 'whatsapp',
     action: 'whatsapp',
     contactable: i.contactable,

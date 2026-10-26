@@ -174,3 +174,11 @@ Implementación: `backend/src/handlers/csvTrigger.ts`, `backend/src/lib/dashboar
 | `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE` o `DATABASE_URL` | catálogo de campañas (PostgreSQL) |
 
 > Todas son secretos de **backend** (`backend/.env`), nunca del cliente. El desktop solo manda el JWT; el backend resuelve identidad, catálogo y roster.
+
+## 7. Interacciones en el CRM (fecha, hora e idempotencia)
+
+- **Zona horaria**: `contact_date`, `contact_time` y `range_time` se calculan en `America/Mexico_City` (`mxDateParts` en `backend/src/lib/interactions.ts`), sin depender de la zona de la Lambda (UTC). Ejemplo: un envío a las 01:30 UTC del 2026-11-06 se registra como `contact_date: "2026-11-05"`, `contact_time: "19:30"`, `range_time: "19:00 - 20:00"`; en la última hora del día `range_time` es `"23:00 - 00:00"`. El día del marcador de apertura de chat también es el día de México.
+- **Idempotencia con estados** (`backend/src/lib/idempotency.ts`): los marcadores `REPORT#<usuario>/<jobId>` (7 días), `OPEN#<usuario>/<chatId>#<YYYY-MM-DD>` (2 días) y `MANUAL#<usuario>/<requestId>` (2 días) en la tabla de jobs se reservan como `pending`, pasan a `done` solo si el CRM insertó y se borran si falló (respuesta `retryable: true`). Una reserva `pending` de más de 2 minutos se considera abandonada. Respuestas: `"ya reportado"` / `"ya registrado hoy"` (ya `done`) y `"en curso"` (otra invocación lo está procesando). Los marcadores anteriores sin `status` cuentan como `done`.
+- **Reintento del desktop**: ante `retryable: true`, 5xx o red caída, el desktop reintenta el reporte del job a los 30 s, 2 min y 10 min, sin frenar el envío (solo en memoria).
+- **Gestión manual**: el desktop manda un `requestId` (UUID) por apertura del modal "Registrar gestión"; el mismo `requestId` registra una sola interacción.
+- **Interacciones anteriores al despliegue** (fecha/hora UTC): las de v4 con `contact_time` entre `00:00` y `05:59` registradas antes del despliegue corresponden a las 18:00–23:59 del **día anterior** en Ciudad de México (y en general toda hora previa está 6 h adelantada). No se corrigen automáticamente.
