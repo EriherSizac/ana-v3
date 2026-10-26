@@ -81,3 +81,14 @@ Ver proposal.md (Why). Estado actual en `injectNoWhatsappInfoButton` (`whatsapp-
 ## Open Questions
 
 - ¿Se deben depurar en el CRM los duplicados históricos? No afecta este cambio del CLI.
+
+## Decisiones de implementación
+
+- **Ajuste remoto aún no disponible:** `add-cli-remote-settings` no está implementado. `isNoWhatsappConsultRegistrationEnabled()` en `whatsapp-manual.js` devuelve `readRegistrationSetting(() => undefined)`, es decir `false` fijo, con un `TODO(add-cli-remote-settings)`. `readRegistrationSetting(getter)` (en `no-whatsapp-registry.js`) envuelve la lectura en `try/catch` y aplica `registrationEnabledFrom`, para que la regla "excepción ⇒ false" quede probada con `node:test` sin importar `whatsapp-manual.js` (que arrastra Playwright y efectos). Cuando llegue el otro cambio, solo hay que pasar como `getter` el lector del valor vigente.
+- **"Día local" = día en `America/Mexico_City`.** `localDateKey` usa `interactionDateTime(date).contact_date` (de `fix-interaction-date-timezone`, ya aplicado) en lugar de `getFullYear/getMonth/getDate`, tal como pide la tarea 2.2 de ese cambio; así la clave de deduplicación coincide con el `contact_date` enviado y no depende de la zona del equipo.
+- **Payload:** `buildConsultaInteractions` usa `interactionDateTime(now)` para `contact_date`/`contact_time`/`range_time` (ya no la fecha UTC); el resto del payload es el de antes salvo `comments: 'no_whatsapp_info_registered'`.
+- **Columnas faltantes:** si la cabecera no tiene `phone` y `status`, `parseNoWhatsappPhones` devuelve `[]` aunque haya filas.
+- **Guardia de concurrencia:** una segunda llamada a `registerNoWhatsappConsulta()` mientras hay un lote en curso recibe la misma promesa (mismo resultado), sin enviar otro lote.
+- **Error al guardar el registro tras 2xx:** se registra en consola y la respuesta sigue siendo `ok`; esos teléfonos quedarían pendientes y podrían reenviarse una vez (mismo trade-off que el riesgo de timeout de design).
+- **Respuesta `disabled` en la página:** si el ajuste cambia a `false` con el modal abierto, al pulsar el botón se retira el control de registro sin mensaje de error.
+- **`build-portable.ps1`:** se agregó `no-whatsapp-registry.js` a `$filesToCopy`.

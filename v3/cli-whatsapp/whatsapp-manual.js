@@ -11,6 +11,18 @@ import { loadAgentConfig, saveAgentConfig, API_BASE_URL, INTERACTIONS_API_BASE_U
 import { phone, phoneUtilsInitScript } from './phone-utils.js';
 import { domSafetyInitScript } from './dom-safety.js';
 import { manualKeyPolicyInitScript } from './manual-key-policy.js';
+import {
+  parseNoWhatsappPhones,
+  registryKey,
+  loadRegistry,
+  saveRegistry,
+  pendingPhones,
+  markRegistered,
+  readRegistrationSetting,
+  buildConsultaInteractions,
+  MAX_INTERACTIONS_PER_BATCH,
+  REGISTRY_FILE_NAME,
+} from './no-whatsapp-registry.js';
 import { interactionDateTime } from './interaction-time.js';
 
 let manualBrowser = null;
@@ -272,6 +284,17 @@ async function showManualLoginOverlay(requireAll = true) {
   });
 }
 
+/**
+ * Ajuste remoto `noWhatsappConsultRegistration` (capacidad v3/cli-remote-settings).
+ * Solo `true` estricto habilita el registro; ausencia, error o cualquier otro valor ⇒ false.
+ */
+function isNoWhatsappConsultRegistrationEnabled() {
+  // TODO(add-cli-remote-settings): leer el valor vigente de `noWhatsappConsultRegistration`
+  // que exponga la implementación de v3/cli-remote-settings. Hasta que ese cambio exista,
+  // el ajuste no está disponible y el registro queda desactivado (false fijo).
+  return readRegistrationSetting(() => undefined);
+}
+
 async function injectNoWhatsappInfoButton(page) {
   const config = loadAgentConfig();
   if (!config) {
@@ -283,82 +306,83 @@ async function injectNoWhatsappInfoButton(page) {
   const campaignName = rawCampaign.includes('-') ? rawCampaign.split('-').slice(1).join('-') : rawCampaign;
   const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
 
-  const readNoWhatsappPhonesFromResultsCsv = () => {
+  const registryPath = path.join(path.dirname(CONFIG.outputCsv), REGISTRY_FILE_NAME);
+
+  // resultados.csv leído como CSV estándar (no-whatsapp-registry.js / csv-parser)
+  const readNoWhatsappPhones = async () => {
     try {
       const filePath = CONFIG.outputCsv;
       if (!filePath || !fs.existsSync(filePath)) return [];
-
-      const text = fs.readFileSync(filePath, 'utf-8');
-      const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim().length > 0);
-      if (lines.length < 2) return [];
-
-      const headers = lines[0].split(',').map((h) => String(h || '').trim().toLowerCase());
-      const idxPhone = headers.indexOf('phone');
-      const idxStatus = headers.indexOf('status');
-      if (idxPhone === -1 || idxStatus === -1) return [];
-
-      const phones = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',');
-        const status = String(cols[idxStatus] || '').trim();
-        if (status !== 'no_whatsapp') continue;
-        const phoneRaw = String(cols[idxPhone] || '').trim();
-        const last10 = phone.toLast10(phoneRaw);
-        if (!last10) continue;
-        phones.push(last10);
-      }
-
-      return Array.from(new Set(phones));
+      return await parseNoWhatsappPhones(fs.readFileSync(filePath, 'utf-8'));
     } catch (e) {
       console.error('⚠️  Error leyendo resultados.csv para no_whatsapp:', e?.message || e);
       return [];
     }
   };
 
+  // Solo lectura: abrir el modal no envía interacciones
   await page.exposeFunction('getNoWhatsappPhonesFromNode', async () => {
-    const phones10 = readNoWhatsappPhonesFromResultsCsv();
+    const phones10 = await readNoWhatsappPhones();
     const masked = phones10.map((p) => String(p).slice(-4)).filter(Boolean);
-    return {
-      count: masked.length,
-      phones10,
-      masked,
-    };
+    const registrationEnabled = isNoWhatsappConsultRegistrationEnabled();
+    let pending = 0;
+    if (registrationEnabled && phones10.length > 0) {
+      const key = registryKey(config.agent_id, campaignName, new Date());
+      pending = pendingPhones(loadRegistry(registryPath), key, phones10).length;
+    }
+    return { count: masked.length, masked, registrationEnabled, pending };
   });
 
-  await page.exposeFunction('submitNoWhatsappInfoInteraction', async (phones10) => {
-    try {
-      const list = Array.isArray(phones10) ? phones10 : [];
-      // Fecha/hora en America/Mexico_City (interaction-time.js)
-      const { contact_date, contact_time, range_time } = interactionDateTime();
-
-      const interactions = list.slice(0, 200).map((phone10) => ({
-        credit_id: '',
-        campaign_name: String(campaignName || ''),
-        user_id: INTERACTIONS_USER_ID,
-        subdictamen: 'Consulta No Whatsapp',
-        contact_date,
-        contact_time,
-        range_time,
-        action_channel: 'whatsapp',
-        action: 'whatsapp',
-        contactable: false,
-        phone_number: String(phone10 || ''),
-        email_address: null,
-        template_used: null,
-        comments: 'opened_no_whatsapp_info_modal',
-        promise_date: null,
-        promise_amount: null,
-        promise_payment_plan: null,
-        inoutbound: 'inbound',
-        payment_made_date: null,
-      }));
-
-      if (interactions.length === 0) return { ok: true, status: 204, body: { message: 'no phones' } };
-      return await insertInteractions(interactions);
-    } catch (e) {
-      console.error('❌ Error al insertar interacción (no_whatsapp info):', e?.message || e);
-      return { ok: false, status: 0, body: null, error: e?.message || String(e) };
+  const registerConsulta = async () => {
+    // Se vuelve a comprobar el ajuste: un cambio a false con el modal abierto no permite registrar
+    if (!isNoWhatsappConsultRegistrationEnabled()) {
+      return { ok: false, status: 0, registered: 0, pending: 0, error: 'disabled' };
     }
+    const now = new Date();
+    const phones10 = await readNoWhatsappPhones();
+    const key = registryKey(config.agent_id, campaignName, now);
+    const registry = loadRegistry(registryPath);
+    const pendingList = pendingPhones(registry, key, phones10);
+    if (pendingList.length === 0) return { ok: true, status: 204, registered: 0, pending: 0 };
+
+    const batch = pendingList.slice(0, MAX_INTERACTIONS_PER_BATCH);
+    const interactions = buildConsultaInteractions({
+      phones10: batch,
+      campaignName,
+      userId: INTERACTIONS_USER_ID,
+      now,
+    });
+    const res = await insertInteractions(interactions);
+    if (!res || !res.ok) {
+      return {
+        ok: false,
+        status: res?.status || 0,
+        registered: 0,
+        pending: pendingList.length,
+        error: res?.error || 'request_failed',
+      };
+    }
+    try {
+      saveRegistry(registryPath, markRegistered(registry, key, batch), now);
+    } catch (e) {
+      console.error('⚠️  No se pudo guardar el registro de consultas no_whatsapp:', e?.message || e);
+    }
+    return { ok: true, status: res.status, registered: batch.length, pending: pendingList.length - batch.length };
+  };
+
+  // Registro explícito (solo con el ajuste activo); un lote a la vez
+  let registerInFlight = null;
+  await page.exposeFunction('registerNoWhatsappConsulta', async () => {
+    if (registerInFlight) return registerInFlight;
+    registerInFlight = registerConsulta()
+      .catch((e) => {
+        console.error('❌ Error al registrar consulta no_whatsapp:', e?.message || e);
+        return { ok: false, status: 0, registered: 0, pending: 0, error: e?.message || String(e) };
+      })
+      .finally(() => {
+        registerInFlight = null;
+      });
+    return registerInFlight;
   });
 
   await page.addInitScript(() => {
@@ -375,6 +399,8 @@ async function injectNoWhatsappInfoButton(page) {
         #no-whatsapp-info-body { padding: 12px 14px; overflow:auto; max-height: calc(75vh - 52px); }
         .no-wa-pill { display:inline-block; padding: 6px 10px; background:#f3f4f6; border: 1px solid #e5e7eb; border-radius: 999px; margin: 6px 6px 0 0; font-size: 12px; color: #111827; }
         .no-wa-muted { font-size: 12px; color: #6b7280; }
+        .no-wa-register-btn { background: #25D366; color: #fff; border: none; border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .no-wa-register-btn[disabled] { opacity: .6; cursor: default; }
       `;
       document.head.appendChild(style);
     };
@@ -384,6 +410,81 @@ async function injectNoWhatsappInfoButton(page) {
       const modal = document.getElementById('no-whatsapp-info-modal');
       if (overlay) overlay.remove();
       if (modal) modal.remove();
+    };
+
+    const el = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+
+    const renderRegisterControl = (actions, status, pending) => {
+      actions.textContent = '';
+      if (pending <= 0) {
+        actions.appendChild(el('div', 'no-wa-muted', 'Consulta ya registrada hoy'));
+        return;
+      }
+      const btn = el('button', 'no-wa-register-btn', `Registrar consulta (${pending})`);
+      btn.onclick = async () => {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        btn.textContent = '⏳ Registrando...';
+        status.textContent = '';
+        let res = null;
+        try {
+          res = await window.registerNoWhatsappConsulta();
+        } catch (e) {
+          res = { ok: false, status: 0, error: String(e?.message || e) };
+        }
+        if (res && res.ok) {
+          status.textContent = `✅ Registrada (${Number(res.registered || 0)})`;
+          renderRegisterControl(actions, status, Number(res.pending || 0));
+        } else if (res && res.error === 'disabled') {
+          actions.textContent = '';
+          status.textContent = '';
+        } else {
+          status.textContent = `❌ No se pudo registrar (${Number(res?.status || 0)})`;
+          btn.disabled = false;
+          btn.textContent = `Registrar consulta (${pending})`;
+        }
+      };
+      actions.appendChild(btn);
+    };
+
+    const renderBody = (body, data) => {
+      body.textContent = '';
+      const count = Number(data?.count || 0);
+      const masked = Array.isArray(data?.masked) ? data.masked : [];
+
+      if (count === 0) {
+        const msg = el('div', 'no-wa-muted');
+        msg.appendChild(document.createTextNode('No hay números marcados como '));
+        msg.appendChild(el('strong', '', 'no_whatsapp'));
+        msg.appendChild(document.createTextNode(' en resultados.csv.'));
+        body.appendChild(msg);
+        return;
+      }
+
+      const total = el('div', 'no-wa-muted');
+      total.appendChild(document.createTextNode('Total: '));
+      total.appendChild(el('strong', '', String(count)));
+      body.appendChild(total);
+
+      const pills = el('div');
+      pills.style.marginTop = '8px';
+      masked.forEach((d) => pills.appendChild(el('span', 'no-wa-pill', '**** ' + String(d))));
+      body.appendChild(pills);
+
+      // Botón de registro solo con el ajuste remoto activo
+      if (data?.registrationEnabled !== true) return;
+      const actions = el('div');
+      actions.style.marginTop = '12px';
+      const status = el('div', 'no-wa-muted');
+      status.style.marginTop = '6px';
+      body.appendChild(actions);
+      body.appendChild(status);
+      renderRegisterControl(actions, status, Number(data?.pending || 0));
     };
 
     const openModal = async () => {
@@ -418,24 +519,13 @@ async function injectNoWhatsappInfoButton(page) {
         const body = document.getElementById('no-whatsapp-info-body');
         if (!body) return;
 
-        const count = Number(data?.count || 0);
-        const masked = Array.isArray(data?.masked) ? data.masked : [];
-        const phones10 = Array.isArray(data?.phones10) ? data.phones10 : [];
-
-        if (count === 0) {
-          body.innerHTML = `<div class="no-wa-muted">No hay números marcados como <strong>no_whatsapp</strong> en resultados.csv.</div>`;
-        } else {
-          const header = `<div class="no-wa-muted">Total: <strong>${count}</strong></div>`;
-          const pills = masked.map((d) => `<span class="no-wa-pill">**** ${String(d)}</span>`).join('');
-          body.innerHTML = header + `<div style="margin-top: 8px;">${pills}</div>`;
-        }
-
-        if (typeof window.submitNoWhatsappInfoInteraction === 'function') {
-          window.submitNoWhatsappInfoInteraction(phones10).catch(() => null);
-        }
+        renderBody(body, data);
       } catch (e) {
         const body = document.getElementById('no-whatsapp-info-body');
-        if (body) body.innerHTML = `<div class="no-wa-muted">Error cargando lista.</div>`;
+        if (body) {
+          body.textContent = '';
+          body.appendChild(el('div', 'no-wa-muted', 'Error cargando lista.'));
+        }
       }
     };
 
