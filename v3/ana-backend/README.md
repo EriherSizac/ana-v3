@@ -2,6 +2,36 @@
 
 Base URL: **`https://ow24p7ablb.execute-api.us-east-1.amazonaws.com`**
 
+## **Autenticación de supervisor**
+
+Las rutas de administración exigen el header `X-Admin-Key` con la llave `ADMIN_API_KEY`, definida en el `.env` de despliegue de `v3/ana-backend` (ver `.env.example`). Sin header o con llave incorrecta responden **401**; si el backend no tiene llave configurada responden **503**.
+
+| **Método** | **Ruta** |
+| --- | --- |
+| **GET** | **`/credentials/{campaign}`** |
+| **POST** | **`/credentials/upload`** |
+| **POST** | **`/credentials/regenerate`** |
+| **POST** | **`/supervisors/agents/{agent}/{campaign}/contacts`** |
+| **POST** | **`/agents/{agent}/{campaign}/contacts`** (deprecated) |
+| **POST** | **`/supervisors/files/download`** |
+| **POST** | **`/templates`** |
+
+Ejemplo:
+
+```bash
+curl -H "X-Admin-Key: $ADMIN_API_KEY"   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/prueba
+```
+
+Para configurar una campaña de prueba completa con `setup-campaign.sh`:
+
+```bash
+export ADMIN_API_KEY=...   # o: set -a; source .env; set +a
+chmod +x setup-campaign.sh
+./setup-campaign.sh
+```
+
+Detalle y opciones (`BASE_URL`) en [README-SUPERVISORES.md](README-SUPERVISORES.md#ejemplo-3-script-completo-de-configuración).
+
 ### **Contactos & Chats (flujo principal)**
 
 | **Método** | **Ruta** | **Handler** | **S3 Path** | **Descripción** |

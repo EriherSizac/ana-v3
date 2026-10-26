@@ -49,6 +49,7 @@ GET /credentials/{campaign}
 **Ejemplo:**
 ```bash
 curl -X GET \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/prueba
 ```
 
@@ -104,6 +105,7 @@ EOF
 
 # Subir al backend
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/upload \
   -H "Content-Type: application/json" \
   -d '{
@@ -152,6 +154,7 @@ Content-Type: application/json
 **Ejemplo:**
 ```bash
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/regenerate \
   -H "Content-Type: application/json" \
   -d '{"campaign": "prueba"}'
@@ -248,6 +251,7 @@ EOF
 
 # Subir con mensaje personalizado
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/erick/prueba/contacts \
   -H "Content-Type: application/json" \
   -d '{
@@ -308,6 +312,7 @@ GET /supervisors/agents/{agent}/{campaign}/contacts
 **Ejemplo:**
 ```bash
 curl -X GET \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/erick/prueba/contacts
 ```
 
@@ -427,6 +432,7 @@ EOF
 
 # 2. Subir credenciales al backend
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/upload \
   -H "Content-Type: application/json" \
   -d '{
@@ -444,6 +450,7 @@ EOF
 
 # 4. Subir contactos con mensaje personalizado
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/vendedor1/ventas/contacts \
   -H "Content-Type: application/json" \
   -d '{
@@ -453,9 +460,11 @@ curl -X POST \
 
 # 5. Verificar que todo se subió correctamente
 curl -X GET \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/ventas
 
 curl -X GET \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/vendedor1/ventas/contacts
 ```
 
@@ -473,6 +482,7 @@ for campaign in "${CAMPAIGNS[@]}"; do
   echo "Regenerando contraseñas para campaña: $campaign"
   
   curl -X POST \
+    -H "X-Admin-Key: $ADMIN_API_KEY" \
     https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/regenerate \
     -H "Content-Type: application/json" \
     -d '{"campaign": "'$campaign'"}'
@@ -490,6 +500,7 @@ echo "✅ Contraseñas regeneradas para todas las campañas"
 ```bash
 # 1. Descargar CSV actual
 curl -X GET \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/erick/prueba/contacts \
   > contactos-erick-actual.csv
 
@@ -498,6 +509,7 @@ curl -X GET \
 
 # 3. Subir CSV actualizado
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/erick/prueba/contacts \
   -H "Content-Type: application/json" \
   -d '{
@@ -585,6 +597,7 @@ EOF
 
 # Subir al backend
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/upload \
   -H "Content-Type: application/json" \
   -d '{
@@ -635,6 +648,7 @@ EOF
 
 # Subir al backend con mensaje personalizado
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/erick/prueba/contacts \
   -H "Content-Type: application/json" \
   -d '{
@@ -659,10 +673,18 @@ contact_phone,credit,discount,first_name,last_name,total_balance,product,message
 #!/bin/bash
 
 # Script para configurar una campaña completa con credenciales y contactos
+# Requiere ADMIN_API_KEY (llave de administración del backend) en el entorno.
+
+set -euo pipefail
+
+if [ -z "${ADMIN_API_KEY:-}" ]; then
+  echo "ADMIN_API_KEY no definida: exporta la llave de administración antes de ejecutar" >&2
+  exit 1
+fi
 
 CAMPAIGN="prueba"
 AGENT="erick"
-BASE_URL="https://ow24p7ablb.execute-api.us-east-1.amazonaws.com"
+BASE_URL="${BASE_URL:-https://ow24p7ablb.execute-api.us-east-1.amazonaws.com}"
 
 echo "🚀 Configurando campaña: $CAMPAIGN"
 echo "👤 Agente: $AGENT"
@@ -680,10 +702,14 @@ supervisor,oceano-azul-profundo
 EOF
 
 echo "📤 Subiendo credenciales..."
-curl -X POST \
-  ${BASE_URL}/credentials/${CAMPAIGN} \
-  -H "Content-Type: text/csv" \
-  --data-binary @credenciales-${CAMPAIGN}.csv
+curl -sS --fail-with-body -X POST \
+  ${BASE_URL}/credentials/upload \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}" \
+  -d '{
+    "campaign": "'${CAMPAIGN}'",
+    "csv": "'"$(cat credenciales-${CAMPAIGN}.csv | sed ':a;N;$!ba;s/\n/\\n/g')"'"
+  }'
 
 echo ""
 echo "✅ Credenciales subidas"
@@ -706,9 +732,10 @@ contact_phone,credit,discount,first_name,last_name,total_balance,product
 EOF
 
 echo "📤 Subiendo contactos con mensaje personalizado..."
-curl -X POST \
+curl -sS --fail-with-body -X POST \
   ${BASE_URL}/supervisors/agents/${AGENT}/${CAMPAIGN}/contacts \
   -H "Content-Type: application/json" \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}" \
   -d '{
     "csv": "'"$(cat contactos-${AGENT}.csv | sed ':a;N;$!ba;s/\n/\\n/g')"'",
     "message": "Hola {{first_name}} {{last_name}}, te contactamos sobre tu crédito {{credit}}. Tu saldo actual es de ${{total_balance}} MXN. Tenemos un descuento especial del {{discount}}% para tu {{product}}. ¿Te gustaría conocer más detalles?"
@@ -722,11 +749,13 @@ echo ""
 echo "🔍 Paso 3: Verificando configuración..."
 echo ""
 echo "Credenciales:"
-curl -X GET ${BASE_URL}/credentials/${CAMPAIGN}
+curl -sS --fail-with-body -X GET ${BASE_URL}/credentials/${CAMPAIGN} \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}"
 echo ""
 echo ""
 echo "Contactos:"
-curl -X GET ${BASE_URL}/supervisors/agents/${AGENT}/${CAMPAIGN}/contacts
+curl -sS --fail-with-body -X GET ${BASE_URL}/supervisors/agents/${AGENT}/${CAMPAIGN}/contacts \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}"
 echo ""
 echo ""
 
@@ -740,12 +769,24 @@ echo "  Palabra del día: sol-brillante-2024"
 
 **Cómo ejecutar el script:**
 ```bash
+# Llave de administración del backend (la misma ADMIN_API_KEY del .env de despliegue)
+export ADMIN_API_KEY=...
+# o bien, desde el .env de v3/ana-backend:
+#   set -a; source .env; set +a
+
+# Opcional: apuntar a otro stage (por defecto, producción)
+# export BASE_URL=https://<api-id>.execute-api.us-east-1.amazonaws.com
+
 # Dar permisos de ejecución
 chmod +x setup-campaign.sh
 
 # Ejecutar
 ./setup-campaign.sh
 ```
+
+El script aborta (código distinto de 0) si `ADMIN_API_KEY` no está definida o si cualquier llamada responde con error HTTP.
+
+> **Advertencia:** las palabras del día que sube el script (`sol-brillante-2024`, etc.) son datos de demostración. En una campaña real ejecuta `POST /credentials/regenerate` después para generar palabras nuevas.
 
 ---
 

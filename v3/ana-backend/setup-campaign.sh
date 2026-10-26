@@ -1,10 +1,18 @@
 #!/bin/bash
 
 # Script para configurar una campaña completa con credenciales y contactos
+# Requiere ADMIN_API_KEY (llave de administración del backend) en el entorno.
+
+set -euo pipefail
+
+if [ -z "${ADMIN_API_KEY:-}" ]; then
+  echo "ADMIN_API_KEY no definida: exporta la llave de administración antes de ejecutar" >&2
+  exit 1
+fi
 
 CAMPAIGN="prueba"
 AGENT="erick"
-BASE_URL="https://ow24p7ablb.execute-api.us-east-1.amazonaws.com"
+BASE_URL="${BASE_URL:-https://ow24p7ablb.execute-api.us-east-1.amazonaws.com}"
 
 echo "🚀 Configurando campaña: $CAMPAIGN"
 echo "👤 Agente: $AGENT"
@@ -22,9 +30,10 @@ supervisor,oceano-azul-profundo
 EOF
 
 echo "📤 Subiendo credenciales..."
-curl -X POST \
+curl -sS --fail-with-body -X POST \
   ${BASE_URL}/credentials/upload \
   -H "Content-Type: application/json" \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}" \
   -d '{
     "campaign": "'${CAMPAIGN}'",
     "csv": "'"$(cat credenciales-${CAMPAIGN}.csv | sed ':a;N;$!ba;s/\n/\\n/g')"'"
@@ -51,9 +60,10 @@ contact_phone,credit,discount,first_name,last_name,total_balance,product
 EOF
 
 echo "📤 Subiendo contactos con mensaje personalizado..."
-curl -X POST \
+curl -sS --fail-with-body -X POST \
   ${BASE_URL}/supervisors/agents/${AGENT}/${CAMPAIGN}/contacts \
   -H "Content-Type: application/json" \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}" \
   -d '{
     "csv": "'"$(cat contactos-${AGENT}.csv | sed ':a;N;$!ba;s/\n/\\n/g')"'",
     "message": "Hola {{first_name}} {{last_name}}, te contactamos sobre tu crédito {{credit}}. Tu saldo actual es de ${{total_balance}} MXN. Tenemos un descuento especial del {{discount}}% para tu {{product}}. ¿Te gustaría conocer más detalles?"
@@ -67,11 +77,13 @@ echo ""
 echo "🔍 Paso 3: Verificando configuración..."
 echo ""
 echo "Credenciales:"
-curl -X GET ${BASE_URL}/credentials/${CAMPAIGN}
+curl -sS --fail-with-body -X GET ${BASE_URL}/credentials/${CAMPAIGN} \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}"
 echo ""
 echo ""
 echo "Contactos:"
-curl -X GET ${BASE_URL}/supervisors/agents/${AGENT}/${CAMPAIGN}/contacts
+curl -sS --fail-with-body -X GET ${BASE_URL}/supervisors/agents/${AGENT}/${CAMPAIGN}/contacts \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}"
 echo ""
 echo ""
 

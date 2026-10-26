@@ -24,6 +24,7 @@ agente2,viento-suave-primavera
 **Ejemplo con curl:**
 ```bash
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/prueba \
   -H "Content-Type: text/csv" \
   --data-binary @credenciales.csv
@@ -55,7 +56,7 @@ GET /credentials/{campaign}
 
 **Ejemplo con curl:**
 ```bash
-curl https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/prueba
+curl -H "X-Admin-Key: $ADMIN_API_KEY" https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/prueba
 ```
 
 **Respuesta:**
@@ -79,6 +80,7 @@ POST /credentials/{campaign}/regenerate
 **Ejemplo con curl:**
 ```bash
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/prueba/regenerate
 ```
 
@@ -139,6 +141,7 @@ phone,first_name,credit,total_balance,discount,product
 **Ejemplo con curl:**
 ```bash
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/erick/prueba/contacts \
   -H "Content-Type: application/json" \
   -d '{
@@ -182,7 +185,7 @@ GET /supervisors/agents/{agent}/{campaign}/contacts
 
 **Ejemplo con curl:**
 ```bash
-curl https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/erick/prueba/contacts
+curl -H "X-Admin-Key: $ADMIN_API_KEY" https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/erick/prueba/contacts
 ```
 
 **Respuesta:**
@@ -239,12 +242,14 @@ EOF
 
 # 2. Subir credenciales
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/ventas \
   -H "Content-Type: text/csv" \
   --data-binary @credenciales-ventas.csv
 
 # 3. Subir contactos para vendedor1
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/vendedor1/ventas/contacts \
   -H "Content-Type: text/csv" \
   --data-binary @contactos-vendedor1.csv
@@ -255,10 +260,11 @@ curl -X POST \
 ```bash
 # Regenerar todas las palabras de la campaña
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/ventas/regenerate
 
 # Ver las nuevas palabras
-curl https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/ventas
+curl -H "X-Admin-Key: $ADMIN_API_KEY" https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/ventas
 ```
 
 ### Ejemplo 3: Actualizar Contactos de un Agente
@@ -266,6 +272,7 @@ curl https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/credentials/ventas
 ```bash
 # Descargar CSV actual
 curl https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/vendedor1/ventas/contacts \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   > contactos-actuales.csv
 
 # Editar el CSV (agregar/quitar contactos)
@@ -273,6 +280,7 @@ nano contactos-actuales.csv
 
 # Subir CSV actualizado
 curl -X POST \
+  -H "X-Admin-Key: $ADMIN_API_KEY" \
   https://ow24p7ablb.execute-api.us-east-1.amazonaws.com/supervisors/agents/vendedor1/ventas/contacts \
   -H "Content-Type: text/csv" \
   --data-binary @contactos-actuales.csv
