@@ -248,7 +248,11 @@ const poller = new JobPoller({
   runJob,
   onProgress: (p) => send('wa:progress', p),
   // Asignación pendiente del agente → vista "Mi asignación" en el renderer.
-  onAssignment: (jobs) => send('jobs:assignment', jobs),
+  onAssignment: (jobs, info) => {
+    send('jobs:assignment', jobs);
+    // Totales del poll (aviso "Mostrando N de M pendientes").
+    send('jobs:assignment-info', info);
+  },
 });
 
 // ---- IPC desde el renderer ----
@@ -265,6 +269,7 @@ handle(
 );
 // Hidrata la vista al montarse (sin esperar al próximo poll).
 handle('jobs:get-assignment', noArgs, () => poller.getAssignment());
+handle('jobs:get-assignment-info', noArgs, () => poller.getAssignmentInfo());
 // Recuerda el último operador que usó WhatsApp en esta máquina (persiste entre
 // reinicios) → al entrar OTRO usuario se bota el auth local del anterior.
 const LAST_OP_FILE = path.join(app.getPath('userData'), '.ana-last-operator');

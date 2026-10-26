@@ -41,7 +41,22 @@ describe('JobPoller.pollOnce', () => {
   it('publica la asignación cuando la consulta es exitosa', async () => {
     const { poller, onAssignment } = makePoller({ authFetch: vi.fn(async () => pollResponse([job('j1')])) });
     await poller.pollOnce();
-    expect(onAssignment).toHaveBeenCalledWith([expect.objectContaining({ jobId: 'j1' })]);
+    expect(onAssignment).toHaveBeenCalledWith([expect.objectContaining({ jobId: 'j1' })], {
+      truncated: false,
+      pendingTotal: 1,
+      historyTotal: 0,
+    });
+  });
+
+  it('propaga truncated/pendingTotal/historyTotal del backend', async () => {
+    const body = { jobs: [{ id: 'j1', job: job('j1') }], truncated: true, pendingTotal: 3000, historyTotal: 12 };
+    const { poller, onAssignment } = makePoller({
+      authFetch: vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })),
+    });
+    await poller.pollOnce();
+    const info = { truncated: true, pendingTotal: 3000, historyTotal: 12 };
+    expect(onAssignment).toHaveBeenCalledWith([expect.objectContaining({ jobId: 'j1' })], info);
+    expect(poller.getAssignmentInfo()).toEqual(info);
   });
 
   it('401 y 500 no emiten onAssignment([]) y conservan la última asignación', async () => {

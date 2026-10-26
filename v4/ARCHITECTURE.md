@@ -10,7 +10,7 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 | App | **Electron desktop** (React + Vite + TS) | La sesión WA debe vivir en una máquina persistente. UI + motor en una sola pieza. |
 | Backend | **Serverless** AWS (Lambda + DynamoDB + S3 + SQS) | Datos/orquestación sin EC2. Nunca toca WhatsApp. |
 | Auth | **Cognito hosted UI / PKCE** contra el User Pool de Pernexium | Mismas cuentas/permisos que el resto de apps. **No** hay SSO por cookie (Electron no vive en `*.pernexium.com.mx`); login explícito en la app. |
-| Trigger nube→local | **Polling a tabla DynamoDB de jobs** (PK=operatorId, lease) | Lambda no puede push a la PC local (sin IP pública). SQS compartido no aísla por operador → tabla jobs por operatorId. Intervalo corto (~4s), no long-poll. |
+| Trigger nube→local | **Polling a tabla DynamoDB de jobs** (PK=operatorId, sin lease: estados) | Lambda no puede push a la PC local (sin IP pública). SQS compartido no aísla por operador → tabla jobs por operatorId. Intervalo corto (~4s), no long-poll. |
 | Enmascarado números | **Solo visual en UI** | Número plano en DynamoDB; la UI muestra `***1234`. |
 | Storage | DynamoDB (conversaciones/mensajes), S3 (CSV + media backup) | Resuelve concurrencia, escala, fuente de verdad para restore. |
 
@@ -25,7 +25,7 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 │   · envía / recibe real              │◄──────►│  Lambda:                             │
 │   · jobs poller (~4s)                │ HTTPS  │    · api      (conversaciones CRUD)  │
 │   · token de Amplify (renderer)      │ +token │    · csvTrigger (S3 → tabla jobs)    │
-│                                      │        │    · jobsPoll  (lease/ack por op.)   │
+│                                      │        │    · jobsPoll  (poll/ack por op.)    │
 │  Renderer (React + Vite):           │        │  DynamoDB: conversations, messages,  │
 │   · login (username, fondo azul)     │        │            jobs (PK operatorId)      │
 │   · chats / restore desde Dynamo     │        │  S3: csv-uploads, media-backup       │
@@ -37,10 +37,10 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 
 ### Envío masivo vía bucket
 1. UI pide presign a `api` (config de campaña fijada en metadata firmada) y sube CSV a S3 (`csv-uploads/`).
-2. Evento S3 dispara `csvTrigger` → parsea filas → escribe N jobs en la tabla `jobs` (PK=operatorId del presign).
-3. Main process pollea `GET /jobs/poll` (~4s) → backend hace lease de hasta 10 jobs del propio operador.
+2. Evento S3 dispara `csvTrigger` → parsea filas → escribe N jobs en la tabla `jobs` (PK=operatorId del presign). El identificador de carga (`campaignid`) lo genera el servidor (key sin `csv-uploads/`); el `campaignId` del cliente viaja como `label`. `jobId = <campaignid>#<índice>`, así dos cargas nunca se pisan. Un marcador `UPLOAD#<srcKey>` evita reprocesar eventos S3 duplicados; al escribir todos los jobs se borra el CSV.
+3. Main process pollea `GET /jobs/poll` (~5s) → backend devuelve los jobs del propio operador sin lease: primero los pendientes (hasta 2000, orden de `jobId`) y los 300 procesados más recientes; `truncated`/`pendingTotal` avisan si quedaron pendientes fuera. El agente aprueba qué enviar.
 4. Por cada job: normaliza teléfono, interpola plantilla, `client.sendMessage`.
-5. Reporta resultado → `PUT /messages` → DynamoDB. `POST /jobs/ack` borra los jobs hechos.
+5. Reporta resultado → `PUT /messages` → DynamoDB. `POST /jobs/ack` marca cada job `sent`/`no_whatsapp`/`error` (no lo borra; queda como historial hasta el TTL de 7 días) y responde `{acked, notFound, invalid}`.
 
 ### Recepción
 1. `client.on('message')` en main. Si trae media → `downloadMedia` → `POST /media/presign` → PUT a `MediaBucket` (`media/<op>/`).

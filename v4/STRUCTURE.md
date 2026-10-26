@@ -34,7 +34,7 @@ backend/
     ├── lib/
     │   ├── dynamo.ts            Cliente DynamoDB + helpers de llaves (convKey, messageSk)
     │   ├── s3.ts               Cliente S3 + nombres de bucket
-    │   ├── jobs.ts             Tipo SendJob + constantes de lease/TTL
+    │   ├── jobs.ts             Tipo SendJob, estados y TTL (sin lease)
     │   ├── http.ts             Respuestas JSON (ok/created/bad) + claimUser (JWT)
     │   ├── permissions.ts      Catálogo ana:* + superadmin + regex de líder
     │   ├── roles.ts            Cliente API externa de Roles (GET /users/{username})
@@ -45,7 +45,7 @@ backend/
     └── handlers/
         ├── api.ts              /conversations, /messages, /uploads/presign, /me, /admin/role-permissions
         ├── agents.ts           POST /agents/heartbeat (registro de agente)
-        ├── jobsPoll.ts         GET /jobs/poll (lease), POST /jobs/ack (delete)
+        ├── jobsPoll.ts         GET /jobs/poll (pendientes+historial), POST /jobs/ack (marca estado)
         └── csvTrigger.ts       Evento S3 → parsea CSV → jobs (reparto round-robin si líder)
 ```
 
@@ -55,7 +55,7 @@ backend/
 |---------|-----------------|----------|
 | `ConversationsTable` | PK `operatorId`, SK `chatId` | Resumen por chat (último msg, no-leídos) |
 | `MessagesTable` | PK `convKey`=`operatorId#chatId`, SK `sk`=`timestamp#msgId` | Historial completo, restore |
-| `JobsTable` | PK `operatorId`, SK `jobId`; TTL `ttl` | Cola de envíos por operador (lease) |
+| `JobsTable` | PK `operatorId`, SK `jobId`; TTL `ttl` | Cola de envíos por operador (estados, sin lease) |
 | `RolePermsTable` | PK `ROLEPERMS`, SK `ROLE#<roleId>` | Permisos locales por rol (`ana:*`) |
 | `AgentsTable` | PK `campaign`, SK `operatorId` | Roster de agentes por campaña (heartbeat) |
 | `AccessCacheTable` | PK `username`; TTL | Caché L2 de acceso resuelto |
@@ -74,7 +74,7 @@ de la PK de las 3 tablas → un operador solo puede Query/Delete su propia parti
 | GET | `/conversations/{chatId}/messages` | api | Historial de un chat |
 | PUT | `/messages` | api | Persiste un mensaje (whitelist de campos) |
 | POST | `/uploads/presign` | api | URL firmada para subir CSV (config en metadata firmada) |
-| GET | `/jobs/poll` | jobsPoll | Entrega+lease hasta 10 jobs propios |
+| GET | `/jobs/poll` | jobsPoll | Pendientes propios (≤2000) + historial (≤300), `truncated` |
 | POST | `/jobs/ack` | jobsPoll | Borra jobs ya enviados |
 | GET | `/me` | api | Acceso efectivo del usuario (roles, permisos, líder/admin) |
 | GET | `/admin/role-permissions/{roleId}` | api | Lee permisos de un rol (solo admin) |
@@ -171,7 +171,7 @@ evento `qr` → `onWaEvent` → renderer pinta QR → escaneas → `status: conn
 2. `POST /uploads/presign` (api.ts) → URL firmada con config de campaña en metadata.
 3. Renderer sube el CSV a S3 (`csv-uploads/`).
 4. Evento S3 → `csvTrigger.ts` → parsea → escribe jobs en `JobsTable` (PK=operatorId).
-5. main `JobPoller` → `GET /jobs/poll` → jobsPoll hace lease de jobs propios.
+5. main `JobPoller` → `GET /jobs/poll` → jobsPoll entrega los jobs propios (sin lease).
 6. `runJobs` (main.ts): `resolveJid` → `interpolate` → `WaClient.sendText`.
 7. `backend.putMessage` → `PUT /messages` → DynamoDB. `POST /jobs/ack` borra el job.
 8. `onWaSent` → `Campaigns.tsx` actualiza contador ok/fallidos.

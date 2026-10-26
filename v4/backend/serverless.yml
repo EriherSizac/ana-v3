@@ -37,6 +37,10 @@ provider:
     CSV_BUCKET: ${self:service}-csv-${self:provider.stage}
     MEDIA_BUCKET: ${self:service}-media-${self:provider.stage}
     JOBS_TABLE: ${self:service}-jobs-${self:provider.stage}
+    # Índice por campaña que usan /jobs/summary y /jobs/reassign
+    # (v4-harden-send-job-queue D1). Deploy A: 'campaign-index'; Deploy B:
+    # --param="jobsCampaignIndex=campaign-status-index" (con el índice ACTIVE).
+    JOBS_CAMPAIGN_INDEX: ${param:jobsCampaignIndex, 'campaign-index'}
     ROLEPERMS_TABLE: ${self:service}-roleperms-${self:provider.stage}
     AGENTS_TABLE: ${self:service}-agents-${self:provider.stage}
     ACCESS_CACHE_TABLE: ${self:service}-accesscache-${self:provider.stage}
@@ -249,7 +253,7 @@ functions:
 
   jobsPoll:
     handler: src/handlers/jobsPoll.handler
-    description: Entrega/ack de send-jobs por operador (DynamoDB con lease)
+    description: Entrega/ack de send-jobs por operador (DynamoDB, sin lease)
     events:
       - httpApi:
           path: /jobs/poll
@@ -419,6 +423,14 @@ resources:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:provider.environment.CSV_BUCKET}
+        # csvTrigger borra el CSV al escribir todos sus jobs; esta regla es el
+        # respaldo para escrituras parciales o eventos perdidos (D8).
+        LifecycleConfiguration:
+          Rules:
+            - Id: expire-csv-uploads
+              Status: Enabled
+              Prefix: csv-uploads/
+              ExpirationInDays: 7
         PublicAccessBlockConfiguration:
           BlockPublicAcls: true
           BlockPublicPolicy: true
@@ -450,8 +462,8 @@ resources:
               ExposedHeaders: [ETag]
               MaxAge: 3000
 
-    # Cola de send-jobs por operador. PK=operatorId aísla el pull;
-    # status/leaseUntil dan semántica de lease (visibility) sin SQS.
+    # Cola de send-jobs por operador. PK=operatorId aísla el pull. Sin lease:
+    # status (pending/sent/no_whatsapp/error) marca qué falta por enviar.
     JobsTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -466,6 +478,8 @@ resources:
           - { AttributeName: jobId, KeyType: RANGE }
         # GSI sparse por campaña (vista del líder: pendientes por agente).
         # Solo jobs con `campaign` aparecen; los uploads sin campaña no indexan.
+        # campaign-status-index (D1) proyecta el estado real; campaign-index se
+        # retira en el Deploy C (CloudFormation crea/borra un GSI por update).
         GlobalSecondaryIndexes:
           - IndexName: campaign-index
             KeySchema:
@@ -474,6 +488,13 @@ resources:
             Projection:
               ProjectionType: INCLUDE
               NonKeyAttributes: [campaignId, leaseUntil, ttl]
+          - IndexName: campaign-status-index
+            KeySchema:
+              - { AttributeName: campaign, KeyType: HASH }
+              - { AttributeName: operatorId, KeyType: RANGE }
+            Projection:
+              ProjectionType: INCLUDE
+              NonKeyAttributes: [campaignId, srcKey, status, sentAt, ttl, label]
         TimeToLiveSpecification:
           AttributeName: ttl
           Enabled: true

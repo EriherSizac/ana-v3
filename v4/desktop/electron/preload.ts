@@ -70,6 +70,13 @@ const api = {
   approveJobs: (jobIds: string[], templates: Record<string, string>) =>
     ipcRenderer.invoke('jobs:approve', jobIds, templates),
   getAssignment: () => ipcRenderer.invoke('jobs:get-assignment'),
+  // Totales del último poll ({truncated, pendingTotal, historyTotal}).
+  onJobsAssignmentInfo: (cb: (info: any) => void) => {
+    const fn = (_: unknown, d: any) => cb(d);
+    ipcRenderer.on('jobs:assignment-info', fn);
+    return () => ipcRenderer.removeListener('jobs:assignment-info', fn);
+  },
+  getAssignmentInfo: () => ipcRenderer.invoke('jobs:get-assignment-info'),
 
   // Dispara el chequeo de update (el renderer lo llama tras montar el listener)
   checkUpdates: () => ipcRenderer.invoke('update:check'),

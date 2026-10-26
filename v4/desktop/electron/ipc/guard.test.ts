@@ -60,7 +60,8 @@ describe('validadores', () => {
   it('lista de ids acotada', () => {
     expect(vIdList(['a', 'b'])).toEqual(['a', 'b']);
     expect(vIdList(new Array(5001).fill('a'))).toBeUndefined();
-    expect(vIdList(['x'.repeat(201)])).toBeUndefined();
+    expect(vIdList(['lider.didi/1761400000000_cartera_octubre_2026.csv#49999'])).toHaveLength(1);
+    expect(vIdList(['x'.repeat(1025)])).toBeUndefined();
     expect(vIdList('a')).toBeUndefined();
   });
   it('plantillas por archivo', () => {

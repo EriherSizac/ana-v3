@@ -8,7 +8,8 @@ import { Button } from '../ui/Button';
 import { TemplateEditor, getUnknownTemplateVars } from '../ui/TemplateEditor';
 import { ProgressBar } from './Campaigns';
 import { maskPhone } from '../lib/api';
-import type { AssignedJob, SendProgress } from '../types/ana';
+import { truncationNotice } from '../lib/assignmentNotice';
+import type { AssignedJob, AssignmentInfo, SendProgress } from '../types/ana';
 
 const isPending = (j: AssignedJob) => !j.status || j.status === 'pending' || j.status === 'leased';
 const isDone = (j: AssignedJob) =>
@@ -43,6 +44,7 @@ export function Assignment() {
   const [progress, setProgress] = useState<SendProgress>({ phase: 'idle' });
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<'pending' | 'sent'>('pending');
+  const [info, setInfo] = useState<AssignmentInfo | null>(null);
 
   useEffect(() => {
     const apply = (next: AssignedJob[]) => {
@@ -59,10 +61,13 @@ export function Assignment() {
     // Hidratar al montar con la asignación vigente (el evento del poller solo
     // llega cada ~5s; sin esto la vista queda en blanco al entrar al tab).
     void window.ana.getAssignment().then(apply);
+    void window.ana.getAssignmentInfo().then(setInfo);
     const offJobs = window.ana.onJobsAssignment(apply);
+    const offInfo = window.ana.onJobsAssignmentInfo(setInfo);
     const offProgress = window.ana.onWaProgress(setProgress);
     return () => {
       offJobs();
+      offInfo();
       offProgress();
     };
   }, []);
@@ -76,6 +81,8 @@ export function Assignment() {
     [jobs],
   );
   const list = tab === 'pending' ? pendingJobs : sentJobs;
+  // Aviso si el backend no entregó todos los pendientes (límite del poll).
+  const notice = truncationNotice(info, jobs.filter(isPending).length);
 
   // Un grupo (editor de plantilla) por archivo con jobs seleccionados.
   const groups = useMemo<FileGroup[]>(() => {
@@ -164,6 +171,12 @@ export function Assignment() {
         Contactos pendientes asignados a ti. Selecciona a quiénes enviarles y con qué
         plantilla; lo no seleccionado queda pendiente para después.
       </p>
+
+      {notice && (
+        <div role="status" className="mt-4 rounded-xl bg-primary-light-90 px-4 py-2 text-sm text-text-muted">
+          {notice}
+        </div>
+      )}
 
       {/* Tabs: pendientes (por enviar) / enviados (historial). */}
       <div className="mt-4 flex gap-1 border-b border-neutral-50">

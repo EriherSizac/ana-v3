@@ -149,7 +149,7 @@ Alternativa interna (sin Dashboard): la tabla `agents` con **heartbeat**. Cada d
 - **ponderado** (`assignments = {operatorId: peso}`): se expande la lista (`{a:2,b:1}` → `[a,a,b]`) y se aplica el mismo round-robin → respeta proporciones.
 - **sin distribute**: el uploader se queda todos (revisa/envía él mismo).
 
-Cada job se escribe con `PK = operatorId` del agente destino → el aislamiento es natural: en `GET /jobs/poll` cada agente consulta solo su partición. Un GSI `campaign-index` permite al líder ver el total por campaña y **reasignar** pendientes de un agente caído a otro (`POST /jobs/reassign`).
+Cada job se escribe con `PK = operatorId` del agente destino → el aislamiento es natural: en `GET /jobs/poll` cada agente consulta solo su partición. Un GSI por campaña (`campaign-status-index`, que proyecta `status`; nombre en `JOBS_CAMPAIGN_INDEX`) permite al líder ver los pendientes reales por campaña y **reasignar** pendientes de un agente caído a otro (`POST /jobs/reassign`, por lotes en paralelo con presupuesto de 25 s y `partial: true` si falta). No hay reserva por poll: un job es pendiente (`pending`, sin estado o el estado heredado `leased`) o ya procesado. El `jobId` es `<identificador de carga>#<índice>` con el identificador generado por el servidor (la key del CSV sin `csv-uploads/`); el `campaignId` del cliente se guarda como `label`.
 
 Implementación: `backend/src/handlers/csvTrigger.ts`, `backend/src/lib/dashboard.ts`, `backend/src/handlers/jobsAdmin.ts`.
 

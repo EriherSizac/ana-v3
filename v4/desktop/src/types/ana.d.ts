@@ -25,6 +25,8 @@ export interface AnaBridge {
   onWaSent: (cb: (data: any) => void) => () => void;
   onWaProgress: (cb: (data: SendProgress) => void) => () => void;
   onJobsAssignment: (cb: (jobs: AssignedJob[]) => void) => () => void;
+  onJobsAssignmentInfo: (cb: (info: AssignmentInfo) => void) => () => void;
+  getAssignmentInfo: () => Promise<AssignmentInfo>;
   approveJobs: (
     jobIds: string[],
     templates: Record<string, string>,
@@ -60,6 +62,13 @@ export interface AssignedJob {
   status?: 'pending' | 'leased' | 'sent' | 'no_whatsapp' | 'error';
   sentAt?: number;
   auto?: boolean;
+}
+
+// Totales del último GET /jobs/poll (truncated = quedaron pendientes fuera).
+export interface AssignmentInfo {
+  truncated: boolean;
+  pendingTotal: number;
+  historyTotal: number;
 }
 
 export interface SendProgress {

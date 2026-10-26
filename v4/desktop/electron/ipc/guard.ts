@@ -15,7 +15,9 @@ export const INVALID = { ok: false, error: 'solicitud inválida' } as const;
 export const MAX_TEXT = 4096;
 export const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
 export const MAX_JOB_IDS = 5000;
-export const MAX_ID_LEN = 200;
+// jobId = `<usuario>/<epochMs>_<archivo>#<i>` (identificador de carga del
+// servidor): el límite de una sort key de DynamoDB es 1024 bytes.
+export const MAX_ID_LEN = 1024;
 export const MAX_CAMPAIGN = 100;
 export const MAX_FILENAME = 120;
 

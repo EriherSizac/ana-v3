@@ -88,7 +88,6 @@ export const handler = async (
       countryCode: p.countryCode ?? '52',
       srcKey: '', // no viene de un CSV → nada que borrar en S3
       status: 'pending',
-      leaseUntil: 0,
       attempts: 0,
       ttl: Math.floor(now / 1000) + JOB_TTL_DAYS * 86400,
       auto: true, // el desktop lo envía sin aprobación manual

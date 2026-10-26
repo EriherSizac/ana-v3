@@ -1,11 +1,11 @@
 // File: Dispara al subir un CSV a csv-uploads/. Parsea filas y encola un SendJob por
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import type { S3Event } from 'aws-lambda';
-import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
-import { BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { BatchWriteCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { parse } from 'csv-parse/sync';
 import { s3 } from '../lib/s3';
 import { ddb } from '../lib/dynamo';
@@ -16,6 +16,16 @@ import { fileNameFromKey, recordUpload, type RejectReason, type UploadRecord } f
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_ROWS = 50_000;
+/** Reintentos de UnprocessedItems por lote (design D6). */
+export const BATCH_RETRIES = 6;
+const BATCH_BASE_DELAY_MS = 100;
+
+/** Espera inyectable (las pruebas la reemplazan para no dormir de verdad). */
+export const timing = {
+  sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+};
+
+const log = (o: Record<string, unknown>) => console.log(JSON.stringify(o));
 
 /**
  * `{"op1":2,"op2":1}` → ['op1','op1','op2']: lista expandida para que el
@@ -87,11 +97,64 @@ async function recordRejected(
 }
 
 /**
- * Dispara al subir un CSV a csv-uploads/. Parsea filas y encola un SendJob por
- * fila en SQS. El agente local los recoge vía /jobs/poll.
+ * Procesamiento único por objeto (D6): reserva condicional del marcador
+ * `UPLOAD#<srcKey>`. false = ya se procesó (evento S3 duplicado).
+ */
+async function claimUpload(srcKey: string): Promise<boolean> {
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: JOBS_TABLE,
+        Item: {
+          operatorId: `UPLOAD#${srcKey}`,
+          jobId: 'processed',
+          at: Date.now(),
+          ttl: Math.floor(Date.now() / 1000) + JOB_TTL_DAYS * 86400,
+        },
+        ConditionExpression: 'attribute_not_exists(jobId)',
+      }),
+    );
+    return true;
+  } catch (e) {
+    if ((e as { name?: string })?.name === 'ConditionalCheckFailedException') return false;
+    throw e;
+  }
+}
+
+/**
+ * Escribe los jobs en lotes de 25 reintentando `UnprocessedItems` hasta
+ * BATCH_RETRIES veces (espera 100 ms × 2^n con jitter). Devuelve los que no
+ * se pudieron escribir (no lanza: S3 reintentaría y re-escribiría).
+ */
+async function writeJobs(jobs: SendJob[]): Promise<SendJob[]> {
+  const failed: SendJob[] = [];
+  for (let i = 0; i < jobs.length; i += 25) {
+    let pending: Record<string, any>[] = jobs.slice(i, i + 25).map((Item) => ({ PutRequest: { Item } }));
+    for (let attempt = 0; pending.length > 0 && attempt <= BATCH_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const base = BATCH_BASE_DELAY_MS * 2 ** (attempt - 1);
+        await timing.sleep(base + Math.floor(Math.random() * base));
+      }
+      const res = await ddb.send(new BatchWriteCommand({ RequestItems: { [JOBS_TABLE]: pending } }));
+      pending = (res.UnprocessedItems?.[JOBS_TABLE] ?? []) as Record<string, any>[];
+    }
+    for (const r of pending) failed.push(r.PutRequest.Item as SendJob);
+  }
+  return failed;
+}
+
+const isNoSuchKey = (e: unknown) => {
+  const name = (e as { name?: string })?.name;
+  return name === 'NoSuchKey' || name === 'NotFound';
+};
+
+/**
+ * Dispara al subir un CSV a csv-uploads/. Parsea filas y escribe un SendJob
+ * por fila en la tabla de jobs. El agente local los recoge vía /jobs/poll.
  *
- * Config de campaña (template, countryCode, phoneColumn) va en metadata del
- * objeto S3 (x-amz-meta-*), seteada por la UI al pedir el presigned URL.
+ * Config de campaña (template, countryCode, phoneColumn, campaignid generado
+ * por el servidor, label del cliente) va en metadata del objeto S3
+ * (x-amz-meta-*), firmada al pedir el presigned URL.
  */
 export const handler = async (event: S3Event): Promise<void> => {
   for (const rec of event.Records) {
@@ -111,7 +174,17 @@ export const handler = async (event: S3Event): Promise<void> => {
       continue;
     }
 
-    const obj = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    let obj;
+    try {
+      obj = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    } catch (e) {
+      // Evento repetido de un CSV ya procesado y borrado (D8): nada que hacer.
+      if (isNoSuchKey(e)) {
+        log({ evt: 'csv_missing_object', key });
+        continue;
+      }
+      throw e;
+    }
     const meta = obj.Metadata ?? {};
     const csv = await obj.Body!.transformToString('utf-8');
     const uploadedAt = objectDate(obj.LastModified, rec.eventTime);
@@ -126,22 +199,37 @@ export const handler = async (event: S3Event): Promise<void> => {
     const template = meta.template ?? '{mensaje}';
     const countryCode = meta.countrycode ?? '52';
     const phoneColumn = meta.phonecolumn ?? 'telefono';
-    const campaignId = meta.campaignid ?? key;
+    // Identificador de carga del servidor (D5); objetos sin él → la key sin prefijo.
+    const campaignId = meta.campaignid || key.replace(/^csv-uploads\//, '');
+    const label = meta.label || undefined;
     const distribute = meta.distribute === '1';
     const campaign = meta.campaign ?? '';
 
     // Filas normalizadas con los alias de v3: un CSV con phone_number /
     // total_balance / message funciona con plantillas {telefono}/{saldo}/{mensaje}.
-    const rows: Record<string, string>[] = (
-      parse(csv, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-      }) as Record<string, string>[]
-    ).map(normalizeContactRow);
+    let rows: Record<string, string>[];
+    try {
+      rows = (
+        parse(csv, {
+          columns: true,
+          skip_empty_lines: true,
+          trim: true,
+        }) as Record<string, string>[]
+      ).map(normalizeContactRow);
+    } catch (e) {
+      // CSV ilegible: se registra y se termina sin lanzar (S3 no reintenta).
+      log({ evt: 'csv_rejected', reason: 'parse_error', key, error: (e as Error)?.message?.slice(0, 200) });
+      continue;
+    }
     if (rows.length > MAX_ROWS) {
       console.warn(`csvTrigger: ${key} con ${rows.length} filas excede ${MAX_ROWS}, ignorado`);
       await recordRejected(key, meta, uploadedAt, 'too_many_rows', rows.length);
+      continue;
+    }
+
+    // Procesamiento único: un evento S3 duplicado no re-escribe (ni revive) jobs.
+    if (!(await claimUpload(key))) {
+      log({ evt: 'csv_duplicate_event', key });
       continue;
     }
 
@@ -172,7 +260,8 @@ export const handler = async (event: S3Event): Promise<void> => {
       operatorId: targets[i % targets.length], // round-robin
       jobId: `${campaignId}#${i}`,
       campaignId,
-      // sparse: el GSI campaign-index no acepta '' como key.
+      ...(label ? { label } : {}),
+      // sparse: el GSI por campaña no acepta '' como key.
       ...(campaign ? { campaign } : {}),
       phone: phoneOf(row),
       template,
@@ -180,26 +269,29 @@ export const handler = async (event: S3Event): Promise<void> => {
       countryCode,
       srcKey: key,
       status: 'pending',
-      leaseUntil: 0,
       attempts: 0,
       ttl,
     }));
 
-    // DynamoDB BatchWrite = máx 25 por request
-    for (let i = 0; i < jobs.length; i += 25) {
-      const chunk = jobs.slice(i, i + 25);
-      await ddb.send(
-        new BatchWriteCommand({
-          RequestItems: {
-            [JOBS_TABLE]: chunk.map((Item) => ({ PutRequest: { Item } })),
-          },
-        }),
-      );
+    const failed = await writeJobs(jobs);
+    const failedIds = new Set(failed.map((j) => `${j.operatorId}|${j.jobId}`));
+    const written = jobs.filter((j) => !failedIds.has(`${j.operatorId}|${j.jobId}`));
+
+    if (failed.length > 0) {
+      // Se conserva el CSV para diagnóstico (expira a los 7 días).
+      log({ evt: 'csv_jobs_partial', key, written: written.length, missing: failed.length });
+    } else {
+      // Los jobs llevan la fila completa: el CSV ya no se necesita (D8).
+      try {
+        await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      } catch (e) {
+        console.error(JSON.stringify({ evt: 'csv_delete_failed', key, error: (e as Error)?.name }));
+      }
     }
 
     if (campaign) {
       const perAgent: Record<string, number> = {};
-      for (const j of jobs) perAgent[j.operatorId] = (perAgent[j.operatorId] ?? 0) + 1;
+      for (const j of written) perAgent[j.operatorId] = (perAgent[j.operatorId] ?? 0) + 1;
       await safeRecord({
         campaign,
         srcKey: key,
@@ -209,14 +301,14 @@ export const handler = async (event: S3Event): Promise<void> => {
         mode: meta.assignments ? 'assignments' : distribute ? 'distribute' : 'self',
         totalRows: rows.length,
         validRows: valid.length,
-        jobs: jobs.length,
+        jobs: written.length,
         perAgent,
         status: 'processed',
       });
     }
 
     console.log(
-      `csvTrigger: ${jobs.length} jobs de ${key} → ${targets.length} destinatario(s)` +
+      `csvTrigger: ${written.length}/${jobs.length} jobs de ${key} → ${targets.length} destinatario(s)` +
         (distribute ? ` (reparto campaña ${campaign})` : ''),
     );
   }

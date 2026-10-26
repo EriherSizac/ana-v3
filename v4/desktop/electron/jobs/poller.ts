@@ -57,8 +57,17 @@ export interface PollerDeps {
   runJob: (job: SendJob) => Promise<{ success: boolean; error?: string; noWhatsapp?: boolean }>;
   onProgress: (p: Progress) => void;
   /** Jobs del operador (pendientes + historial). El renderer los separa. */
-  onAssignment: (jobs: SendJob[]) => void;
+  onAssignment: (jobs: SendJob[], info: AssignmentInfo) => void;
 }
+
+/** Totales del último poll (`truncated` = quedaron pendientes sin entregar). */
+export interface AssignmentInfo {
+  truncated: boolean;
+  pendingTotal: number;
+  historyTotal: number;
+}
+
+const EMPTY_INFO: AssignmentInfo = { truncated: false, pendingTotal: 0, historyTotal: 0 };
 
 const POLL_INTERVAL_MS = 5000;
 const MIN_GAP_MS = 2 * 60 * 1000; // ≥2 min entre mensajes
@@ -77,12 +86,18 @@ export class JobPoller {
   private sentAt: number[] = []; // timestamps de envíos recientes (rate limit)
   private known = new Map<string, SendJob>(); // jobId → job (último poll)
   private lastAssignment: SendJob[] = []; // última asignación manual publicada
+  private lastInfo: AssignmentInfo = EMPTY_INFO; // totales de la última consulta
 
   constructor(private deps: PollerDeps) {}
 
   /** Asignación manual vigente (para hidratar la vista al montarse). */
   getAssignment(): SendJob[] {
     return this.lastAssignment;
+  }
+
+  /** Totales/truncado de la asignación vigente. */
+  getAssignmentInfo(): AssignmentInfo {
+    return this.lastInfo;
   }
 
   start() {
@@ -184,13 +199,15 @@ export class JobPoller {
   /** Un ciclo: consulta, publica (solo si la consulta fue exitosa) y envía directos. */
   async pollOnce(): Promise<void> {
     try {
-      const jobs = await this.fetchJobs();
-      if (jobs === null) return; // 401/no-2xx/red: conserva la última asignación
+      const fetched = await this.fetchJobs();
+      if (fetched === null) return; // 401/no-2xx/red: conserva la última asignación
+      const { jobs, info } = fetched;
       this.known = new Map(jobs.map((j) => [j.jobId, j]));
 
       // Publica TODO (pendientes + historial): el renderer los separa en tabs.
       this.lastAssignment = jobs;
-      this.deps.onAssignment(jobs);
+      this.lastInfo = info;
+      this.deps.onAssignment(jobs, info);
       if (jobs.length === 0) this.deps.onProgress({ phase: 'idle' });
 
       // Directos (POST /send) AÚN pendientes: se envían solos, sin aprobación.
@@ -212,13 +229,28 @@ export class JobPoller {
   }
 
   /** Jobs del operador o null si la consulta no fue exitosa (no publicar). */
-  private async fetchJobs(): Promise<SendJob[] | null> {
+  private async fetchJobs(): Promise<{ jobs: SendJob[]; info: AssignmentInfo } | null> {
     try {
       // authFetch ya invalida el token y reintenta una vez ante 401.
       const res = await this.deps.authFetch(`${this.deps.apiBase}/jobs/poll`);
       if (!res.ok) return null;
-      const { jobs } = (await res.json()) as { jobs: { id: string; job: SendJob }[] };
-      return jobs.map((j) => j.job);
+      const body = (await res.json()) as {
+        jobs: { id: string; job: SendJob }[];
+        truncated?: boolean;
+        pendingTotal?: number;
+        historyTotal?: number;
+      };
+      const jobs = body.jobs.map((j) => j.job);
+      // Backend previo sin totales: se calculan de lo recibido (nunca truncado).
+      const pending = jobs.filter(isPending).length;
+      return {
+        jobs,
+        info: {
+          truncated: body.truncated === true,
+          pendingTotal: typeof body.pendingTotal === 'number' ? body.pendingTotal : pending,
+          historyTotal: typeof body.historyTotal === 'number' ? body.historyTotal : jobs.length - pending,
+        },
+      };
     } catch {
       return null;
     }

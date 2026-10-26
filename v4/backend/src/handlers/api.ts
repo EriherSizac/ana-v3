@@ -247,12 +247,17 @@ async function presignCsv(
 
   // Config fijada server-side en metadata firmada → el cliente no la altera.
   const key = `csv-uploads/${safeUser}/${Date.now()}_${filename}`;
+  // Identificador de carga generado aquí (v4-harden-send-job-queue D5): único
+  // por objeto subido, así dos cargas nunca comparten jobId. El valor del
+  // cliente (`<archivo>-<lada>`) se conserva solo como etiqueta.
+  const label = typeof payload.campaignId === 'string' ? payload.campaignId.slice(0, 100) : '';
   const metadata: Record<string, string> = {
     operatorid: user,
     template: payload.template ?? '{mensaje}',
     countrycode: payload.countryCode ?? '52',
     phonecolumn: payload.phoneColumn ?? 'telefono',
-    campaignid: payload.campaignId ?? key,
+    campaignid: key.slice('csv-uploads/'.length),
+    ...(label ? { label } : {}),
     distribute: distribute ? '1' : '0',
     campaign,
     ...(assignments ? { assignments } : {}),
