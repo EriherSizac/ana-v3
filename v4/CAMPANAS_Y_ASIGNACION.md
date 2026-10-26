@@ -203,3 +203,10 @@ Reglas únicas en desktop (`desktop/electron/whatsapp/phone.ts`) y backend (`bac
 - La búsqueda del `credit_id` en el CRM usa `+` + el número normalizado (`0445512345678` → `+525512345678`, reintentando sin `+52` ante 404).
 
 **Teléfonos marcados sin WhatsApp por error antes de este cambio**: revisar en el historial de jobs (TTL 7 días, tabla `ana-backend-jobs-<stage>`) los jobs con `status = no_whatsapp` cuyo `phone` crudo empieza con `044`, `045` o `01` (o tiene 11 dígitos y empieza con `1`), y pedir a operación que revise esos teléfonos en el CRM (`PATCH /phone` los dejó con `has_whatsapp: false`).
+
+## 9. "Mi asignación": plantilla por archivo y montos
+
+- Al seleccionar contactos de varias cargas, la vista muestra **un editor de mensaje por archivo** (precargado con la plantilla de esa carga). Cada contacto se envía con la plantilla de **su** archivo; editar una no cambia las demás. "Enviar" se deshabilita si alguna queda vacía o usa variables que ese archivo no tiene (columnas + alias, p. ej. `{saldo}` vale con `total_balance`).
+- "Envío iniciado." aparece en cuanto el envío arranca; el avance sigue en la tarjeta flotante ("Último: ***NNNN").
+- La selección descarta automáticamente los contactos que ya se procesaron.
+- **Montos** (`{saldo}`, `{monto}`, `{x:dinero}` y expresiones) aceptan coma o punto decimal: `1234,56` y `1.234,56` → `$1,234.56`; `1,234.56` → `$1,234.56`; `12,345` → `$12,345.00`; `1234.5` → `$1,234.50`. Un valor como `1.234` sin decimales se lee como 1.234 (ambiguo): escribe los montos con decimales o con punto decimal.

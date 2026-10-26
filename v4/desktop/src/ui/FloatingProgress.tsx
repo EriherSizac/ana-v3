@@ -1,10 +1,11 @@
 // File: Progreso flotante del envío en curso (visible en cualquier tab).
 // Created: 2026-06-10
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { useEffect, useState } from 'react';
 import type { SendProgress } from '../types/ana';
+import { maskPhone } from '../lib/mask';
 
 /**
  * Tarjeta flotante (abajo-derecha) con el progreso del batch en curso:
@@ -75,7 +76,7 @@ export function FloatingProgress() {
         </div>
       )}
       {p.phone && !waiting && (
-        <div className="mt-1 truncate text-xs text-text-light">Último: {p.phone}</div>
+        <div className="mt-1 truncate text-xs text-text-light">Último: {maskPhone(p.phone)}</div>
       )}
     </div>
   );

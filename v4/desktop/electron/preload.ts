@@ -1,6 +1,6 @@
 // File: preload
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { contextBridge, ipcRenderer } from 'electron';
@@ -66,8 +66,9 @@ const api = {
     ipcRenderer.on('jobs:assignment', fn);
     return () => ipcRenderer.removeListener('jobs:assignment', fn);
   },
-  approveJobs: (jobIds: string[], template?: string) =>
-    ipcRenderer.invoke('jobs:approve', jobIds, template),
+  // templates: plantilla aprobada por archivo (clave srcKey o campaignId).
+  approveJobs: (jobIds: string[], templates: Record<string, string>) =>
+    ipcRenderer.invoke('jobs:approve', jobIds, templates),
   getAssignment: () => ipcRenderer.invoke('jobs:get-assignment'),
 
   // Dispara el chequeo de update (el renderer lo llama tras montar el listener)

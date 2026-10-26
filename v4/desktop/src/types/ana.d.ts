@@ -1,6 +1,6 @@
 // File: ana.d
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 // Puente expuesto por electron/preload.ts (contextBridge `ana`).
@@ -27,7 +27,7 @@ export interface AnaBridge {
   onJobsAssignment: (cb: (jobs: AssignedJob[]) => void) => () => void;
   approveJobs: (
     jobIds: string[],
-    template?: string,
+    templates: Record<string, string>,
   ) => Promise<{ ok: boolean; error?: string }>;
   getAssignment: () => Promise<AssignedJob[]>;
   checkUpdates: () => Promise<{ ok: boolean }>;

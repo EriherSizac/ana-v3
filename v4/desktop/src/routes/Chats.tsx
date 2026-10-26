@@ -40,6 +40,12 @@ export function Chats({
   const [active, setActive] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [reply, setReply] = useState('');
+  // Envío manual en curso: deshabilita campo/botones (evita doble Enter).
+  const [replySending, setReplySending] = useState(false);
+  const replySendingRef = useRef(false);
+  // Error del último envío manual ("No se envió: <motivo>") y archivo a reintentar.
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [failedFile, setFailedFile] = useState<File | null>(null);
   const [waError, setWaError] = useState<string | null>(null);
   const [waLoading, setWaLoading] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -136,6 +142,8 @@ export function Chats({
     setActive(chatId);
     setMessages(null);
     setShowInteraction(false); // cierra el modal de gestión al cambiar de chat
+    setReplyError(null);
+    setFailedFile(null);
     // Solo en mi sesión: registra atención en el CRM (como la ventana de v3).
     if (!viewingOther) void reportChatOpen(chatId);
     try {
@@ -145,15 +153,40 @@ export function Chats({
     }
   }
 
+  /** Marca el envío manual en curso (ref = guardia síncrona contra doble Enter). */
+  function beginReplySend(): boolean {
+    if (replySendingRef.current) return false;
+    replySendingRef.current = true;
+    setReplySending(true);
+    setReplyError(null);
+    return true;
+  }
+  function endReplySend() {
+    replySendingRef.current = false;
+    setReplySending(false);
+  }
+
   async function sendReply() {
     if (!active || !reply.trim() || viewingOther) return; // solo respondo en mi sesión
+    if (!beginReplySend()) return;
     const body = reply.trim();
-    setReply('');
     stopTyping();
-    const res = await window.ana.sendReply(active, body);
-    // Append en sitio (sin recargar el hilo → sin parpadeo de skeletons).
-    if (res.ok && res.message) appendMessage(res.message);
-    void refreshConvosSilent();
+    try {
+      const res = await window.ana.sendReply(active, body);
+      if (res.ok) {
+        // Solo al confirmar se limpia el campo.
+        setReply('');
+        // Append en sitio (sin recargar el hilo → sin parpadeo de skeletons).
+        if (res.message) appendMessage(res.message);
+        void refreshConvosSilent();
+      } else {
+        setReplyError(`No se envió: ${res.error ?? 'error desconocido'}`);
+      }
+    } catch (e: any) {
+      setReplyError(`No se envió: ${e?.message ?? String(e)}`);
+    } finally {
+      endReplySend();
+    }
   }
 
   // Typing en vivo: el contacto ve "escribiendo…" mientras compones.
@@ -179,16 +212,31 @@ export function Chats({
 
   async function sendFile(file: File) {
     if (!active || viewingOther) return;
-    const dataBase64 = await fileToBase64(file);
-    const res = await window.ana.sendMedia(active, {
-      dataBase64,
-      mimetype: file.type || 'application/octet-stream',
-      filename: file.name,
-      caption: reply.trim() || undefined,
-    });
-    setReply('');
-    if (res.ok && res.message) appendMessage(res.message);
-    void refreshConvosSilent();
+    if (!beginReplySend()) return;
+    try {
+      const dataBase64 = await fileToBase64(file);
+      const res = await window.ana.sendMedia(active, {
+        dataBase64,
+        mimetype: file.type || 'application/octet-stream',
+        filename: file.name,
+        caption: reply.trim() || undefined,
+      });
+      if (res.ok) {
+        setReply('');
+        setFailedFile(null);
+        if (res.message) appendMessage(res.message);
+        void refreshConvosSilent();
+      } else {
+        // Conserva texto (pie) y archivo para reintentar.
+        setFailedFile(file);
+        setReplyError(`No se envió: ${res.error ?? 'error desconocido'}`);
+      }
+    } catch (e: any) {
+      setFailedFile(file);
+      setReplyError(`No se envió: ${e?.message ?? String(e)}`);
+    } finally {
+      endReplySend();
+    }
   }
 
   return (
@@ -321,31 +369,70 @@ export function Chats({
                 responder desde su sesión.
               </div>
             ) : (
-              <div className="flex items-center gap-2 border-t border-neutral-50 bg-white p-3">
-                <label
-                  className="cursor-pointer rounded-xl border border-neutral-50 px-3 py-2 text-sm text-text-muted hover:bg-neutral-30"
-                  title="Adjuntar imagen o archivo"
-                >
-                  📎
+              <div className="border-t border-neutral-50 bg-white p-3">
+                {(replyError || failedFile) && (
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                    {replyError && <span className="text-error-70">{replyError}</span>}
+                    {failedFile && (
+                      <>
+                        <span className="rounded-full bg-neutral-30 px-2 py-0.5 text-text-muted">
+                          📎 {failedFile.name}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={replySending}
+                          onClick={() => void sendFile(failedFile)}
+                          className="font-semibold text-primary hover:underline disabled:opacity-50"
+                        >
+                          Reintentar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={replySending}
+                          onClick={() => {
+                            setFailedFile(null);
+                            setReplyError(null);
+                          }}
+                          className="text-text-light hover:underline disabled:opacity-50"
+                        >
+                          Quitar
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <label
+                    className={`rounded-xl border border-neutral-50 px-3 py-2 text-sm text-text-muted ${
+                      replySending ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-neutral-30'
+                    }`}
+                    title="Adjuntar imagen o archivo"
+                  >
+                    📎
+                    <input
+                      type="file"
+                      className="hidden"
+                      disabled={replySending}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void sendFile(f);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
                   <input
-                    type="file"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void sendFile(f);
-                      e.target.value = '';
-                    }}
+                    value={reply}
+                    disabled={replySending}
+                    onChange={(e) => onReplyChange(e.target.value)}
+                    onBlur={stopTyping}
+                    onKeyDown={(e) => e.key === 'Enter' && void sendReply()}
+                    placeholder="Escribe un mensaje…"
+                    className="min-w-0 flex-1 rounded-xl border border-neutral-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary disabled:opacity-60"
                   />
-                </label>
-                <input
-                  value={reply}
-                  onChange={(e) => onReplyChange(e.target.value)}
-                  onBlur={stopTyping}
-                  onKeyDown={(e) => e.key === 'Enter' && sendReply()}
-                  placeholder="Escribe un mensaje…"
-                  className="min-w-0 flex-1 rounded-xl border border-neutral-50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-secondary"
-                />
-                <Button onClick={sendReply}>Enviar</Button>
+                  <Button onClick={() => void sendReply()} disabled={replySending}>
+                    {replySending ? 'Enviando…' : 'Enviar'}
+                  </Button>
+                </div>
               </div>
             )}
           </>

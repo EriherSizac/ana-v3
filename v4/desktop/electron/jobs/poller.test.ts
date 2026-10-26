@@ -65,6 +65,59 @@ describe('JobPoller.pollOnce', () => {
   });
 });
 
+describe('JobPoller.approve (plantilla por archivo, respuesta inmediata)', () => {
+  it('dos archivos → cada job con la plantilla de su archivo; responde antes del primer envío', async () => {
+    vi.useFakeTimers();
+    try {
+      const sentWith: Record<string, string> = {};
+      const runJob = vi.fn(async (j: SendJob) => {
+        sentWith[j.jobId] = j.template;
+        return { success: true };
+      });
+      const jobs = [
+        job('a1', { srcKey: 'csv/a.csv', template: 'Plantilla A {nombre}' }),
+        job('a2', { srcKey: 'csv/a.csv', template: 'Plantilla A {nombre}' }),
+        job('b1', { srcKey: 'csv/b.csv', template: 'Plantilla B' }),
+      ];
+      const authFetch = vi.fn(async (url: string) =>
+        url.endsWith('/jobs/poll') ? pollResponse(jobs) : new Response('{}'),
+      );
+      const { poller } = makePoller({ runJob, authFetch });
+      poller.start();
+      toStop.push(poller);
+      await poller.pollOnce();
+
+      const res = await poller.approve(['a1', 'a2', 'b1'], { 'csv/a.csv': 'Editada A' });
+      expect(res).toEqual({ ok: true });
+      expect(runJob).not.toHaveBeenCalled(); // respondió antes del primer envío
+
+      // Segundo approve durante el envío.
+      expect(await poller.approve(['b1'])).toEqual({ ok: false, error: 'Ya hay un envío en curso' });
+
+      const done = poller.currentBatch();
+      await vi.advanceTimersByTimeAsync(15 * 60_000); // incluye las pausas del ritmo (2 min entre envíos)
+      await done;
+      expect(sentWith).toEqual({ a1: 'Editada A', a2: 'Editada A', b1: 'Plantilla B' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('archivo sin mensaje → error', async () => {
+    const authFetch = vi.fn(async () => pollResponse([job('x1', { template: '' })]));
+    const { poller } = makePoller({ authFetch });
+    await poller.pollOnce();
+    expect(await poller.approve(['x1'], {})).toEqual({ ok: false, error: 'Falta el mensaje de un archivo' });
+  });
+
+  it('selección ya procesada → "Sin envíos seleccionados"', async () => {
+    const authFetch = vi.fn(async () => pollResponse([job('s1', { status: 'sent' })]));
+    const { poller } = makePoller({ authFetch });
+    await poller.pollOnce();
+    expect(await poller.approve(['s1'])).toEqual({ ok: false, error: 'Sin envíos seleccionados' });
+  });
+});
+
 describe('JobPoller.pauseNewJobs / waitIdle', () => {
   it('sin job en curso, waitIdle resuelve de inmediato', async () => {
     const { poller } = makePoller();

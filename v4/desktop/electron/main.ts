@@ -201,8 +201,9 @@ const poller = new JobPoller({
 
 // ---- IPC desde el renderer ----
 // El agente aprueba qué enviar (y con qué plantilla) desde "Mi asignación".
-ipcMain.handle('jobs:approve', (_e, jobIds: string[], template?: string) =>
-  poller.approve(jobIds, template),
+// templates: plantilla aprobada por archivo (clave srcKey o campaignId).
+ipcMain.handle('jobs:approve', (_e, jobIds: string[], templates?: Record<string, string>) =>
+  poller.approve(jobIds, templates && typeof templates === 'object' ? templates : {}),
 );
 // Hidrata la vista al montarse (sin esperar al próximo poll).
 ipcMain.handle('jobs:get-assignment', () => poller.getAssignment());

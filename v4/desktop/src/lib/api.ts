@@ -238,8 +238,4 @@ export async function uploadCsv(file: File, cfg: CampaignConfig): Promise<void> 
 }
 
 /** Enmascara número para mostrar (regla: masking solo visual). */
-export function maskPhone(jid: string): string {
-  const digits = jid.replace(/\D/g, '');
-  if (digits.length < 4) return '***';
-  return `***${digits.slice(-4)}`;
-}
+export { maskPhone } from './mask';

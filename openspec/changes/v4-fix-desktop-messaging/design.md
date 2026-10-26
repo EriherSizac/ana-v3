@@ -27,3 +27,15 @@
 
 - [Agentes acostumbrados a "una plantilla para todo"] → Con un solo archivo la UI no cambia; con varios, cada editor muestra el nombre del archivo.
 - [Un CSV con "1.234" como miles sin decimales se lee como 1.234] → Ambigüedad inherente; es la regla que ya usan las expresiones; se documenta que los montos deben llevar decimales o usar punto decimal.
+
+## Decisiones de implementación
+
+- **Clave de archivo** `fileKey(job) = srcKey || campaignId`, exportada en `electron/jobs/poller.ts` y replicada en `Assignment.tsx`; la UI manda `templates` con TODOS los grupos seleccionados (editados o no) y el main aplica `templates[fileKey] ?? job.template`.
+- **Validación en el main** además de la UI: si algún job seleccionado queda sin plantilla (ni la del grupo ni la propia), `approve` responde `{ ok: false, error: 'Falta el mensaje de un archivo' }`.
+- **Respuesta inmediata**: `approve` marca `sending`, programa el lote con `setTimeout(0)` (así la respuesta llega antes del primer `runJob`) y responde `{ ok: true }`; `currentBatch()` expone la promesa del lote para pruebas. Se conserva la integración con `pauseNewJobs`/`waitIdle` del cambio de sesión.
+- **Etiqueta del grupo**: último segmento del `srcKey` (nombre del objeto en S3) o la campaña; no hay `label` en el job.
+- **`parseLocaleNumber`** se exporta de `template.ts`; efecto colateral: una expresión sobre una columna sin dígitos (p. ej. `{nombre*2}`) ya no se evalúa como 0 sino que deja el placeholder visible (antes `Number('')` daba 0).
+- **`getUnknownTemplateVars`** se movió a `src/lib/templateVars.ts` (puro) y `TemplateEditor.tsx` lo re-exporta, así `Campaigns.tsx` no cambia.
+- **`maskPhone`** se movió a `src/lib/mask.ts` (re-exportado desde `src/lib/api.ts`) para probarlo sin Amplify.
+- **Respuesta manual**: guardia síncrona con `useRef` contra doble Enter además del estado `replySending`; un archivo que falla queda como chip "📎 nombre · Reintentar · Quitar" junto al error.
+- Verificaciones manuales en dev (2.3 dos CSV y `{apodo}`, 3.1 WhatsApp desconectado y doble Enter) y release (5.1) pendientes.

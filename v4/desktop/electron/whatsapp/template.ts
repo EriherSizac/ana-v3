@@ -73,13 +73,9 @@ export function interpolate(tpl: string, data: Record<string, any>): string {
 function evalMathExpr(expr: string, data: Record<string, any>): number | null {
   const substituted = expr.replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, (col) => {
     if (data && Object.prototype.hasOwnProperty.call(data, col)) {
-      // Acepta "1,234.56" y "1234,56" (coma decimal de los CSV en español).
-      const rawVal = String(data[col]).replace(/[^\d.,-]/g, '');
-      const normalized = /,\d{1,2}$/.test(rawVal)
-        ? rawVal.replace(/\./g, '').replace(',', '.')
-        : rawVal.replace(/,/g, '');
-      const n = Number(normalized);
-      if (Number.isFinite(n)) return String(n);
+      // Misma regla de separadores que el formato de moneda.
+      const n = parseLocaleNumber(data[col]);
+      if (n !== null) return String(n);
     }
     return col; // columna desconocida → la expresión no pasará el whitelist
   });
@@ -126,10 +122,26 @@ export function normalizeContactRow(row: Record<string, string>): Record<string,
   return out;
 }
 
+/**
+ * Número de un valor de CSV con separadores en español o inglés (misma regla
+ * para moneda y expresiones): si termina en coma + 1 o 2 dígitos, la coma es
+ * decimal y los puntos son miles ("1.234,56", "1234,56"); si no, las comas son
+ * miles ("1,234.56", "12,345"). null si no hay dígitos o no es un número.
+ */
+export function parseLocaleNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = String(value ?? '').replace(/[^\d.,-]/g, '');
+  if (!/\d/.test(raw)) return null;
+  const normalized = /,\d{1,2}$/.test(raw)
+    ? raw.replace(/\./g, '').replace(',', '.')
+    : raw.replace(/,/g, '');
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function formatMoney(value: string | number): string {
-  const stripped = String(value).replace(/[^\d.-]/g, '');
-  const num = Number(stripped);
+  const num = parseLocaleNumber(value);
   // Valor sin dígitos (p.ej. {nombre:dinero}) → devolver tal cual, no "$0.00".
-  if (!stripped || Number.isNaN(num)) return String(value);
+  if (num === null) return String(value);
   return num.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 }

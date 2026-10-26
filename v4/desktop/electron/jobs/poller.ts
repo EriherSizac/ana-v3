@@ -73,6 +73,7 @@ export class JobPoller {
   private sending = false;
   private paused = false; // actualización pendiente: no iniciar jobs nuevos
   private current: Promise<unknown> | null = null; // job en curso (runJob + ack)
+  private batch: Promise<void> | null = null; // lote aprobado en curso
   private sentAt: number[] = []; // timestamps de envíos recientes (rate limit)
   private known = new Map<string, SendJob>(); // jobId → job (último poll)
   private lastAssignment: SendJob[] = []; // última asignación manual publicada
@@ -117,12 +118,15 @@ export class JobPoller {
   }
 
   /**
-   * Envía los jobs seleccionados (en orden de asignación), opcionalmente con
-   * una plantilla distinta a la del upload. Los no seleccionados no se tocan.
+   * Envía los jobs seleccionados (en orden de asignación). `templates` trae la
+   * plantilla aprobada POR ARCHIVO (clave = `fileKey(job)`: srcKey o
+   * campaignId); cada job se envía con la de su archivo y, si no viene, con la
+   * suya. Responde en cuanto el envío arranca (no espera el lote); el avance
+   * sigue por `onProgress`. Los no seleccionados no se tocan.
    */
   async approve(
     jobIds: string[],
-    templateOverride?: string,
+    templates: Record<string, string> = {},
   ): Promise<{ ok: boolean; error?: string }> {
     if (this.paused) return { ok: false, error: 'Actualización pendiente: no se inician envíos' };
     if (this.sending) return { ok: false, error: 'Ya hay un envío en curso' };
@@ -132,19 +136,38 @@ export class JobPoller {
     // Solo lo que sigue pendiente (nunca reenvía algo ya procesado).
     const selected = [...this.known.values()].filter((j) => wanted.has(j.jobId) && isPending(j));
     if (selected.length === 0) return { ok: false, error: 'Sin envíos seleccionados' };
+    // Ningún archivo puede quedar sin mensaje (el líder no fijó uno y el agente no escribió).
+    for (const j of selected) {
+      if (!(templates[fileKey(j)] ?? j.template ?? '').trim())
+        return { ok: false, error: 'Falta el mensaje de un archivo' };
+    }
 
     this.sending = true;
-    try {
-      for (const group of groupByFile(selected)) {
-        if (!this.running || this.paused) break;
-        await this.processFile(group, templateOverride);
-      }
-      return { ok: true };
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? String(e) };
-    } finally {
-      this.sending = false;
-    }
+    // Arranca en el siguiente tick: la respuesta llega antes del primer envío.
+    this.batch = new Promise<void>((resolve) =>
+      setTimeout(() => {
+        void (async () => {
+          try {
+            for (const group of groupByFile(selected)) {
+              if (!this.running || this.paused) break;
+              await this.processFile(group, templates);
+            }
+          } catch (e) {
+            console.error('[poller] lote aprobado falló:', e);
+          } finally {
+            this.sending = false;
+            this.batch = null;
+            resolve();
+          }
+        })();
+      }, 0),
+    );
+    return { ok: true };
+  }
+
+  /** Lote aprobado en curso (para pruebas y diagnóstico); resuelve al terminar. */
+  currentBatch(): Promise<void> {
+    return this.batch ?? Promise.resolve();
   }
 
   private async loop() {
@@ -201,7 +224,7 @@ export class JobPoller {
     }
   }
 
-  private async processFile(group: SendJob[], templateOverride?: string) {
+  private async processFile(group: SendJob[], templates: Record<string, string> = {}) {
     const total = group.length;
     let done = 0;
     let sent = 0;
@@ -215,7 +238,9 @@ export class JobPoller {
       await this.rateLimitWait(campaignId, total, done, sent, failed);
       if (!this.running || this.paused) return;
 
-      const effective = templateOverride ? { ...job, template: templateOverride } : job;
+      // Plantilla aprobada para el archivo de ESTE job (no la de otro archivo).
+      const tpl = templates[fileKey(job)];
+      const effective = tpl !== undefined ? { ...job, template: tpl } : job;
       const work = (async () => {
         const r = await this.deps.runJob(effective);
         this.sentAt.push(Date.now());
@@ -306,11 +331,14 @@ export class JobPoller {
   }
 }
 
+/** Clave del archivo de un job (la misma que usa la UI para la plantilla por archivo). */
+export const fileKey = (j: Pick<SendJob, 'srcKey' | 'campaignId'>) => j.srcKey || j.campaignId;
+
 /** Agrupa jobs por archivo (srcKey), preservando orden de aparición. */
 function groupByFile(jobs: SendJob[]): SendJob[][] {
   const map = new Map<string, SendJob[]>();
   for (const j of jobs) {
-    const k = j.srcKey || j.campaignId;
+    const k = fileKey(j);
     if (!map.has(k)) map.set(k, []);
     map.get(k)!.push(j);
   }
