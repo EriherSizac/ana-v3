@@ -46,6 +46,12 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 1. `client.on('message')` en main. Si trae media → `downloadMedia` → `POST /media/presign` → PUT a `MediaBucket` (`media/<op>/`).
 2. `PUT /messages` → DynamoDB guarda el **puntero** (`mediaKey`), nunca los bytes. Renderer escucha evento IPC → actualiza vista.
 
+### Sesión, presencia y actualización (desktop)
+- **Token**: el renderer (Amplify) entrega el **ID token** al main y lo renueva 5 min antes de `exp` (`fetchAuthSession({ forceRefresh: true })`). El main (`electron/auth/tokenBroker.ts`) pide uno nuevo (`auth:token-request`, espera 10 s) si al suyo le quedan < 2 min, y ante un 401 invalida, pide otro y reintenta una vez (backend, poller y respaldo de sesión WhatsApp). Si la sesión no se puede renovar, la app vuelve al login con "Tu sesión expiró. Vuelve a iniciar sesión."; el main detiene poller y heartbeat **sin** borrar la sesión local de WhatsApp.
+- **Poller**: un 401/500/error de red no publica una asignación vacía; se conserva la última.
+- **Heartbeat**: `POST /agents/heartbeat` solo con WhatsApp `connected` (no en QR/autenticando): al registrar campaña, al conectar y cada 5 min.
+- **Actualización**: listeners/intervalo del updater se registran una vez por proceso (`electron/update/updaterCore.ts`); sin bypass "continuar sin actualizar" (error → Reintentar + reintento cada 60 s; salida solo con contraseña maestra de Sistemas, ver README). Al descargar, el poller deja de iniciar jobs y se espera el job en curso (máx 3 min) antes de cerrar WhatsApp e instalar.
+
 ### Restore conversaciones
 - UI pide `GET /conversations` y `GET /conversations/{chatId}/messages` → DynamoDB es la fuente de verdad. Local es solo caché de sesión viva.
 

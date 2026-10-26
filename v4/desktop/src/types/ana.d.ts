@@ -5,7 +5,10 @@
 
 // Puente expuesto por electron/preload.ts (contextBridge `ana`).
 export interface AnaBridge {
-  setAuthToken: (token: string | null) => Promise<{ ok: boolean }>;
+  setAuthToken: (token: string | null, opts?: { reason?: 'expired' }) => Promise<{ ok: boolean }>;
+  onTokenRequest: (cb: () => void) => () => void;
+  provideToken: (token: string | null) => Promise<{ ok: boolean }>;
+  onAuthExpired: (cb: () => void) => () => void;
   registerAgent: (campaign: string) => Promise<{ ok: boolean }>;
   startWhatsApp: () => Promise<{ ok: boolean }>;
   stopWhatsApp: () => Promise<{ ok: boolean }>;
@@ -28,7 +31,19 @@ export interface AnaBridge {
   ) => Promise<{ ok: boolean; error?: string }>;
   getAssignment: () => Promise<AssignedJob[]>;
   checkUpdates: () => Promise<{ ok: boolean }>;
+  retryUpdate: () => Promise<{ ok: boolean }>;
+  getUpdateBypassStatus: () => Promise<UpdateBypassStatus>;
+  tryUpdateBypass: (
+    password: string,
+  ) => Promise<{ ok: true } | ({ ok: false; reason: 'unavailable' | 'locked' | 'invalid' } & UpdateBypassStatus)>;
   onUpdateStatus: (cb: (data: UpdateStatus) => void) => () => void;
+}
+
+export interface UpdateBypassStatus {
+  available: boolean;
+  locked: boolean;
+  lockedUntil: number;
+  attemptsLeft: number;
 }
 
 // Job asignado al agente (lo publica el poller del main). status separa
@@ -63,6 +78,8 @@ export interface UpdateStatus {
   percent?: number;
   version?: string;
   message?: string;
+  waitingForJob?: boolean; // installing: esperando el job en curso
+  bypass?: boolean; // none por acceso de emergencia de Sistemas
 }
 
 declare global {

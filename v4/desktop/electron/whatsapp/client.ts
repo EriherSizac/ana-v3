@@ -1,6 +1,6 @@
 // File: Envoltura de whatsapp-web.js. Vive en el main process de Electron.
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { Client, RemoteAuth, MessageMedia, type Message } from 'whatsapp-web.js';
@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { S3SessionStore } from './s3Store';
+import type { AuthFetch } from '../auth/tokenBroker';
 
 // Sesión en una ruta estable de la app (no en cwd) → clearable y consistente
 // entre dev y empaquetado.
@@ -60,13 +61,21 @@ export class WaClient extends EventEmitter {
   private lastQr: string | null = null;
   // Respaldo remoto de sesión (RemoteAuth + S3). Se configura tras el login.
   private apiBase = '';
-  private getToken: () => string | null = () => null;
+  private hasSession: () => boolean = () => false;
+  private authFetch: AuthFetch = async () => {
+    throw new Error('WhatsApp sin configurar (falta login)');
+  };
   private operatorId = 'ana';
 
-  /** Inyecta el backend + token + operador (tras login) para el respaldo S3. */
-  configure(apiBase: string, getToken: () => string | null, operatorId: string) {
+  /** Inyecta el backend + sesión + operador (tras login) para el respaldo S3. */
+  configure(
+    apiBase: string,
+    auth: { hasSession: () => boolean; authFetch: AuthFetch },
+    operatorId: string,
+  ) {
     this.apiBase = apiBase;
-    this.getToken = getToken;
+    this.hasSession = auth.hasSession;
+    this.authFetch = auth.authFetch;
     // clientId de RemoteAuth solo acepta [-_\w]; el aislamiento real lo da el
     // JWT en el backend (key por usuario), esto es solo el nombre local.
     this.operatorId = (operatorId || 'ana').replace(/[^\w-]/g, '_');
@@ -88,7 +97,7 @@ export class WaClient extends EventEmitter {
 
   async start() {
     if (this.client || this.starting) return;
-    if (!this.getToken()) {
+    if (!this.hasSession()) {
       // Sin token aún no se puede restaurar/respaldar la sesión en S3.
       this.emit('error', 'Inicia sesión antes de conectar WhatsApp.');
       return;
@@ -98,7 +107,7 @@ export class WaClient extends EventEmitter {
     console.log('[wa] start: lanzando cliente…');
     this.emit('loading', 'Iniciando WhatsApp…');
     try {
-      const store = new S3SessionStore(this.apiBase, this.getToken, AUTH_DIR, (msg) =>
+      const store = new S3SessionStore(this.apiBase, this.authFetch, AUTH_DIR, (msg) =>
         this.emit('loading', msg),
       );
       // En el build instalado, Chromium va bundleado en resources/chrome (en dev
@@ -171,7 +180,7 @@ export class WaClient extends EventEmitter {
     await this.reset();
     // Borra el respaldo remoto para que no se restaure una sesión muerta.
     try {
-      const store = new S3SessionStore(this.apiBase, this.getToken, AUTH_DIR);
+      const store = new S3SessionStore(this.apiBase, this.authFetch, AUTH_DIR);
       await store.delete({ session: `RemoteAuth-${this.operatorId}` });
     } catch (e) {
       console.error('[wa] no se pudo borrar la sesión remota:', e);

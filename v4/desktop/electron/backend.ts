@@ -1,33 +1,36 @@
 // File: Cliente fino del backend. Persiste mensajes en DynamoDB vía API Gateway.
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import type { NormalizedMessage } from './whatsapp/client';
+import type { AuthFetch } from './auth/tokenBroker';
 
-/** Cliente fino del backend. Persiste mensajes en DynamoDB vía API Gateway. */
+/**
+ * Cliente fino del backend. Persiste mensajes en DynamoDB vía API Gateway.
+ * Todas las llamadas usan `authFetch`: token fresco del broker y un reintento
+ * ante 401 (ver auth/tokenBroker.ts).
+ */
 export class Backend {
   constructor(
     private apiBase: string,
-    private getToken: () => string | null,
+    private hasSession: () => boolean,
+    private authFetch: AuthFetch,
   ) {}
 
-  private headers() {
-    const token = this.getToken();
+  private json(method: string, body: unknown): RequestInit {
     return {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
     };
   }
 
   async putMessage(msg: NormalizedMessage): Promise<void> {
-    if (!this.getToken()) return; // sin sesión aún, no persistir
+    if (!this.hasSession()) return; // sin sesión aún, no persistir
     try {
-      await fetch(`${this.apiBase}/messages`, {
-        method: 'PUT',
-        headers: this.headers(),
-        body: JSON.stringify(msg),
-      });
+      const res = await this.authFetch(`${this.apiBase}/messages`, this.json('PUT', msg));
+      if (!res.ok) console.error('[backend] putMessage respondió', res.status);
     } catch (e) {
       console.error('[backend] putMessage falló:', e);
     }
@@ -39,13 +42,12 @@ export class Backend {
     mimetype: string,
     bytes: Uint8Array,
   ): Promise<{ key: string } | null> {
-    if (!this.getToken()) return null;
+    if (!this.hasSession()) return null;
     try {
-      const res = await fetch(`${this.apiBase}/media/presign`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({ filename, mimetype }),
-      });
+      const res = await this.authFetch(
+        `${this.apiBase}/media/presign`,
+        this.json('POST', { filename, mimetype }),
+      );
       if (!res.ok) return null;
       const { url, key } = (await res.json()) as { url: string; key: string };
       const put = await fetch(url, {
@@ -72,13 +74,9 @@ export class Backend {
     status: 'sent' | 'no_whatsapp' | 'error';
     row: Record<string, string>;
   }): Promise<void> {
-    if (!this.getToken()) return;
+    if (!this.hasSession()) return;
     try {
-      await fetch(`${this.apiBase}/interactions/report`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify(r),
-      });
+      await this.authFetch(`${this.apiBase}/interactions/report`, this.json('POST', r));
     } catch (e) {
       console.error('[backend] reportInteraction falló:', e);
     }
@@ -93,13 +91,12 @@ export class Backend {
     campaign: string | undefined,
     contact: Record<string, string>,
   ): Promise<void> {
-    if (!this.getToken() || !campaign) return;
+    if (!this.hasSession() || !campaign) return;
     try {
-      await fetch(`${this.apiBase}/conversations/meta`, {
-        method: 'PUT',
-        headers: this.headers(),
-        body: JSON.stringify({ chatId, campaign, contact }),
-      });
+      await this.authFetch(
+        `${this.apiBase}/conversations/meta`,
+        this.json('PUT', { chatId, campaign, contact }),
+      );
     } catch (e) {
       console.error('[backend] putConversationMeta falló:', e);
     }
@@ -107,13 +104,9 @@ export class Backend {
 
   /** Registra este agente como activo en su campaña (para reparto del líder). */
   async heartbeat(campaign: string): Promise<void> {
-    if (!this.getToken() || !campaign) return;
+    if (!this.hasSession() || !campaign) return;
     try {
-      await fetch(`${this.apiBase}/agents/heartbeat`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({ campaign }),
-      });
+      await this.authFetch(`${this.apiBase}/agents/heartbeat`, this.json('POST', { campaign }));
     } catch (e) {
       console.error('[backend] heartbeat falló:', e);
     }

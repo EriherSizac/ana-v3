@@ -6,10 +6,13 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.electron.json && vite build",
+    "build": "tsc -p tsconfig.electron.json && node scripts/write-build-config.mjs && vite build",
     "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && tsc -p tsconfig.electron.json && electron .\"",
     "dist": "npm run build && electron-builder",
-    "publish": "npm run build && electron-builder --win --publish always"
+    "publish": "npm run build && electron-builder --win --publish always",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.json",
+    "hash-bypass": "node scripts/hash-bypass-password.mjs"
   },
   "dependencies": {
     "archiver": "^7.0.1",
@@ -38,6 +41,7 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.9.2",
     "vite": "^6.0.0",
+    "vitest": "^5.0.5",
     "wait-on": "^8.0.1"
   },
   "build": {

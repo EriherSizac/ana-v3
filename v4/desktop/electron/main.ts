@@ -1,6 +1,6 @@
 // File: main
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { app, BrowserWindow, ipcMain, Menu, Notification } from 'electron';
@@ -10,7 +10,10 @@ import { WaClient } from './whatsapp/client';
 import { interpolate } from './whatsapp/template';
 import { Backend } from './backend';
 import { JobPoller, type SendJob } from './jobs/poller';
-import { setupUpdater } from './updater';
+import { setupUpdater, retryUpdate, markUpdateBypassed, lastUpdateStatus } from './updater';
+import { TokenBroker, createAuthFetch } from './auth/tokenBroker';
+import { decideSetToken, shouldHeartbeat, type SetTokenReason } from './auth/session';
+import { BypassGuard, type AttemptState } from './update/bypass';
 
 // El proceso main no lee .env (eso es del renderer vía Vite). Default = backend
 // prod desplegado; override con ANA_API_BASE en el entorno si hace falta.
@@ -18,12 +21,20 @@ const API_BASE =
   process.env.ANA_API_BASE ?? 'https://njpfef2qna.execute-api.us-east-2.amazonaws.com';
 
 let mainWindow: BrowserWindow | null = null;
-let authToken: string | null = null; // lo setea el renderer tras login
 let agentCampaign: string | null = null; // campaña del agente (heartbeat)
+// Operador con sesión activa en el main (null tras logout o expiración).
+let activeOperator: string | null = null;
 const HEARTBEAT_MS = 5 * 60 * 1000;
 
+// ID token del operador: lo entrega el renderer (dueño de la renovación con
+// Amplify). Si al token le quedan < 2 min o el backend responde 401, el broker
+// pide uno nuevo al renderer (`auth:token-request`) y espera hasta 10 s.
+const broker = new TokenBroker({ request: () => send('auth:token-request', {}) });
+const authFetch = createAuthFetch(broker);
+const hasSession = () => broker.getToken() !== null;
+
 const wa = new WaClient();
-const backend = new Backend(API_BASE, () => authToken);
+const backend = new Backend(API_BASE, hasSession, authFetch);
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
@@ -93,7 +104,7 @@ wa.on('qr', (dataUrl) => send('wa:event', { type: 'qr', qr: dataUrl }));
 wa.on('status', (status) => {
   send('wa:event', { type: 'status', status });
   // Al conectar, el agente se anuncia activo en su campaña.
-  if (status === 'connected' && agentCampaign) void backend.heartbeat(agentCampaign);
+  if (status === 'connected') heartbeatIfConnected();
 });
 wa.on('error', (error) => send('wa:event', { type: 'error', error }));
 // Progreso del arranque (obteniendo/restaurando sesión, cargando chats).
@@ -175,7 +186,8 @@ async function runJob(
 
 const poller = new JobPoller({
   apiBase: API_BASE,
-  getToken: () => authToken,
+  hasSession,
+  authFetch,
   runJob,
   onProgress: (p) => send('wa:progress', p),
   // Asignación pendiente del agente → vista "Mi asignación" en el renderer.
@@ -189,17 +201,6 @@ ipcMain.handle('jobs:approve', (_e, jobIds: string[], template?: string) =>
 );
 // Hidrata la vista al montarse (sin esperar al próximo poll).
 ipcMain.handle('jobs:get-assignment', () => poller.getAssignment());
-/** cognito:username del id token (operatorId), sin verificar firma (ya validada
- *  por el authorizer en cada request; aquí solo lo leemos para nombrar la sesión). */
-function usernameFromJwt(token: string): string {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
-    return payload['cognito:username'] ?? payload.sub ?? 'ana';
-  } catch {
-    return 'ana';
-  }
-}
-
 // Recuerda el último operador que usó WhatsApp en esta máquina (persiste entre
 // reinicios) → al entrar OTRO usuario se bota el auth local del anterior.
 const LAST_OP_FILE = path.join(app.getPath('userData'), '.ana-last-operator');
@@ -218,48 +219,157 @@ const writeLastOperator = (op: string) => {
   }
 };
 
-ipcMain.handle('auth:set-token', async (_e, token: string | null) => {
-  authToken = token;
-  if (token) {
-    const op = usernameFromJwt(token);
-    // Usuario distinto al de la sesión guardada → bota el auth local previo.
-    if (readLastOperator() && readLastOperator() !== op) {
-      console.log('[wa] usuario distinto → borrando sesión local previa');
-      await wa.logoutLocal();
+ipcMain.handle(
+  'auth:set-token',
+  async (_e, token: string | null, opts?: { reason?: SetTokenReason }) => {
+    const action = decideSetToken({
+      token,
+      reason: opts?.reason,
+      activeOperator,
+      lastOperator: readLastOperator(),
+    });
+    switch (action.kind) {
+      case 'refresh':
+        // Mismo operador (renovación): solo reemplaza el token; no reinicia
+        // poller ni WhatsApp.
+        broker.setToken(token);
+        break;
+      case 'login':
+        broker.setToken(token);
+        // Usuario distinto al de la sesión guardada → bota el auth local previo.
+        if (action.wipeLocal) {
+          console.log('[wa] usuario distinto → borrando sesión local previa');
+          await wa.logoutLocal();
+        }
+        writeLastOperator(action.operator);
+        activeOperator = action.operator;
+        // Configura el respaldo de sesión a S3 (RemoteAuth) con el operador del JWT.
+        wa.configure(API_BASE, { hasSession, authFetch }, action.operator);
+        poller.start();
+        // Reconecta WhatsApp restaurando la sesión (sin pedir QR si existe).
+        if (!wa.isReady()) void wa.start();
+        break;
+      case 'expired':
+        // Sesión no renovable: detén poller y heartbeat pero CONSERVA la sesión
+        // local de WhatsApp (el mismo operador vuelve a entrar sin QR).
+        broker.setToken(null);
+        activeOperator = null;
+        poller.stop();
+        agentCampaign = null;
+        send('auth:expired', {});
+        break;
+      case 'logout':
+        // Logout (cambio de usuario): detén el poller y BORRA la sesión local de
+        // WhatsApp para que el siguiente usuario no entre al WhatsApp del anterior.
+        broker.setToken(null);
+        activeOperator = null;
+        poller.stop();
+        agentCampaign = null;
+        await wa.logoutLocal();
+        send('wa:event', { type: 'status', status: 'disconnected' });
+        break;
     }
-    writeLastOperator(op);
-    // Configura el respaldo de sesión a S3 (RemoteAuth) con el operador del JWT.
-    wa.configure(API_BASE, () => authToken, op);
-    poller.start();
-    // Reconecta WhatsApp restaurando la sesión remota (sin pedir QR si existe).
-    if (!wa.isReady()) void wa.start();
-  } else {
-    // Logout (cambio de usuario): detén el poller y BORRA la sesión local de
-    // WhatsApp para que el siguiente usuario no entre al WhatsApp del anterior.
-    poller.stop();
-    agentCampaign = null;
-    await wa.logoutLocal();
-    send('wa:event', { type: 'status', status: 'disconnected' });
-  }
-  return { ok: true };
-});
-// El renderer dispara el check cuando ya tiene el listener montado (UpdateGate)
-// → evita la carrera de perder el evento 'none'/'available'.
-ipcMain.handle('update:check', () => {
-  // beforeInstall: cierra WhatsApp/Chromium para que el instalador no se cuelgue.
-  if (mainWindow) setupUpdater(mainWindow, () => wa.stop());
-  return { ok: true };
-});
-ipcMain.handle('agent:register', (_e, campaign: string | null) => {
-  agentCampaign = campaign;
-  if (campaign && wa.isReady()) void backend.heartbeat(campaign);
+    return { ok: true };
+  },
+);
+// Respuesta del renderer a `auth:token-request` (null = no pudo renovar ahora).
+ipcMain.handle('auth:provide-token', (_e, token: string | null) => {
+  broker.provide(token);
   return { ok: true };
 });
 
-// Heartbeat periódico mientras haya campaña + sesión WA viva.
-setInterval(() => {
-  if (agentCampaign && wa.isReady()) void backend.heartbeat(agentCampaign);
-}, HEARTBEAT_MS);
+// El renderer dispara el check cuando ya tiene el listener montado (UpdateGate)
+// → evita la carrera de perder el evento 'none'/'available'. Idempotente: una
+// recarga solo recibe la última fase (sin listeners ni intervalos nuevos).
+ipcMain.handle('update:check', () => {
+  if (mainWindow)
+    setupUpdater(mainWindow, {
+      // Al terminar la descarga: no iniciar jobs nuevos, esperar el job en curso
+      // (máx 3 min) y cerrar WhatsApp/Chromium para que el instalador no se cuelgue.
+      pauseNewJobs: () => poller.pauseNewJobs(),
+      hasJobInFlight: () => poller.hasJobInFlight(),
+      waitIdle: (ms) => poller.waitIdle(ms),
+      beforeInstall: () => wa.stop(),
+    });
+  return { ok: true };
+});
+ipcMain.handle('update:retry', () => {
+  retryUpdate();
+  return { ok: true };
+});
+
+// ---- Acceso de emergencia de Sistemas (gate de actualización) ----
+// El hash scrypt de la contraseña maestra se inyecta al compilar
+// (ANA_UPDATE_BYPASS_HASH → dist-electron/build-config.json). Sin hash, no hay bypass.
+function readBuildConfig(): { updateBypassHash?: string } {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, 'build-config.json'), 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+const BYPASS_STATE_FILE = path.join(app.getPath('userData'), '.ana-update-bypass.json');
+const bypassGuard = new BypassGuard(readBuildConfig().updateBypassHash, {
+  load: (): AttemptState | null => {
+    try {
+      return JSON.parse(fs.readFileSync(BYPASS_STATE_FILE, 'utf-8'));
+    } catch {
+      return null;
+    }
+  },
+  save: (s) => {
+    try {
+      fs.writeFileSync(BYPASS_STATE_FILE, JSON.stringify(s));
+    } catch (e) {
+      console.error('[update] no se pudo guardar intentos de bypass:', e);
+    }
+  },
+});
+/** Solo aplica cuando el chequeo terminó en error (no 404) en el build instalado. */
+const bypassApplies = () => app.isPackaged && lastUpdateStatus()?.phase === 'error';
+
+ipcMain.handle('update:bypass-status', () => {
+  const st = bypassGuard.status();
+  return { ...st, available: st.available && bypassApplies() };
+});
+ipcMain.handle('update:bypass', (_e, password: string) => {
+  if (!bypassApplies()) return { ok: false, reason: 'unavailable', ...bypassGuard.status() };
+  const r = bypassGuard.verify(String(password ?? ''));
+  if (r.ok) {
+    // Registro del evento. No hay ruta de backend para auditoría y aún no hay
+    // sesión (el gate va antes del login): consola + archivo local.
+    const entry = {
+      event: 'update-bypass',
+      at: new Date().toISOString(),
+      appVersion: app.getVersion(),
+      operator: readLastOperator(),
+      updateError: lastUpdateStatus()?.message ?? null,
+    };
+    console.warn('[update] acceso de emergencia usado', entry);
+    try {
+      fs.appendFileSync(path.join(app.getPath('userData'), 'update-bypass.log'), JSON.stringify(entry) + '\n');
+    } catch (e) {
+      console.error('[update] no se pudo escribir update-bypass.log:', e);
+    }
+    markUpdateBypassed();
+  }
+  return r;
+});
+
+/** Heartbeat solo con campaña registrada y WhatsApp `connected` (no en QR). */
+function heartbeatIfConnected() {
+  if (agentCampaign && shouldHeartbeat(wa.getState(), agentCampaign))
+    void backend.heartbeat(agentCampaign);
+}
+
+ipcMain.handle('agent:register', (_e, campaign: string | null) => {
+  agentCampaign = campaign;
+  heartbeatIfConnected();
+  return { ok: true };
+});
+
+// Heartbeat periódico mientras haya campaña + WhatsApp conectado.
+setInterval(heartbeatIfConnected, HEARTBEAT_MS);
 ipcMain.handle('wa:start', async () => {
   await wa.start();
   return { ok: true };
