@@ -17,6 +17,7 @@ import { promoteToReview } from '../lib/jobReview';
 import { checkAssignmentsEnabled } from '../lib/distribution';
 import { ok, bad, claimUser } from '../lib/http';
 import { resolveUserAccess, type UserAccess } from '../lib/access';
+import { ANA_PERMISSIONS, type AnaPermission } from '../lib/permissions';
 import { campaignIn, canonicalOperatorId, resolveCatalogCampaign, sameCampaign } from '../lib/identity';
 
 export const REASSIGN_CONCURRENCY = 10;
@@ -62,12 +63,20 @@ export const handler = async (
   }
 };
 
-function canManageCampaign(access: UserAccess, campaign: string): boolean {
+/**
+ * Autorización de equipo (v4-enforce-permissions D4), hard check sin flag:
+ * admin cualquier campaña; líder o usuario con `perm` solo campañas propias
+ * (o `*`), sin distinguir mayúsculas.
+ */
+function canTeam(access: UserAccess, campaign: string, perm: AnaPermission): boolean {
   if (access.isAdmin) return true;
-  if (!access.isLeader) return false;
-  return campaignIn(access.campaigns, campaign); // sin distinguir mayúsculas
-
+  if (!access.isLeader && !access.permissions.includes(perm)) return false;
+  return campaignIn(access.campaigns, campaign);
 }
+/** GET /jobs/summary y GET /jobs/review. */
+const canViewTeam = (a: UserAccess, c: string) => canTeam(a, c, ANA_PERMISSIONS.TEAM_JOBS_VIEW);
+/** POST /jobs/reassign y POST /jobs/review/resolve. */
+const canManageTeam = (a: UserAccess, c: string) => canTeam(a, c, ANA_PERMISSIONS.TEAM_JOBS_MANAGE);
 
 type JobRef = Pick<SendJob, 'operatorId' | 'jobId' | 'campaignId' | 'ttl' | 'status' | 'srcKey'>;
 
@@ -126,7 +135,7 @@ async function summary(
   campaign?: string,
 ): Promise<APIGatewayProxyResultV2> {
   if (!campaign) return bad('falta campaign');
-  if (!canManageCampaign(access, campaign)) return bad('sin permiso', 403);
+  if (!canViewTeam(access, campaign)) return bad('sin permiso', 403);
 
   const jobs = await queryCampaignJobs(campaign);
   const byOperator = new Map<string, { pending: number; review: number; files: Set<string> }>();
@@ -184,7 +193,7 @@ async function review(
   srcKey?: string,
 ): Promise<APIGatewayProxyResultV2> {
   if (!campaign) return bad('falta campaign');
-  if (!canManageCampaign(access, campaign)) return bad('sin permiso', 403);
+  if (!canViewTeam(access, campaign)) return bad('sin permiso', 403);
 
   const refs = (await queryCampaignJobs(campaign)).filter(
     (j) => REVIEW_STATUSES.has(String(j.status)) && (!srcKey || j.srcKey === srcKey),
@@ -338,7 +347,7 @@ async function resolveReview(
   }
   const to = typeof payload.to === 'string' && payload.to.trim() ? canonicalOperatorId(payload.to) : undefined;
   if (payload.to !== undefined && payload.to !== null && !to) return bad('to inválido');
-  if (!canManageCampaign(access, campaign)) return bad('sin permiso', 403);
+  if (!canManageTeam(access, campaign)) return bad('sin permiso', 403);
   // Con AGENT_ROSTER_FILTER el destino del reencolado debe estar habilitado.
   if (action === 'requeue' && to) {
     const check = await checkAssignmentsEnabled(campaign, [to]);
@@ -402,7 +411,7 @@ async function reassign(
   const to = canonicalOperatorId(payload.to);
   if (!campaign || !from || !to) return bad('faltan campaign/from/to');
   if (from === to) return bad('from y to son el mismo operador');
-  if (!canManageCampaign(access, campaign)) return bad('sin permiso', 403);
+  if (!canManageTeam(access, campaign)) return bad('sin permiso', 403);
 
   const started = Date.now();
   const refs = await queryPendingCampaignJobs(campaign, from);

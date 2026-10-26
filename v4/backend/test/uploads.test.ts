@@ -7,7 +7,12 @@ import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { ddbMock, s3Mock } from './helpers';
 
 const access = vi.hoisted(() => ({ value: null as any }));
-vi.mock('../src/lib/access', () => ({ resolveUserAccess: async () => access.value, can: () => true }));
+vi.mock('../src/lib/access', () => ({
+  resolveUserAccess: async () => access.value,
+  can: () => true,
+  canRoute: () => true,
+  routeAllowed: async () => true,
+}));
 vi.mock('../src/lib/dashboard', () => ({ getEligibleAgents: async () => [] }));
 vi.mock('../src/lib/campaignsDb', () => ({ campaignExists: async () => true }));
 

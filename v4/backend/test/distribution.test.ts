@@ -7,7 +7,12 @@ const eligible = vi.hoisted(() => ({ value: [] as string[] }));
 const access = vi.hoisted(() => ({ value: null as any }));
 
 vi.mock('../src/lib/dashboard', () => ({ getEligibleAgents: async () => eligible.value }));
-vi.mock('../src/lib/access', () => ({ resolveUserAccess: async () => access.value, can: () => true }));
+vi.mock('../src/lib/access', () => ({
+  resolveUserAccess: async () => access.value,
+  can: () => true,
+  canRoute: () => true,
+  routeAllowed: async () => true,
+}));
 vi.mock('../src/lib/campaignsDb', () => ({ campaignExists: async () => true }));
 vi.mock('@aws-sdk/s3-request-presigner', () => ({ getSignedUrl: async () => 'https://signed.invalid/put' }));
 

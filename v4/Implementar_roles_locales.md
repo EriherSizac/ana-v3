@@ -322,6 +322,13 @@ validado. Sin el flag, un bug de permisos te bloquea a todos en producción.
 
 ---
 
+### 8.1 Cómo lo aplica ana v4
+
+ana v4 usa tres modos del flag (`false`, `report`, `true`), un mapa ruta → permiso
+centralizado (`ROUTE_PERMISSIONS`) y un superadmin por rol además del fijo. La tabla
+completa, los chequeos explícitos y el procedimiento de activación están en
+`v4/ARCHITECTURE.md` → "Aplicación de permisos en ana v4".
+
 ## 9. Checklist (para ejecutar la tarea)
 
 - \[ \] Definiste prefijo de módulo, catálogo (constante en código) y almacén local.

@@ -55,6 +55,31 @@ export const normalizeRoleName = (name?: string): string =>
 export const isAgentRole = (name?: string): boolean => /agente/.test(normalizeRoleName(name));
 
 /**
+ * Rol de superadmin (v4-enforce-permissions D7): sin diacríticos, en
+ * minúsculas y sin espacios, guiones ni guiones bajos contiene "superadmin"
+ * ("Superadmin", "Súper Admin", "super-admin"). "Administrador X" no cuenta.
+ */
+export const isSuperadminRole = (name?: string): boolean =>
+  normalizeRoleName(name).replace(/[\s_-]+/g, '').includes('superadmin');
+
+/**
+ * Permiso de cada ruta para los chequeos NORMALES (sujetos a
+ * PERMISSIONS_ENFORCED, design D2). Los chequeos explícitos (consola admin,
+ * presign CSV, equipo, "ver como") no dependen del flag y no están aquí.
+ */
+export const ROUTE_PERMISSIONS: Readonly<Record<string, AnaPermission>> = {
+  'GET /conversations': ANA_PERMISSIONS.CHATS_VIEW,
+  'GET /conversations/{chatId}/messages': ANA_PERMISSIONS.CHATS_VIEW,
+  'GET /media/url': ANA_PERMISSIONS.CHATS_VIEW,
+  'GET /jobs/poll': ANA_PERMISSIONS.CAMPAIGN_SEND,
+  'POST /jobs/ack': ANA_PERMISSIONS.CAMPAIGN_SEND,
+  'POST /jobs/claim': ANA_PERMISSIONS.CAMPAIGN_SEND,
+  'POST /interactions/report': ANA_PERMISSIONS.CAMPAIGN_SEND,
+  'POST /interactions/open': ANA_PERMISSIONS.CHATS_REPLY,
+  'POST /interactions/manual': ANA_PERMISSIONS.CHATS_REPLY,
+};
+
+/**
  * Filtra una lista de permisos para el almacén local: acepta grants (`perm`) y
  * denies (`-perm`) solo de permisos del catálogo.
  */

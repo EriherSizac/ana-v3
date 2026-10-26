@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const access = vi.hoisted(() => ({ value: null as any }));
 const registered = vi.hoisted(() => ({ calls: [] as [string, string][] }));
-vi.mock('../src/lib/access', () => ({ resolveUserAccess: async () => access.value, can: () => true }));
+vi.mock('../src/lib/access', () => ({
+  resolveUserAccess: async () => access.value,
+  can: () => true,
+  canRoute: () => true,
+  routeAllowed: async () => true,
+}));
 vi.mock('../src/lib/campaignsDb', () => ({
   listCampaignsDb: async () => ['didi_vip'],
   campaignExists: async () => true,

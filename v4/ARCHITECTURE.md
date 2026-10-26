@@ -81,13 +81,64 @@ Sigue `Implementar_roles_locales.md` (patrón local recomendado):
 - `resolveUserAccess(username)` (backend/src/lib/access.ts): une permisos locales de todos los roles del usuario.
 - **Superadmin**: `erick.silva` → acceso total (bypass).
 - **Líder**: rol cuyo `role_name` ~ `/l[ií]der/` → obtiene `contacts:upload` + `contacts:distribute` aunque su almacén esté vacío.
-- **Enforcement** detrás del flag `PERMISSIONS_ENFORCED` (default `false` → no bloquea hasta validar; guía §8). El permiso **admin siempre es fail-closed** (no depende del flag).
+- **Enforcement** detrás del flag `PERMISSIONS_ENFORCED` (`false` default, `report`, `true`; ver abajo). El permiso **admin siempre es fail-closed** (no depende del flag).
 - **Caché** de `resolveUserAccess` (guía §6): L1 memoria 15 s + L2 `AccessCacheTable` 15 min. Al cambiar permisos de un rol → `invalidateByRole` borra del caché a los usuarios con ese rol. Lookups vacíos (posible outage de la API externa) no se cachean.
 - **UI admin** (`AdminRolePerms.tsx`): `GET`/`PUT /admin/role-permissions/{roleId}` para asignar permisos por rol.
 
-Catálogo (`ana:*`): `admin:console:manage`, `contacts:list:upload`,
-`contacts:list:distribute`, `chats:conversation:view`, `chats:message:reply`,
-`campaign:message:send`.
+Catálogo (`ana:*`): `admin:console:manage`, `admin:agents:manage`, `contacts:list:upload`,
+`contacts:list:distribute`, `chats:conversation:view`, `chats:team:view`, `chats:message:reply`,
+`campaign:message:send`, `team:jobs:view`, `team:jobs:manage`.
+
+### Aplicación de permisos en ana v4 (v4-enforce-permissions)
+
+**Flag `PERMISSIONS_ENFORCED`** (parámetro de despliegue `permissionsEnforced`):
+
+| Valor | Efecto en los chequeos normales |
+|---|---|
+| `false` (default) | permite; sin registro |
+| `report` | permite y registra `{"evt":"perm_would_deny","route","username","perm"}` |
+| `true` | aplica: 403 `{"error":"sin permiso"}` |
+
+**Mapa ruta → permiso** (chequeos normales, `ROUTE_PERMISSIONS` en `backend/src/lib/permissions.ts`):
+
+| Ruta | Permiso |
+|---|---|
+| `GET /conversations`, `GET /conversations/{chatId}/messages`, `GET /media/url` | `ana:chats:conversation:view` |
+| `GET /jobs/poll`, `POST /jobs/ack`, `POST /jobs/claim`, `POST /interactions/report` | `ana:campaign:message:send` |
+| `POST /interactions/open`, `POST /interactions/manual` | `ana:chats:message:reply` |
+
+**Chequeos explícitos** (no dependen del flag): consola admin (`ana:admin:console:manage`);
+presign de CSV (admin, líder o `ana:contacts:list:upload`); "ver como" de conversaciones,
+mensajes y media (admin, o `ana:chats:team:view` con el agente en el roster v4 o en la
+lista derivada de una campaña propia); `GET /jobs/summary` y `GET /jobs/review` (admin,
+o líder / `ana:team:jobs:view` en campaña propia); `POST /jobs/reassign` y
+`POST /jobs/review/resolve` (admin, o líder / `ana:team:jobs:manage` en campaña propia);
+`GET /agents` (admin o `*`; si no, líder, `ana:chats:team:view` o `ana:team:jobs:view`).
+
+**Líder** (`role_name` con "lider"): siempre upload, distribute, chats view, chats team view,
+team jobs view/manage, `ana:campaign:message:send` y `ana:admin:agents:manage`.
+
+**Superadmin por rol**: además de `erick.silva` (fijo, sin consultar la API de Roles),
+cualquier usuario con un rol cuyo nombre, sin acentos, en minúsculas y sin espacios,
+guiones ni guiones bajos contiene "superadmin" ("Superadmin", "Súper Admin", "super-admin")
+recibe acceso total (`campaigns: ["*"]`, todos los permisos, `isAdmin`/`isLeader`) con
+sus roles reales. Lo asigna quien administra la API de Roles de Pernexium (fuera de ANA);
+se retira quitando el rol allí y surte efecto al vencer la caché de acceso (≤ 15 min) o al
+invalidar el rol (`PUT /admin/role-permissions/{roleId}` invalida a sus usuarios). Cada
+resolución por rol registra `{"evt":"superadmin_role","username","role"}`.
+
+**Desktop**: pestañas según permisos ("Chats" con `chats:conversation:view`, "Mi asignación"
+con `campaign:message:send`, "Campañas" admin/líder/`contacts:list:upload`, "Admin" solo admin);
+"Ver como" con `chats:team:view`; "Envíos pendientes" con `team:jobs:view` y "Mover" con
+`team:jobs:manage`; sin `chats:message:reply` el main rechaza envíos manuales
+("sin permiso para responder"). El editor de roles muestra los 9 permisos y conserva al
+guardar los valores que no muestra.
+
+**Activación**: (1) deploy con `permissionsEnforced=report` en dev y prod; (2) release del
+desktop; (3) revisar `perm_would_deny` en CloudWatch ≥ 5 días hábiles y dar grants
+explícitos (p. ej. `ana:campaign:message:send`) a los roles que deban operar; (4) deploy
+con `permissionsEnforced=true` en dev, probar con usuarios de cada tipo, luego prod.
+Rollback: redeploy con `report`.
 
 ### Reparto de contactos del líder
 Un líder sube CSV con "repartir" → presign marca `distribute=1` + `campaign` en

@@ -11,7 +11,12 @@ import {
 import { ddbMock } from './helpers';
 
 const access = vi.hoisted(() => ({ value: null as any }));
-vi.mock('../src/lib/access', () => ({ resolveUserAccess: async () => access.value, can: () => true }));
+vi.mock('../src/lib/access', () => ({
+  resolveUserAccess: async () => access.value,
+  can: () => true,
+  canRoute: () => true,
+  routeAllowed: async () => true,
+}));
 
 import { handler as jobsPoll } from '../src/handlers/jobsPoll';
 import { handler as jobsAdmin } from '../src/handlers/jobsAdmin';

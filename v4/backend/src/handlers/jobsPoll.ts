@@ -9,6 +9,7 @@ import { ddb } from '../lib/dynamo';
 import { JOBS_TABLE, classify, isFinalStatus, isReviewDue, type FinalStatus, type SendJob } from '../lib/jobs';
 import { promoteToReview } from '../lib/jobReview';
 import { ok, bad, claimUser } from '../lib/http';
+import { routeAllowed } from '../lib/access';
 
 /**
  * GET /jobs/poll  → jobs del PROPIO operador, sin lease (v4-harden-send-job-queue D3):
@@ -38,6 +39,8 @@ export const handler = async (
   if (!user) return bad('no autenticado', 401);
 
   try {
+    // ana:campaign:message:send según PERMISSIONS_ENFORCED (v4-enforce-permissions).
+    if (!(await routeAllowed(user, event.routeKey))) return bad('sin permiso', 403);
     if (event.routeKey === 'GET /jobs/poll') return await poll(user);
     if (event.routeKey === 'POST /jobs/claim')
       return await claim(user, JSON.parse(event.body ?? '{}'));

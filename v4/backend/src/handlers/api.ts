@@ -20,7 +20,9 @@ import {
 } from '../lib/conversations';
 import { s3, CSV_BUCKET, MEDIA_BUCKET } from '../lib/s3';
 import { ok, bad, claimUser } from '../lib/http';
-import { resolveUserAccess, can, type UserAccess } from '../lib/access';
+import { resolveUserAccess, can, canRoute, type UserAccess } from '../lib/access';
+import { isAgentInCampaigns } from '../lib/agents';
+import { normalizeId, readCampaignAgents } from '../lib/campaignAgentsList';
 import { ANA_PERMISSIONS, sanitizeRolePermissions } from '../lib/permissions';
 import { setRolePermissions, getRolePermissions } from '../lib/rolePerms';
 import { invalidateByRole } from '../lib/accessCache';
@@ -41,7 +43,9 @@ import {
  * Resuelve el operador cuyas conversaciones se van a leer y autoriza el acceso.
  *  - sin operatorId, o == self → el propio usuario.
  *  - admin → cualquier operador.
- *  - líder con team-view → solo agentes de sus campañas.
+ *  - con `ana:chats:team:view` (líderes lo tienen) → solo agentes del roster
+ *    de sus campañas (v4-enforce-permissions D3).
+ * Hard check: no depende de PERMISSIONS_ENFORCED.
  * Devuelve el operatorId o null si no está autorizado.
  */
 async function resolveViewTarget(
@@ -50,9 +54,26 @@ async function resolveViewTarget(
 ): Promise<string | null> {
   const target = requested ? canonicalOperatorId(requested) : access.username;
   if (target === access.username) return target;
-  // "Ver como" (leer conversaciones de otro agente): SOLO admins.
   if (access.isAdmin) return target;
-  return null;
+  if (!access.permissions.includes(ANA_PERMISSIONS.CHATS_TEAM_VIEW)) return null;
+  if (access.campaigns.includes('*')) return target;
+  return (await isInOwnRoster(target, access.campaigns)) ? target : null;
+}
+
+/** ¿`operatorId` está en el roster v4 (o en la lista derivada) de alguna campaña? */
+async function isInOwnRoster(operatorId: string, campaigns: string[]): Promise<boolean> {
+  const own = campaigns.filter((c) => c && c !== '*');
+  if (await isAgentInCampaigns(operatorId, own)) return true;
+  for (const c of own) {
+    try {
+      const list = await readCampaignAgents(c);
+      if (list?.agents.some((a) => normalizeId(a.cognitoUsername) === operatorId || normalizeId(a.username) === operatorId))
+        return true;
+    } catch {
+      /* lista no disponible: solo cuenta el roster de la tabla */
+    }
+  }
+  return false;
 }
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -70,13 +91,13 @@ export const handler = async (
       case 'GET /me':
         return ok({ access });
       case 'GET /conversations': {
-        if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
+        if (!canRoute(access, route)) return bad('sin permiso', 403);
         const target = await resolveViewTarget(access, event.queryStringParameters?.operatorId);
         if (!target) return bad('sin permiso', 403);
         return await listConversations(target, event.queryStringParameters ?? {});
       }
       case 'GET /conversations/{chatId}/messages': {
-        if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
+        if (!canRoute(access, route)) return bad('sin permiso', 403);
         const target = await resolveViewTarget(access, event.queryStringParameters?.operatorId);
         if (!target) return bad('sin permiso', 403);
         return await listMessages(target, event.pathParameters?.chatId, event.queryStringParameters ?? {});
@@ -116,7 +137,7 @@ export const handler = async (
         // key con scope al propio username → basta estar autenticado.
         return await presignMedia(user, JSON.parse(event.body ?? '{}'));
       case 'GET /media/url':
-        if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
+        if (!canRoute(access, route)) return bad('sin permiso', 403);
         return await presignMediaGet(access, event.queryStringParameters?.key);
       // --- Sesión de WhatsApp respaldada en S3 (RemoteAuth) ---
       case 'POST /wa-session/presign':

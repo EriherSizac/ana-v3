@@ -52,7 +52,12 @@ provider:
     # (DEV sería 2egq6rek0a). Si se consulta DEV, los usuarios de prod no existen.
     ROLES_API_BASE: ${param:rolesApiBase, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}
     ROLES_API_KEY: ${env:ROLES_API_KEY, ''}
-    # Flag de enforcement (guía §8). 'false' = no bloquear hasta validar.
+    # Flag de enforcement (guía §8, v4-enforce-permissions D1), parámetro
+    # `permissionsEnforced`:
+    #   'false'  (default) permite todo lo que no sea chequeo explícito.
+    #   'report' permite y registra evt:"perm_would_deny" (ruta, usuario, permiso).
+    #   'true'   aplica ROUTE_PERMISSIONS (403 "sin permiso").
+    # Ej.: npx serverless deploy --stage prod --param="permissionsEnforced=report"
     PERMISSIONS_ENFORCED: ${param:permissionsEnforced, 'false'}
     # API de agentes del dashboard (imery) — agentes activos por campaña.
     DASHBOARD_BASE_PATH: ${param:dashboardBasePath, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}

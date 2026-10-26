@@ -18,7 +18,7 @@ import {
   type Message,
   type UserAccess,
 } from '../lib/api';
-import { can, ANA_PERMISSIONS } from '../lib/permissions';
+import { canReply, teamPanel } from '../lib/permissions';
 import { TeamViewer } from './TeamViewer';
 import { SearchableSelect } from '../ui/SearchableSelect';
 import { Toggle } from '../ui/Toggle';
@@ -39,9 +39,11 @@ export function Chats({
   waStatus: WaStatus; // estado WA en App (persiste entre tabs)
   qr: string | null;
 }) {
-  // Panel de equipo: admin (ver como + reasignar) o líder (solo reasignar).
-  // El "ver como" en sí queda restringido a admin dentro de TeamViewer.
-  const showTeamPanel = !!access?.isAdmin || !!access?.isLeader;
+  // Panel de equipo según permisos (v4-enforce-permissions): "Ver como",
+  // pendientes y "Mover" se deciden dentro de TeamViewer.
+  const showTeamPanel = teamPanel(access).show;
+  // Sin ana:chats:message:reply: sin campo, adjunto ni "Registrar gestión".
+  const mayReply = canReply(access);
 
   const [convos, setConvos] = useState<Conversation[] | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -252,7 +254,7 @@ export function Chats({
   }
 
   async function sendReply() {
-    if (!active || !reply.trim() || viewingOther) return; // solo respondo en mi sesión
+    if (!active || !reply.trim() || viewingOther || !mayReply) return; // solo respondo en mi sesión
     if (!beginReplySend()) return;
     const body = reply.trim();
     stopTyping();
@@ -450,7 +452,7 @@ export function Chats({
           <>
             <header className="flex items-center justify-between border-b border-neutral-50 bg-white px-5 py-3">
               <span className="text-sm font-semibold">{maskPhone(active)}</span>
-              {!viewingOther && (
+              {!viewingOther && mayReply && (
                 <button
                   onClick={() => setShowInteraction(true)}
                   className="rounded-lg border border-neutral-50 px-3 py-1 text-xs font-semibold text-primary hover:bg-primary-light-90"
@@ -494,6 +496,10 @@ export function Chats({
               <div className="border-t border-neutral-50 bg-neutral-30 px-5 py-3 text-xs text-text-light">
                 Solo lectura — esta conversación es de otro agente; no puedes
                 responder desde su sesión.
+              </div>
+            ) : !mayReply ? (
+              <div className="border-t border-neutral-50 bg-neutral-30 px-5 py-3 text-xs text-text-light">
+                No tienes permiso para responder.
               </div>
             ) : (
               <div className="border-t border-neutral-50 bg-white p-3">

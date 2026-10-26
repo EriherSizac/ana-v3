@@ -20,10 +20,9 @@ import {
   SESSION_EXPIRED_MESSAGE,
 } from './lib/auth';
 import { getMe, type UserAccess } from './lib/api';
-import { can, ANA_PERMISSIONS } from './lib/permissions';
+import { visibleTabs, type Tab } from './lib/permissions';
 import type { UpdateStatus } from './types/ana';
 
-type Tab = 'chats' | 'assignment' | 'campaigns' | 'admin';
 export type WaStatus = 'idle' | 'qr' | 'authenticated' | 'connected' | 'disconnected';
 
 export function App() {
@@ -137,10 +136,9 @@ export function App() {
       </>
     );
 
-  const isAdmin = !!access?.isAdmin;
-  const isLeader = !!access?.isLeader;
-  // Subir/poner asignación: admin o líder (uploaders).
-  const canUpload = isAdmin || isLeader || can(access, ANA_PERMISSIONS.CONTACTS_UPLOAD);
+  // Pestañas según permisos (v4-enforce-permissions); sin /me, ninguna.
+  const tabs = visibleTabs(access);
+  const current: Tab | null = tabs.includes(tab) ? tab : (tabs[0] ?? null);
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-neutral-30">
@@ -166,19 +164,23 @@ export function App() {
           )}
         </div>
         <nav className="flex shrink-0 items-center gap-1">
-          <NavPill active={tab === 'chats'} onClick={() => setTab('chats')}>
-            Chats
-          </NavPill>
-          <NavPill active={tab === 'assignment'} onClick={() => setTab('assignment')}>
-            Mi asignación
-          </NavPill>
-          {canUpload && (
-            <NavPill active={tab === 'campaigns'} onClick={() => setTab('campaigns')}>
+          {tabs.includes('chats') && (
+            <NavPill active={current === 'chats'} onClick={() => setTab('chats')}>
+              Chats
+            </NavPill>
+          )}
+          {tabs.includes('assignment') && (
+            <NavPill active={current === 'assignment'} onClick={() => setTab('assignment')}>
+              Mi asignación
+            </NavPill>
+          )}
+          {tabs.includes('campaigns') && (
+            <NavPill active={current === 'campaigns'} onClick={() => setTab('campaigns')}>
               Campañas
             </NavPill>
           )}
-          {isAdmin && (
-            <NavPill active={tab === 'admin'} onClick={() => setTab('admin')}>
+          {tabs.includes('admin') && (
+            <NavPill active={current === 'admin'} onClick={() => setTab('admin')}>
               Admin
             </NavPill>
           )}
@@ -194,14 +196,18 @@ export function App() {
         </nav>
       </header>
 
-      {tab === 'admin' && isAdmin ? (
+      {current === 'admin' ? (
         <AdminRolePerms />
-      ) : tab === 'campaigns' && canUpload ? (
+      ) : current === 'campaigns' ? (
         <Campaigns access={access} />
-      ) : tab === 'assignment' ? (
+      ) : current === 'assignment' ? (
         <Assignment />
-      ) : (
+      ) : current === 'chats' ? (
         <Chats access={access} waStatus={waStatus} qr={qr} />
+      ) : (
+        <main className="mx-auto max-w-xl px-4 py-12 text-center text-sm text-text-light">
+          {accessError ? 'No se pudo cargar tu acceso.' : 'Tu rol no tiene secciones habilitadas en ana.'}
+        </main>
       )}
 
       {/* Progreso del batch en curso, visible en cualquier tab. */}

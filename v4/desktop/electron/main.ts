@@ -14,6 +14,7 @@ import { outcomeForResolve } from './jobs/outcome';
 import { setupUpdater, retryUpdate, markUpdateBypassed, lastUpdateStatus } from './updater';
 import { TokenBroker, createAuthFetch } from './auth/tokenBroker';
 import { decideSetToken, shouldHeartbeat, type SetTokenReason } from './auth/session';
+import { decideReply, type MainAccess } from './auth/replyGate';
 import { BypassGuard, type AttemptState } from './update/bypass';
 import {
   createGuard,
@@ -52,6 +53,19 @@ const hasSession = () => broker.getToken() !== null;
 
 const wa = new WaClient();
 const backend = new Backend(API_BASE, hasSession, authFetch);
+
+// Acceso del operador (GET /me) para el permiso de respuesta manual
+// (v4-enforce-permissions D5). Se lee al fijar o renovar el token.
+let mainAccess: MainAccess | null = null;
+async function refreshAccess(): Promise<void> {
+  const a = await backend.getAccess();
+  if (a) mainAccess = a;
+}
+/** Envío manual permitido? Si aún no se conoce el acceso, intenta leerlo una vez. */
+async function replyGate() {
+  if (!mainAccess) await refreshAccess();
+  return decideReply(mainAccess);
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
@@ -310,6 +324,7 @@ handle(
         // Mismo operador (renovación): solo reemplaza el token; no reinicia
         // poller ni WhatsApp.
         broker.setToken(token);
+        void refreshAccess();
         break;
       case 'login':
         broker.setToken(token);
@@ -320,6 +335,8 @@ handle(
         }
         writeLastOperator(action.operator);
         activeOperator = action.operator;
+        mainAccess = null;
+        void refreshAccess();
         // Configura el respaldo de sesión a S3 (RemoteAuth) con el operador del JWT.
         wa.configure(API_BASE, { hasSession, authFetch }, action.operator);
         poller.start();
@@ -331,6 +348,7 @@ handle(
         // local de WhatsApp (el mismo operador vuelve a entrar sin QR).
         broker.setToken(null);
         activeOperator = null;
+        mainAccess = null;
         poller.stop();
         agentCampaign = null;
         send('auth:expired', {});
@@ -340,6 +358,7 @@ handle(
         // WhatsApp para que el siguiente usuario no entre al WhatsApp del anterior.
         broker.setToken(null);
         activeOperator = null;
+        mainAccess = null;
         poller.stop();
         agentCampaign = null;
         await wa.logoutLocal();
@@ -490,6 +509,8 @@ handle(
     return isJid(j) && body !== undefined ? ([j, body] as [string, string]) : undefined;
   },
   async (jid, body) => {
+  const gate = await replyGate();
+  if (!gate.ok) return gate;
   try {
     // Manual: el typing ya se mostró en vivo mientras escribías → sin delay extra.
     const msg = await wa.sendText(jid, body, false);
@@ -518,6 +539,8 @@ handle(
     return isJid(j) && m ? ([j, m] as [string, NonNullable<ReturnType<typeof vMedia>>]) : undefined;
   },
   async (jid, m) => {
+    const gate = await replyGate();
+    if (!gate.ok) return gate;
     try {
       const msg = await wa.sendMediaData(jid, m);
       // Respaldo a S3 + puntero, igual que la media entrante.

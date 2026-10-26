@@ -18,6 +18,7 @@ import {
 } from '../lib/interactions';
 import { claim, confirm, release } from '../lib/idempotency';
 import { resolveCatalogCampaign } from '../lib/identity';
+import { routeAllowed } from '../lib/access';
 
 // Columnas del CSV donde puede venir el credit_id (mismos alias que v3-cli).
 const CREDIT_COLUMNS = ['credit', 'credito', 'credit_id', 'id_credito'];
@@ -93,6 +94,8 @@ export const handler = async (
   if (!user) return bad('no autenticado', 401);
 
   try {
+    // report → envío de campaña; open/manual → responder (según PERMISSIONS_ENFORCED).
+    if (!(await routeAllowed(user, event.routeKey))) return bad('sin permiso', 403);
     if (event.routeKey === 'POST /interactions/open')
       return await reportOpen(user, JSON.parse(event.body ?? '{}'));
     if (event.routeKey === 'POST /interactions/manual')

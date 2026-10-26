@@ -13,11 +13,21 @@ import {
   SUPERADMIN_USERNAME,
   isLeaderRole,
   isAgentRole,
+  isSuperadminRole,
+  ROUTE_PERMISSIONS,
   type AnaPermission,
 } from './permissions';
 
-// Flag de enforcement (guía §8). Apagado → todo permitido. Encender por stage.
-const ENFORCED = process.env.PERMISSIONS_ENFORCED === 'true';
+/**
+ * Modo del flag de enforcement (v4-enforce-permissions D1), leído en cada
+ * llamada: `true` → enforce, `report` → permite y registra `perm_would_deny`,
+ * cualquier otro valor → off (permite sin registro).
+ */
+export type PermissionsMode = 'off' | 'report' | 'enforce';
+export function permissionsMode(): PermissionsMode {
+  const v = process.env.PERMISSIONS_ENFORCED;
+  return v === 'true' ? 'enforce' : v === 'report' ? 'report' : 'off';
+}
 
 export interface UserAccess {
   username: string;
@@ -60,6 +70,25 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
   // mientras resolvemos (anti resurrección por carrera).
   const startedAt = Date.now();
   const roles = await getUserRoles(username);
+
+  // Superadmin por rol (design D7): acceso total del superadmin fijo con los
+  // roles reales; se cachea e invalida como cualquier acceso.
+  const superRole = roles.find((r) => isSuperadminRole(r.role_name));
+  if (superRole) {
+    console.log(JSON.stringify({ evt: 'superadmin_role', username, role: superRole.role_name }));
+    const access: UserAccess = {
+      username,
+      roleIds: roles.map((r) => r.role_id),
+      roleNames: roles.map((r) => r.role_name),
+      campaigns: ['*'],
+      permissions: ALL_PERMS,
+      isAdmin: true,
+      isLeader: true,
+    };
+    await putCached(access, startedAt);
+    return access;
+  }
+
   const permsByRole = await getManyRolePermissions(roles.map((r) => r.role_id));
 
   // Grants explícitos (+perm) y denies (-perm), del almacén local + inline.
@@ -103,6 +132,8 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
     permissions.add(ANA_PERMISSIONS.CHATS_TEAM_VIEW);
     permissions.add(ANA_PERMISSIONS.TEAM_JOBS_VIEW);
     permissions.add(ANA_PERMISSIONS.TEAM_JOBS_MANAGE);
+    // Sube y envía sus propios CSV (v4-enforce-permissions).
+    permissions.add(ANA_PERMISSIONS.CAMPAIGN_SEND);
     // Gestiona excepciones de agentes en sus campañas.
     permissions.add(ANA_PERMISSIONS.AGENTS_MANAGE);
   }
@@ -133,8 +164,29 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
  * normales, PERO el permiso de admin SIEMPRE se exige (fail-closed) — el flag
  * de rollout no debe abrir el sink de administración.
  */
-export function can(access: UserAccess, perm: AnaPermission): boolean {
+export function can(access: UserAccess, perm: AnaPermission, route?: string): boolean {
   if (perm === ANA_PERMISSIONS.ADMIN_CONSOLE) return access.isAdmin;
-  if (!ENFORCED) return true; // flag off → no bloquear rutas normales
-  return access.isAdmin || access.permissions.includes(perm);
+  const mode = permissionsMode();
+  if (mode === 'off') return true; // flag off → no bloquear rutas normales
+  const allowed = access.isAdmin || access.permissions.includes(perm);
+  if (allowed || mode === 'enforce') return allowed;
+  // report: permite y deja constancia de lo que se negaría.
+  console.log(JSON.stringify({ evt: 'perm_would_deny', route: route ?? null, username: access.username, perm }));
+  return true;
+}
+
+/** Chequeo normal (sujeto al flag) del permiso que `ROUTE_PERMISSIONS` asigna a la ruta. */
+export function canRoute(access: UserAccess, routeKey: string): boolean {
+  const perm = ROUTE_PERMISSIONS[routeKey];
+  return perm ? can(access, perm, routeKey) : true;
+}
+
+/**
+ * Para rutas que hoy no resuelven el acceso (cola del agente, interacciones):
+ * con el flag apagado no se consulta nada (mismo costo y comportamiento que
+ * antes); en report/enforce se resuelve y se aplica `canRoute`.
+ */
+export async function routeAllowed(username: string, routeKey: string): Promise<boolean> {
+  if (permissionsMode() === 'off' || !ROUTE_PERMISSIONS[routeKey]) return true;
+  return canRoute(await resolveUserAccess(username), routeKey);
 }

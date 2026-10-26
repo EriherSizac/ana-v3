@@ -34,3 +34,16 @@
 
 1. Deploy del backend con `permissionsEnforced: report` (dev y prod). 2. Release del desktop. 3. Revisión de registros y ajuste de roles. 4. Redeploy con `permissionsEnforced: true` en dev, prueba con usuarios de cada rol, luego prod. Rollback: redeploy con `report`.
 
+
+## Decisiones de implementación
+
+- **Modo leído en cada llamada:** `permissionsMode()` lee `PERMISSIONS_ENFORCED` en cada chequeo (antes era constante al cargar el módulo); `can(access, perm, route?)` registra `perm_would_deny` en `report`.
+- **Rutas que no resolvían acceso** (`jobsPoll`, `interactions`): `routeAllowed(username, routeKey)` no consulta nada con el flag apagado (mismo costo y comportamiento de hoy); en `report`/`true` resuelve el acceso y aplica `ROUTE_PERMISSIONS`. `ROUTE_PERMISSIONS` incluye también los tres chequeos de `ana:chats:conversation:view` que ya existían en `api.ts`.
+- **"Ver como" con `*`:** un usuario no admin con `ana:chats:team:view` y `campaigns` con `*` puede ver a cualquier operador (mismo significado global de `*`). Sin `*`, el objetivo debe estar en la tabla de roster v4 de una campaña propia o, si no, en su lista derivada (`campaign-agents/`); si la lista no está disponible solo cuenta la tabla.
+- **Superadmin por rol:** se evalúa antes de leer el almacén local de permisos y su acceso se cachea siempre (tiene roles); el log `superadmin_role` solo sale al resolver (no en aciertos de caché).
+- **`GET /agents`:** el chequeo de equipo aplica a quien no es admin ni tiene `*` (esos conservan la regla actual: `campaign` obligatorio).
+- **Desktop, permiso de respuesta en el main:** `Backend.getAccess()` lee `GET /me` al fijar o renovar el token (una lectura fallida en una renovación conserva el acceso anterior). Si al enviar aún no se conoce el acceso, se intenta leer una vez; si sigue sin conocerse, no se envía (`"No se pudo verificar el permiso para responder"`), distinto de `"sin permiso para responder"`.
+- **Desktop, pestañas:** sin `/me` no se muestra ninguna pestaña y el contenido indica "No se pudo cargar tu acceso." (o "Tu rol no tiene secciones habilitadas en ana." si `/me` respondió pero no hay pestañas). La pestaña inicial es la primera visible.
+- **Desktop, panel de equipo:** "Ver como" usa el mismo flujo para admin y para quien tenga `ana:chats:team:view` (campaña de `GET /agents/campaigns`, que el backend limita a las propias, y luego agente). Sin "Ver como", el panel de pendientes usa la primera campaña propia y los agentes de `GET /agents`.
+- **2.4:** el parámetro ya existía; se documentaron sus valores en `serverless.yml` y se verifica con una prueba que lee la plantilla (`npx serverless package` requiere credenciales/SSM y queda como verificación manual).
+- **3.2 y 3.3:** código, pruebas puras y `npm run build` listos; sin marcar porque su verificación pide pruebas manuales en dev con usuarios de cada rol.

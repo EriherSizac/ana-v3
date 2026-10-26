@@ -9,6 +9,7 @@ import { campaignExists, listCampaignsDb } from '../lib/campaignsDb';
 import { buildRosterView, canManageAgents, parseRosterAgents } from '../lib/agentRoster';
 import { normalizeId, readCampaignAgents, RosterListError } from '../lib/campaignAgentsList';
 import { resolveUserAccess } from '../lib/access';
+import { ANA_PERMISSIONS } from '../lib/permissions';
 import { ok, bad, claimUser } from '../lib/http';
 import { campaignIn, campaignKey, resolveCatalogCampaign, sameCampaign } from '../lib/identity';
 
@@ -76,6 +77,12 @@ async function agentsList(
     if (!campaign) return bad('falta campaign');
     campaigns = [await resolveCatalogCampaign(campaign)];
   } else {
+    // Roster solo para líder o permisos de equipo (v4-enforce-permissions), sin flag.
+    const team =
+      access.isLeader ||
+      access.permissions.includes(ANA_PERMISSIONS.CHATS_TEAM_VIEW) ||
+      access.permissions.includes(ANA_PERMISSIONS.TEAM_JOBS_VIEW);
+    if (!team) return bad('sin permiso', 403);
     const own = access.campaigns.filter((c) => c !== '*');
     campaigns = campaign ? own.filter((c) => sameCampaign(c, campaign)) : own;
     if (campaigns.length === 0) return bad('campaña no permitida', 403);
