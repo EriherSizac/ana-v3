@@ -19,6 +19,12 @@ export const SECTIONS: Section[] = [
     description: 'Usuarios del pool, sus roles y su estado de agente por campaña en v3 y v4.',
     isAllowed: (a) => hasPermission(a, PERMISSIONS.AGENTS_MANAGE),
   },
+  {
+    href: '/contactos',
+    label: 'Contactos',
+    description: 'Carga listas de contactos y repártelas entre los agentes habilitados de v3 o v4.',
+    isAllowed: (a) => hasPermission(a, PERMISSIONS.CONTACTS_UPLOAD) && hasPermission(a, PERMISSIONS.CONTACTS_DISTRIBUTE),
+  },
 ];
 
 /** Secciones visibles para el acceso dado. */

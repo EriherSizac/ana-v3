@@ -1,0 +1,4 @@
+telefono,nombre,saldo,mensaje
+5215500000201,Ana,100,Hola {nombre}
+5215500000202,Beto,200,Hola {nombre}
+5215500000203,Carla,300,Hola {nombre}

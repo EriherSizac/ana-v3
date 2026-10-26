@@ -150,3 +150,34 @@ siguen con llave hasta que ANA Admin cubra carga de contactos, revisión y
 plantillas, `setup-campaign.sh` deje de usarse y los logs muestren 30 días sin
 llamadas con llave; entonces una change dedicada las retira. `/credentials/*`
 las retira `migrate-cli-to-cognito-login`.
+
+### Carga de contactos desde ANA Admin (vía principal)
+
+| Método | Ruta | Permisos | Descripción |
+|---|---|---|---|
+| POST | `/admin/campaigns/{campaign}/contacts` | `ana:contacts:list:upload` + `ana:contacts:list:distribute` | `{"uploadId","fileName","mode":"distribute"\|"single","message"?,"files":[{"agent","csv"}]}` (1–200 archivos, body ≤ 5 500 000 bytes → si no, 413) |
+| GET | `/admin/campaigns/{campaign}/uploads` | los mismos | 50 cargas más recientes (manifiestos sin `message`) |
+
+- Cada agente debe estar **habilitado** (regla efectiva del roster); si no, 409
+  `Agentes no habilitados` sin escribir nada.
+- Escribe `agents/{campaign}/{agent}-contacts-{ts}.csv` (lo consume el CLI con
+  `GET /get/chats`) y una copia idéntica en `historic/agents/...`, con el mismo
+  `{ts}`; **no** usa `assignments/`. La columna `message` se procesa igual que en
+  la carga de supervisor (`src/lib/contactsCsv.ts`) y los saltos de línea del
+  mensaje se convierten a `\n` literal.
+- Manifiesto `uploads/{campaign}/{uploadId}.json`
+  (`schemaVersion:1`, `status` `completed`/`failed`, `perAgent` con llaves).
+  Reintentar el mismo `uploadId` devuelve el manifiesto `completed` sin
+  duplicar archivos; un `failed` se reprocesa.
+- Fallo a mitad de la carga: se borran los `agents/...` ya escritos, el
+  manifiesto queda `failed` y la respuesta 500 lista `written` y `rolledBack`.
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"uploadId":"20261026T100000-abcdef12","fileName":"cartera.csv","mode":"single","message":"Hola {first_name}","files":[{"agent":"ana.lopez","csv":"contact_phone,first_name\n5215500000001,Ana"}]}' \
+  https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/contacts
+curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/uploads
+```
+
+La ruta de supervisor con `X-Admin-Key` (`/supervisors/agents/{agent}/{campaign}/contacts`)
+queda como respaldo hasta el retiro de la llave.

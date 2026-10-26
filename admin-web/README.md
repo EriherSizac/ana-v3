@@ -149,3 +149,50 @@ El BFF necesita **solo** `cognito-idp:ListUsers` sobre el pool:
 ```
 
 Sin esa política `/api/users` responde 503 ("No se pudo leer el directorio de usuarios").
+
+## Sección Contactos (`/contactos`, `/contactos/historial`)
+
+Requiere `isAdmin` o **ambos** permisos `ana:contacts:list:upload` y
+`ana:contacts:list:distribute`. Para leer los agentes habilitados el BFF usa los
+rosters de `/admin/*` de cada flota (que exigen `ana:admin:agents:manage`; los
+líderes y admins lo tienen).
+
+### Flujo
+
+1. **Destino**: campaña, flota (`v3` CLI / `v4` desktop) y modo
+   ("Repartir entre agentes habilitados" o "Asignar a un agente"). Sin
+   habilitados en esa flota no se puede cargar archivo.
+2. **Archivo**: se lee y valida **en el navegador** (`src/lib/contacts/`, el
+   mismo código que usa el BFF); nada sale del navegador hasta confirmar.
+3. **Mensaje**: v3 exige un mensaje plantilla si el CSV no trae columna
+   `message` (variables `{columna}`; los saltos de línea viajan como `\n`
+   literal). v4 pide plantilla (default `{mensaje}`) y código de país (default `52`).
+4. **Vista previa**: fila válida *i* → agente `i mod n` de los habilitados
+   ordenados por username (código de punto); en "Asignar", todas al agente
+   elegido. Muestra conteo y primeras 5 filas por agente.
+5. **Confirmar** (`ConfirmDialog`): el BFF vuelve a parsear, relee el roster y
+   compara agentes, conteos y hash SHA-256 del plan; si difiere responde 409
+   ("El roster cambió; revisa la nueva vista previa").
+   - **v3**: un CSV por agente a `POST /admin/campaigns/{c}/contacts` con un
+     `uploadId` (`{ts}-{8 hex}`); un reintento con el mismo `uploadId` ante error
+     de red. Los archivos quedan en `agents/` (los consume el CLI) + `historic/`.
+   - **v4**: `POST /uploads/presign` con `distribute:true` y `assignments`
+     (peso 1 por agente en el orden del plan, máx. 1500 caracteres) y `PUT` a la
+     URL firmada con **solo las filas válidas**; la página consulta el historial
+     v4 por `srcKey` hasta 60 s ("Procesando").
+6. **Historial**: `/contactos/historial` por campaña y flota.
+
+### Límites y formato de CSV
+
+| | v3 | v4 |
+|---|---|---|
+| Tamaño máximo | 4 MB | 10 MB |
+| Filas máximas | 20 000 | 50 000 |
+| Columna de teléfono | `phone_number`, `contact_phone`, `contact_pho` o `phone` | las de v3, `telefono` o la que elijas |
+
+- UTF-8 con encabezado; se quita el BOM, se recortan los campos y se saltan filas vacías.
+- Fila inválida: menos columnas que el encabezado (v4 también más columnas),
+  sin teléfono, teléfono con menos de 10 dígitos, teléfono repetido (solo
+  dígitos) o, en v3, un campo con salto de línea. Solo las válidas se entregan.
+- Ejemplos con datos falsos: `test/fixtures/contacts/*.example.csv`
+  (`clean`, `dirty`, `espanol` para v4 y `newline`).

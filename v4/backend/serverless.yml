@@ -40,6 +40,8 @@ provider:
     ROLEPERMS_TABLE: ${self:service}-roleperms-${self:provider.stage}
     AGENTS_TABLE: ${self:service}-agents-${self:provider.stage}
     ACCESS_CACHE_TABLE: ${self:service}-accesscache-${self:provider.stage}
+    # Historial de cargas CSV (add-contact-upload-console D7).
+    UPLOADS_TABLE: ${self:service}-uploads-${self:provider.stage}
     # API externa de Roles & Permisos (X-Api-Key). El secreto va en backend/.env
     # (ROLES_API_KEY=...); serverless v4 lo carga solo. NO se commitea.
     # Es la MISMA API del dashboard (roles + users + agents). PROD = 8emg4wx2t8
@@ -103,6 +105,15 @@ provider:
             - !GetAtt RolePermsTable.Arn
             - !GetAtt AgentsTable.Arn
             - !GetAtt AccessCacheTable.Arn
+        # Historial de cargas: csvTrigger escribe, GET /uploads/history consulta.
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+            - dynamodb:GetItem
+          Resource:
+            - !GetAtt UploadsTable.Arn
         - Effect: Allow
           Action:
             - s3:GetObject
@@ -150,6 +161,10 @@ functions:
       - httpApi:
           path: /uploads/delete
           method: post
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /uploads/history
+          method: get
           authorizer: { name: cognitoJwt }
       - httpApi:
           path: /me
@@ -459,6 +474,23 @@ resources:
         KeySchema:
           - { AttributeName: campaign, KeyType: HASH }
           - { AttributeName: operatorId, KeyType: RANGE }
+
+    # Historial de cargas CSV por campaña (add-contact-upload-console D7).
+    # SK=srcKey → un evento S3 repetido reescribe el mismo registro. TTL 180 días.
+    UploadsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.UPLOADS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: campaign, AttributeType: S }
+          - { AttributeName: srcKey, AttributeType: S }
+        KeySchema:
+          - { AttributeName: campaign, KeyType: HASH }
+          - { AttributeName: srcKey, KeyType: RANGE }
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
 
     # Caché L2 de acceso resuelto (guía §6). TTL ~15 min; PK=username.
     AccessCacheTable:

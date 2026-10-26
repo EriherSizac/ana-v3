@@ -69,3 +69,32 @@ El BFF pide el presign con el id token del usuario (así `operatorid` = el super
 3. ANA Admin: habilitar la sección Contactos; piloto con un líder por flota.
 4. Avisar a supervisores que la carga por `curl`/`setup-campaign.sh` queda como respaldo hasta el retiro de `X-Admin-Key`.
 - Rollback: ocultar la sección; las rutas nuevas no afectan a las existentes.
+
+## Decisiones de implementación
+
+**Lógica compartida (admin-web `src/lib/contacts/`)**
+- Columna de teléfono en v3: si hay varios alias, se usa el **último** del encabezado (el que termina usando el `parseCSV` del CLI); en v4 la elegida por el usuario o el primer alias encontrado (incluye `telefono`).
+- Además de las causas del spec, en v4 una fila con **más** columnas que el encabezado es inválida ("Más columnas que el encabezado"), porque `csv-parse` con `columns:true` rechaza el archivo completo. "Sin teléfono" y "Teléfono con menos de 10 dígitos" se reportan como causas separadas.
+- Un teléfono repetido se compara contra las filas **válidas** anteriores (la primera aparición válida se conserva).
+- Hash del plan: SHA-256 (`crypto.subtle`, igual en navegador y Node) de `flota|modo|agentes` + `(índice, agente, dígitos del teléfono)` por fila.
+- Pruebas de equivalencia: `parseCSV` del CLI no se exporta (y `agent-config.js` tiene efectos de import), así que la prueba extrae la función del código fuente; contra v4 se usan `csv-parse` y `normalizeContactRow` reales importados de `v4/backend`. El workflow de CI se dispara también con cambios en esos archivos.
+- Vista previa del mensaje v4 aproximada (campos simples y `{mensaje}` anidado); el formato de dinero y las expresiones se aplican al enviar en el desktop.
+
+**v3**
+- `src/lib/contactsCsv.ts` contiene el procesamiento de `message` extraído de `uploadAgentContacts` (la ruta de supervisor ahora lo llama); una prueba con la copia literal del código anterior fija que la salida es idéntica. `uploadAgentContactsLogging` (sin ruta) conserva su copia inline.
+- Orden en `POST /admin/campaigns/{c}/contacts`: campaña (400) → tamaño (413, antes de autorizar y sin S3) → autorización → body → idempotencia → roster (409) → escrituras. Roster ilegible → 500 `Roster ilegible`.
+- `totalRows` del manifiesto = filas entregadas (el BFF solo manda filas válidas); `written` lista las llaves de `agents/` escritas y `rolledBack` las que se pudieron borrar. El campo opcional `source` se acepta y se guarda (lo usa `link-review-contacts-to-uploads`).
+- La función de carga tiene `timeout: 29` (límite de HTTP API). Verificado con `serverless package` (Framework 3.40 local): las cuatro rutas `/admin/*` quedan con authorizer JWT.
+
+**v4** (implementado por subagente)
+- Un fallo al escribir el registro de historial no interrumpe la creación de jobs (log `evt:"upload_history",status:"failed"`).
+- Solo se registran cargas cuya metadata trae `campaign`; `too_large` usa `HeadObject` para no descargar el cuerpo; `mode` refleja lo pedido (`assignments` > `distribute` > `self`); `fileName` = `srcKey` sin el prefijo `<epochMs>_`.
+- `listUploads` pagina la consulta por campaña y ordena en memoria (sin GSI); la campaña se compara tal cual contra la PK (nombre del catálogo).
+- `serverless package` no corre (v4 exige login de Serverless); la tabla, el IAM y la ruta se verifican con una prueba que parsea `serverless.yml` (tarea 3.1 queda abierta por eso).
+
+**ANA Admin**
+- Ruta extra `GET /api/campaigns/{c}/enabled-agents?fleet=` para el formulario (habilitados de la flota). Lee los rosters `/admin/*` de v3/v4, que exigen `ana:admin:agents:manage`: un usuario con upload+distribute pero sin ese permiso no puede cargar (líderes y admins lo tienen). Pendiente decidir si v3/v4 deben exponer una lectura de habilitados con permisos de contactos.
+- v4: el BFF envía a v4 la campaña tal como viene del catálogo (`campaignRaw`, solo `trim`), y a v3 la normalizada; aplica también a las rutas de Agentes.
+- v4: el `PUT` a la URL firmada se hace **sin** headers `x-amz-meta-*`, igual que el desktop: el presigner de v4 sube la metadata a la query firmada (así no hay problemas con acentos o saltos de línea en headers).
+- El reintento v3 se hace ante error de red **o** 5xx (seguro por la idempotencia del `uploadId`).
+- Sondeo v4 cada 5 s hasta 60 s.

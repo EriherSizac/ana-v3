@@ -5,11 +5,19 @@ on:
     paths:
       - 'admin-web/**'
       - '.github/workflows/admin-web.yml'
+      # Pruebas de equivalencia importan estos consumidores reales del CSV.
+      - 'v4/backend/src/lib/contacts.ts'
+      - 'v3/ana-backend/src/lib/contactsCsv.ts'
+      - 'v3/cli-whatsapp/agent-config.js'
   push:
     branches: [main]
     paths:
       - 'admin-web/**'
       - '.github/workflows/admin-web.yml'
+      # Pruebas de equivalencia importan estos consumidores reales del CSV.
+      - 'v4/backend/src/lib/contacts.ts'
+      - 'v3/ana-backend/src/lib/contactsCsv.ts'
+      - 'v3/cli-whatsapp/agent-config.js'
 
 permissions:
   contents: read

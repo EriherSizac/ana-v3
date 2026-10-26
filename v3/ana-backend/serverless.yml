@@ -243,6 +243,26 @@ functions:
           authorizer:
             name: cognitoAdminJwt
 
+  # add-contact-upload-console
+  adminUploadContacts:
+    handler: src/handlers/adminContacts.uploadContacts
+    timeout: 29
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/contacts
+          method: post
+          authorizer:
+            name: cognitoAdminJwt
+
+  adminListUploads:
+    handler: src/handlers/adminContacts.listUploads
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/uploads
+          method: get
+          authorizer:
+            name: cognitoAdminJwt
+
 resources:
   Resources:
     StorageBucket:

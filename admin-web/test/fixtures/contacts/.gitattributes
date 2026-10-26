@@ -1,0 +1,2 @@
+# Fixtures de CSV con bytes exactos (BOM, CRLF): sin conversión de fin de línea.
+*.csv -text

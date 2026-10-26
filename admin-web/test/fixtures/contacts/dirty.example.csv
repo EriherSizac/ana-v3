@@ -1,0 +1,9 @@
+﻿phone_number,first_name,total_balance,nota
+5215500000101,Ana,100,"Calle 1, Col. Centro"
+,SinTel,0,x
+
+5215500000102,Beto,200,"Dijo ""hola"""
+52155,Corto,1,x
+5215500000101,Duplicado,1,x
+5215500000103,Incompleto
+  5215500000104 , Carla , 300 , ok 

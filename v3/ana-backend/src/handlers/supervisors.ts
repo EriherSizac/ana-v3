@@ -2,6 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { requireAdmin } from '../lib/adminAuth';
 import { normalizePathSegment } from '../lib/campaign';
+import { addMessageColumn } from '../lib/contactsCsv';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3Client = new S3Client({ region: 'us-east-1' });
@@ -950,42 +951,9 @@ export const uploadAgentContacts = async (
       };
     }
 
-    // Agregar columna "message" al header
-    const header = lines[0].trim();
-    const newHeader = header.includes('message') ? header : `${header},message`;
-    
-    const processedLines = [newHeader];
-    let contactCount = 0;
-
-    // Función para escapar campos CSV (envolver en comillas si contiene comas, comillas o saltos de línea)
-    const escapeCSVField = (field: string): string => {
-      if (!field) return '';
-      
-      // Si el campo contiene comas, comillas dobles o saltos de línea, debe ir entre comillas
-      if (field.includes(',') || field.includes('"') || field.includes('\n') || field.includes('\r')) {
-        // Escapar comillas dobles duplicándolas
-        const escaped = field.replace(/"/g, '""');
-        return `"${escaped}"`;
-      }
-      
-      return field;
-    };
-
-    // Agregar mensaje a cada fila
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-
-      // Escapar el mensaje para que las comas no rompan el CSV
-      const escapedMessage = escapeCSVField(message);
-      
-      // Si la línea ya tiene el mensaje, no agregarlo de nuevo
-      const newLine = line.includes(message) ? line : `${line},${escapedMessage}`;
-      processedLines.push(newLine);
-      contactCount++;
-    }
-
-    const processedCsv = processedLines.join('\n') + '\n';
+    // Agregar columna "message" (procesamiento compartido en src/lib/contactsCsv.ts)
+    const { csv: processedCsv, contactCount } = addMessageColumn(csv, message);
+    const processedLines = processedCsv.trimEnd().split('\n');
 
     // Guardar en S3: decidir ruta según parámetro 'direct'
     const ts = makeTimestampForKey();

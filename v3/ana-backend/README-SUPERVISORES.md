@@ -839,3 +839,6 @@ con tu usuario de Pernexium, no con `X-Admin-Key`:
   ("ANA Admin: rutas `/admin/*`").
 - La llave `X-Admin-Key` y `setup-campaign.sh` quedan solo como respaldo
   temporal hasta su retiro.
+- La **carga de contactos** también se hace en ANA Admin (sección **Contactos**):
+  reparte entre los agentes habilitados o asigna a uno, con vista previa e
+  historial. Los archivos llegan directo a lo que consume el CLI.

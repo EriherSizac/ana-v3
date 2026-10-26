@@ -47,7 +47,7 @@ export const GET = withAccess(
 
     let rosters: Record<Fleet, RosterResult> | null = null;
     if (campaign) {
-      const results = await Promise.allSettled(FLEETS.map((f) => getRoster(f, identity.token, campaign!)));
+      const results = await Promise.allSettled(FLEETS.map((f) => getRoster(f, identity.token, f === 'v4' ? rawCampaign!.trim() : campaign!)));
       rosters = Object.fromEntries(
         FLEETS.map((f, i) => {
           const r = results[i]!;

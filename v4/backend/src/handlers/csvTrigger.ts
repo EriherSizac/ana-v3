@@ -4,7 +4,7 @@
 // Author: Erick Hernández Silva
 
 import type { S3Event } from 'aws-lambda';
-import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { parse } from 'csv-parse/sync';
 import { s3 } from '../lib/s3';
@@ -12,6 +12,7 @@ import { ddb } from '../lib/dynamo';
 import { JOBS_TABLE, JOB_TTL_DAYS, type SendJob } from '../lib/jobs';
 import { getDistributableAgents } from '../lib/distribution';
 import { normalizeContactRow } from '../lib/contacts';
+import { fileNameFromKey, recordUpload, type RejectReason, type UploadRecord } from '../lib/uploads';
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_ROWS = 50_000;
@@ -34,6 +35,57 @@ function expandWeights(json: string): string[] {
   }
 }
 
+/** ISO de la fecha del objeto S3 (LastModified), con fallback a la del evento. */
+function objectDate(lastModified: Date | undefined, eventTime: string | undefined): string {
+  const d = lastModified ?? (eventTime ? new Date(eventTime) : new Date());
+  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+}
+
+/**
+ * Historial de cargas (add-contact-upload-console D7). Un fallo al registrar
+ * NO debe romper la creación de jobs: se registra en el log y se sigue.
+ */
+async function safeRecord(rec: UploadRecord): Promise<void> {
+  try {
+    await recordUpload(rec);
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        evt: 'upload_history',
+        status: 'failed',
+        campaign: rec.campaign,
+        srcKey: rec.srcKey,
+        error: (e as Error)?.name,
+      }),
+    );
+  }
+}
+
+/** Registro de una carga rechazada (solo si la metadata trae campaña). */
+async function recordRejected(
+  key: string,
+  meta: Record<string, string>,
+  uploadedAt: string,
+  reason: RejectReason,
+  totalRows: number | null = null,
+): Promise<void> {
+  if (!meta.campaign) return;
+  await safeRecord({
+    campaign: meta.campaign,
+    srcKey: key,
+    fileName: fileNameFromKey(key),
+    uploadedBy: meta.operatorid ?? null,
+    uploadedAt,
+    mode: meta.assignments ? 'assignments' : meta.distribute === '1' ? 'distribute' : 'self',
+    totalRows,
+    validRows: null,
+    jobs: 0,
+    perAgent: {},
+    status: 'rejected',
+    reason,
+  });
+}
+
 /**
  * Dispara al subir un CSV a csv-uploads/. Parsea filas y encola un SendJob por
  * fila en SQS. El agente local los recoge vía /jobs/poll.
@@ -49,17 +101,26 @@ export const handler = async (event: S3Event): Promise<void> => {
     // Guarda de tamaño antes de leer/parsear (evita CSV gigante malicioso).
     if ((rec.s3.object.size ?? 0) > MAX_CSV_BYTES) {
       console.warn(`csvTrigger: ${key} excede ${MAX_CSV_BYTES} bytes, ignorado`);
+      // Sin leer el cuerpo: solo metadata (campaña/operador) para el historial.
+      try {
+        const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        await recordRejected(key, head.Metadata ?? {}, objectDate(head.LastModified, rec.eventTime), 'too_large');
+      } catch (e) {
+        console.error(JSON.stringify({ evt: 'upload_history', status: 'failed', srcKey: key, error: (e as Error)?.name }));
+      }
       continue;
     }
 
     const obj = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
     const meta = obj.Metadata ?? {};
     const csv = await obj.Body!.transformToString('utf-8');
+    const uploadedAt = objectDate(obj.LastModified, rec.eventTime);
 
     // operatorId viene de la metadata FIRMADA en el presign → confiable.
     const operatorId = meta.operatorid;
     if (!operatorId) {
       console.warn(`csvTrigger: ${key} sin operatorId en metadata, ignorado`);
+      await recordRejected(key, meta, uploadedAt, 'missing_operator');
       continue;
     }
     const template = meta.template ?? '{mensaje}';
@@ -80,6 +141,7 @@ export const handler = async (event: S3Event): Promise<void> => {
     ).map(normalizeContactRow);
     if (rows.length > MAX_ROWS) {
       console.warn(`csvTrigger: ${key} con ${rows.length} filas excede ${MAX_ROWS}, ignorado`);
+      await recordRejected(key, meta, uploadedAt, 'too_many_rows', rows.length);
       continue;
     }
 
@@ -133,6 +195,24 @@ export const handler = async (event: S3Event): Promise<void> => {
           },
         }),
       );
+    }
+
+    if (campaign) {
+      const perAgent: Record<string, number> = {};
+      for (const j of jobs) perAgent[j.operatorId] = (perAgent[j.operatorId] ?? 0) + 1;
+      await safeRecord({
+        campaign,
+        srcKey: key,
+        fileName: fileNameFromKey(key),
+        uploadedBy: operatorId,
+        uploadedAt,
+        mode: meta.assignments ? 'assignments' : distribute ? 'distribute' : 'self',
+        totalRows: rows.length,
+        validRows: valid.length,
+        jobs: jobs.length,
+        perAgent,
+        status: 'processed',
+      });
     }
 
     console.log(

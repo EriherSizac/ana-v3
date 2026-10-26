@@ -12,8 +12,10 @@ export interface AccessContext<P> {
   access: Access;
   identity: VerifiedIdentity;
   params: P;
-  /** Campaña normalizada (si la ruta declara `campaignFrom`). */
+  /** Campaña normalizada (si la ruta declara `campaignFrom`): llaves de v3. */
   campaign: string;
+  /** Campaña tal como llegó (solo trim): v4 usa el nombre del catálogo sin normalizar. */
+  campaignRaw: string;
 }
 
 export interface WithAccessOptions<P> {
@@ -59,16 +61,18 @@ export function withAccess<P extends Record<string, string | string[]> = Record<
 
       const params = ((await routeCtx?.params) ?? {}) as P; // routeCtx puede faltar en llamadas directas
       let campaign = '';
+      let campaignRaw = '';
       if (opts.campaignFrom) {
         let raw: string | undefined | null;
         if (opts.campaignFrom === 'path') raw = params.campaign as string | undefined;
         else if (opts.campaignFrom === 'query') raw = new URL(req.url).searchParams.get('campaign');
         else raw = opts.campaignFrom(req, params);
         campaign = normalizeCampaign(raw ?? ''); // Next y URLSearchParams ya decodifican
+        campaignRaw = String(raw ?? '').trim();
         if (!campaign || !isValidCampaign(campaign)) throw new HttpError('invalid_request', 'Campaña inválida');
         if (!campaignAllowed(access, campaign)) throw new HttpError('forbidden', 'Campaña no permitida');
       }
-      return await handler(req, { access, identity, params, campaign });
+      return await handler(req, { access, identity, params, campaign, campaignRaw });
     } catch (err) {
       return toErrorResponse(err, opts.label ?? 'bff');
     }

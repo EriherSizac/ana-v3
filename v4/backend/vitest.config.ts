@@ -9,6 +9,7 @@ export default defineConfig({
       AGENTS_TABLE: 'agents-test',
       ROLEPERMS_TABLE: 'roleperms-test',
       ACCESS_CACHE_TABLE: 'accesscache-test',
+      UPLOADS_TABLE: 'uploads-test',
       CSV_BUCKET: 'csv-test',
       MEDIA_BUCKET: 'media-test',
       JOBS_TABLE: 'jobs-test',

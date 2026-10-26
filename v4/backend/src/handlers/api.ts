@@ -28,6 +28,7 @@ import { invalidateByRole } from '../lib/accessCache';
 import { checkAssignmentsEnabled, getDistributableAgents } from '../lib/distribution';
 import { campaignExists } from '../lib/campaignsDb';
 import { listAllRoles } from '../lib/roles';
+import { listUploads } from '../lib/uploads';
 
 /**
  * Resuelve el operador cuyas conversaciones se van a leer y autoriza el acceso.
@@ -89,6 +90,8 @@ export const handler = async (
         return await presignCsv(access, JSON.parse(event.body ?? '{}'));
       case 'POST /uploads/delete':
         return await deleteCsv(user, JSON.parse(event.body ?? '{}'));
+      case 'GET /uploads/history':
+        return await uploadsHistory(access, event.queryStringParameters ?? {});
       case 'GET /admin/roles':
         if (!access.isAdmin) return bad('sin permiso', 403);
         return ok({ roles: await listAllRoles() });
@@ -121,6 +124,27 @@ export const handler = async (
     return bad('error interno', 500);
   }
 };
+
+/**
+ * GET /uploads/history?campaign=<c>[&srcKey=<k>] — historial de cargas CSV
+ * (add-contact-upload-console D7). Chequeo fail-closed, independiente de
+ * PERMISSIONS_ENFORCED: admin cualquier campaña; CONTACTS_UPLOAD solo propias o `*`.
+ */
+async function uploadsHistory(
+  access: UserAccess,
+  q: Record<string, string | undefined>,
+): Promise<APIGatewayProxyResultV2> {
+  const campaign = (q.campaign ?? '').trim();
+  if (!campaign) return bad('falta campaign');
+  const own = access.campaigns.map((c) => c.trim().toLowerCase());
+  const allowed =
+    access.isAdmin ||
+    (access.permissions.includes(ANA_PERMISSIONS.CONTACTS_UPLOAD) &&
+      (own.includes('*') || own.includes(campaign.toLowerCase())));
+  if (!allowed) return bad('sin permiso', 403);
+  const srcKey = q.srcKey?.trim() || undefined;
+  return ok({ campaign, items: await listUploads(campaign, { srcKey }) });
+}
 
 async function listConversations(user: string): Promise<APIGatewayProxyResultV2> {
   const res = await ddb.send(

@@ -32,7 +32,7 @@ function parseBody(body: unknown): { fleet: Fleet; agents: Array<{ username: str
  * Excepciones del roster de una flota con el token del usuario.
  */
 export const POST = withAccess<{ campaign: string }>(
-  async (req, { identity, campaign }) => {
+  async (req, { identity, campaign, campaignRaw }) => {
     let body: unknown;
     try {
       body = await req.json();
@@ -40,7 +40,8 @@ export const POST = withAccess<{ campaign: string }>(
       throw new HttpError('invalid_request', 'Solicitud inválida');
     }
     const { fleet, agents } = parseBody(body);
-    const roster = await updateRoster(fleet, identity.token, campaign, agents);
+    // v3 usa la campaña normalizada; v4, el nombre del catálogo tal cual.
+    const roster = await updateRoster(fleet, identity.token, fleet === 'v4' ? campaignRaw : campaign, agents);
     return jsonResponse({ fleet, roster });
   },
   { permission: PERMISSIONS.AGENTS_MANAGE, campaignFrom: 'path', label: 'api/campaigns/agents' },

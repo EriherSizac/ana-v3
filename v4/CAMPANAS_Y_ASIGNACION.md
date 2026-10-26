@@ -239,3 +239,35 @@ Flag de transición (default `false`, `--param="agentRosterFilter=true"`):
 - Encenderlo después de comparar las listas derivadas con los agentes reales (Migration Plan paso 6).
 
 Variables nuevas: `V3_BUCKET` (`ana-backend-storage-<stage>`, override `--param="v3Bucket=…"`), `V3_BUCKET_REGION` (`us-east-1`), `COGNITO_USER_POOL_ID`, `AGENT_ROSTER_FILTER`.
+
+## 8. Historial de cargas CSV
+
+Cada CSV con campaña en su metadata que procesa `csvTrigger` queda registrado
+en la tabla `ana-backend-uploads-{stage}` (PK `campaign`, SK `srcKey`, TTL de
+180 días). Un evento S3 repetido para el mismo objeto reescribe el mismo
+registro. Si escribir el registro falla, los jobs se crean igual (solo se loguea
+`evt:"upload_history"`).
+
+| Campo | Valor |
+|---|---|
+| `campaign`, `srcKey` | campaña de la metadata y llave `csv-uploads/<user>/<epochMs>_<archivo>` |
+| `fileName` | nombre original (sin el prefijo `<epochMs>_`) |
+| `uploadedBy` | `operatorid` de la metadata firmada (`null` si faltaba) |
+| `uploadedAt` | fecha del objeto S3 (ISO 8601) |
+| `mode` | `assignments` (hay `assignments`), `distribute` (`distribute=1`) o `self` |
+| `totalRows`, `validRows`, `jobs` | filas del CSV, filas con teléfono, jobs creados |
+| `perAgent` | `{operatorId: jobs}` |
+| `status` | `processed` o `rejected` |
+| `reason` | solo en rechazadas: `too_large` (> 10 MB), `too_many_rows` (> 50 000), `missing_operator` |
+
+Ejemplo (100 filas, 98 con teléfono, `assignments:{"ana.lopez":1,"luis":1}`):
+`mode:"assignments"`, `validRows:98`, `jobs:98`, `perAgent:{"ana.lopez":49,"luis":49}`.
+
+### `GET /uploads/history?campaign=<c>[&srcKey=<k>]` (JWT)
+
+Responde `{"campaign","items":[...]}` con las 50 cargas más recientes por
+`uploadedAt` descendente, o solo la de `srcKey` (`items` vacío si el trigger aún
+no la procesa). Permitido a admins (cualquier campaña) y a usuarios con
+`ana:contacts:list:upload` sobre campañas propias o `*`, sin depender de
+`PERMISSIONS_ENFORCED`; si no, `403 {"error":"sin permiso"}`. Sin `campaign` →
+`400 {"error":"falta campaign"}`.
