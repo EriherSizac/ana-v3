@@ -1,0 +1,49 @@
+schema: spec-driven
+
+context: |
+  Language: es
+  All artifacts must be written in es.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  Proyecto: ANA, herramienta de cobranza por WhatsApp de Pernexium (MX).
+  El repo tiene dos versiones independientes: v3/ (en producción) y v4/
+  (reescritura en Electron, migración a medias). Los specs actuales cubren
+  solo v3 y viven en openspec/specs/v3/<capacidad>/.
+
+  Stack v3:
+  - v3/ana-backend: AWS Lambda + HTTP API (Serverless Framework, Node 20, TS)
+    sobre S3 puro, sin base de datos. Stack prod: ana-backend-prod, us-east-1.
+  - v3/cli-whatsapp: CLI Node empaquetado como .exe (pkg + Inno Setup) que
+    automatiza WhatsApp Web con Playwright en ventanas visibles
+    (automatización, manual, monitor). Se autoactualiza desde S3.
+  - v3/app + v3/lib: web app Next.js 14 local (uso secundario).
+  - CRM/interacciones de Pernexium: API externa consumida por el CLI.
+
+  Restricciones:
+  - Hay una flota de CLIs instalados en producción: cualquier cambio de
+    contrato del backend MUST ser compatible con las versiones instaladas o
+    acompañarse de un release del CLI vía autoupdate.
+  - Plan de seguridad vigente en PLAN_SEGURIDAD_Y_DEUDA.md.
+  - Commits sin línea Co-Authored-By.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
