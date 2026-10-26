@@ -4,7 +4,8 @@
   "description": "Ana Backend - Serverless API",
   "scripts": {
     "build": "tsc",
-    "deploy": "npm run build && serverless deploy"
+    "deploy": "npm run build && serverless deploy",
+    "test": "vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.450.0",
@@ -13,7 +14,9 @@
   "devDependencies": {
     "@types/aws-lambda": "^8.10.130",
     "@types/node": "^20.10.0",
+    "aws-sdk-client-mock": "^4.1.0",
     "serverless-plugin-typescript": "^2.1.5",
-    "typescript": "^5.3.2"
+    "typescript": "^5.3.2",
+    "vitest": "^3.2.7"
   }
 }

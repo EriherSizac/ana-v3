@@ -121,6 +121,8 @@ const parseMultipartFormData = (
 export const listAgentAssignments = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     const { agent, campaign } = event.pathParameters || {};
 
@@ -279,6 +281,8 @@ export const downloadFilesByKey = async (
 export const getAgentAssignments = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     const { agent, campaign } = event.pathParameters || {};
 
@@ -1082,6 +1086,8 @@ export const uploadAgentContacts = async (
 export const getAgentContacts = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
   try {
     const { agent, campaign } = event.pathParameters || {};
     

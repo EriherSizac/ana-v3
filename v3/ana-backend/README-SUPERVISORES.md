@@ -1,6 +1,6 @@
 # 📋 Documentación de Endpoints para Supervisores
 
-> **Seguridad (actualizado):** las rutas de supervisor (`/credentials/*`, `/supervisors/*` de escritura/descarga, `/agents/*/contacts` POST, `POST /templates`) exigen el header `X-Admin-Key: <ADMIN_API_KEY>`. CORS solo permite `*.pernexium.com.mx` y `*.pernexium.com`. Al ejecutar los `curl` de abajo agrega `-H "X-Admin-Key: $ADMIN_API_KEY"`.
+> **Seguridad (actualizado):** las rutas de supervisor (`/credentials/*`, `/supervisors/*` (escritura, descarga y consultas `GET`), `/agents/*/contacts` POST, `POST /templates`) exigen el header `X-Admin-Key: <ADMIN_API_KEY>`. CORS solo permite `*.pernexium.com.mx` y `*.pernexium.com`. Al ejecutar los `curl` de abajo agrega `-H "X-Admin-Key: $ADMIN_API_KEY"`.
 
 
 ## 🎯 Descripción General

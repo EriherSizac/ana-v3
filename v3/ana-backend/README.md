@@ -13,6 +13,9 @@ Las rutas de administración exigen el header `X-Admin-Key` con la llave `ADMIN_
 | **POST** | **`/credentials/regenerate`** |
 | **POST** | **`/supervisors/agents/{agent}/{campaign}/contacts`** |
 | **POST** | **`/agents/{agent}/{campaign}/contacts`** (deprecated) |
+| **GET** | **`/supervisors/agents/{agent}/{campaign}/contacts`** |
+| **GET** | **`/supervisors/assignments/agents/{agent}/{campaign}`** |
+| **GET** | **`/supervisors/assignments/agents/{agent}/{campaign}/contacts`** |
 | **POST** | **`/supervisors/files/download`** |
 | **POST** | **`/templates`** |
 

@@ -2,13 +2,13 @@
 
 ## 1. Infraestructura de pruebas del backend
 
-- [ ] 1.1 Si `v3/ana-backend` aún no tiene suite (otro cambio pudo agregarla), agregar devDependencies `vitest` y `aws-sdk-client-mock`, el script `"test": "vitest run"` y `vitest.config.ts` con `include: ['test/**/*.test.ts']`; verificar que `npm test` corre y que `npm run build` no compila `test/`
+- [x] 1.1 Si `v3/ana-backend` aún no tiene suite (otro cambio pudo agregarla), agregar devDependencies `vitest` y `aws-sdk-client-mock`, el script `"test": "vitest run"` y `vitest.config.ts` con `include: ['test/**/*.test.ts']`; verificar que `npm test` corre y que `npm run build` no compila `test/`
 
 ## 2. Llave de administración en las lecturas de supervisor
 
-- [ ] 2.1 En `src/handlers/supervisors.ts`, agregar `requireAdmin` al inicio de `getAgentContacts`, `listAgentAssignments` y `getAgentAssignments`; verificar con `test/supervisors-read.test.ts` que sin llave → 401 sin llamadas a S3, llave vacía en entorno → 503, y llave válida → comportamiento actual (200 con CSV / listado, 404)
-- [ ] 2.2 Actualizar `v3/ana-backend/README.md` (tabla de endpoints: las tres consultas llevan `X-Admin-Key`) y `README-SUPERVISORES.md` (las tres consultas `GET /supervisors/...` llevan `-H "X-Admin-Key: $ADMIN_API_KEY"`); verificar que los `curl` documentados responden 200/404 contra el stage dev con la llave y 401 sin ella
-- [ ] 2.3 Verificar `npm test` y `npm run build` en verde en `v3/ana-backend`
+- [x] 2.1 En `src/handlers/supervisors.ts`, agregar `requireAdmin` al inicio de `getAgentContacts`, `listAgentAssignments` y `getAgentAssignments`; verificar con `test/supervisors-read.test.ts` que sin llave → 401 sin llamadas a S3, llave vacía en entorno → 503, y llave válida → comportamiento actual (200 con CSV / listado, 404)
+- [x] 2.2 Actualizar `v3/ana-backend/README.md` (tabla de endpoints: las tres consultas llevan `X-Admin-Key`) y `README-SUPERVISORES.md` (las tres consultas `GET /supervisors/...` llevan `-H "X-Admin-Key: $ADMIN_API_KEY"`); verificar que los `curl` documentados responden 200/404 contra el stage dev con la llave y 401 sin ella (no existe stage dev de v3: cubierto por pruebas de handler; verificación real en 3.2)
+- [x] 2.3 Verificar `npm test` y `npm run build` en verde en `v3/ana-backend`
 
 ## 3. Despliegue
 
