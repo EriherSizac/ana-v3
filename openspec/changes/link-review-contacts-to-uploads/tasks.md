@@ -23,4 +23,4 @@
 ## 4. Integración
 
 - [ ] 4.1 Prueba de punta a punta en dev (con `report-pending-progress` desplegado): carga desde ANA Admin a un agente de prueba, cierre del CLI durante el envío, contacto visible en el detalle de la carga, reasignación a otro agente que lo recibe por `GET /get/chats` y estado "Reasignado"; registrar evidencia en el PR
-- [ ] 4.2 Confirmar con quien implementa `add-agent-roster-management` (D11) y `migrate-cli-to-cognito-login` (D12) que sus scripts incluyen `review-state/`; verificar en sus pruebas el prefijo
+- [x] 4.2 Confirmar con quien implementa `add-agent-roster-management` (D11) y `migrate-cli-to-cognito-login` (D12) que sus scripts incluyen `review-state/`; verificar en sus pruebas el prefijo

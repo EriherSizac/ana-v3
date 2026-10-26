@@ -4,7 +4,7 @@
 
 - [x] 1.1 Implementar `v3/ana-backend/src/lib/cliSettings.ts` (catálogo con `noWhatsappConsultRegistration`, lectura con regla de configuración efectiva y error ante JSON inválido o versión ≠ 1, escritura condicional con 3 reintentos); verificar con pruebas vitest: objeto inexistente = defaults, texto `"true"` ignorado, versión 2 = error, llave desconocida rechazada
 - [x] 1.2 Implementar `src/handlers/cliSettings.ts` con `GET /admin/cli-settings` y `POST /admin/cli-settings` (rol Developer vía `requireAdminAccess` + `roleNames` normalizados, admin sin Developer → 403, 400/409) y registrarlas en `serverless.yml` con `cognitoAdminJwt`; verificar con pruebas de handler cada escenario del spec
-- [ ] 1.3 Implementar `GET /agent/settings` usando la autenticación de agente de `migrate-cli-to-cognito-login` y registrarla con su authorizer de agentes; verificar con pruebas: 200 con defaults, 500 con objeto ilegible, sin token rechazado
+- [x] 1.3 Implementar `GET /agent/settings` usando la autenticación de agente de `migrate-cli-to-cognito-login` y registrarla con su authorizer de agentes; verificar con pruebas: 200 con defaults, 500 con objeto ilegible, sin token rechazado
 - [x] 1.4 Documentar en `v3/ana-backend/README.md` el catálogo, la llave S3, las rutas y quién puede cambiarlas; verificar que los ejemplos coinciden con las pruebas
 
 ## 2. CLI: consumo de la configuración
