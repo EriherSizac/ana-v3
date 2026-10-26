@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { normalizeCampaign, normalizeAgent, normalizePathSegment } from '../lib/campaign';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -14,7 +15,9 @@ export const uploadBackup = async (event: APIGatewayProxyEvent): Promise<APIGate
     }
 
     const body = JSON.parse(event.body);
-    const { campaign, data, agent_id } = body;
+    const { data } = body;
+    const campaign = normalizeCampaign(body.campaign);
+    const agent_id = normalizeAgent(body.agent_id);
 
     if (!campaign || !data || !agent_id) {
       return {
@@ -60,7 +63,8 @@ export const getLatestBackup = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
   try {
-    const { agentId, campaign } = event.pathParameters || {};
+    const agentId = normalizePathSegment(event.pathParameters?.agentId);
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
 
     if (!agentId || !campaign) {
       return {

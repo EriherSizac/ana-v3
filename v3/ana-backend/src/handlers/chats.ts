@@ -1,13 +1,14 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { normalizePathSegment } from '../lib/campaign';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 
 export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   try {
-    const agentId = event.pathParameters?.agentId;
-    const campaignId = event.pathParameters?.campaignId;
+    const agentId = normalizePathSegment(event.pathParameters?.agentId);
+    const campaignId = normalizePathSegment(event.pathParameters?.campaignId);
 
     console.log('[getChats] start', { agentId, campaignId, bucket: BUCKET_NAME });
 

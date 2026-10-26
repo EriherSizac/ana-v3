@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { normalizeCampaign, normalizeAgent } from '../lib/campaign';
 
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
@@ -14,7 +15,9 @@ export const uploadMedia = async (event: APIGatewayProxyEvent): Promise<APIGatew
     }
 
     const body = JSON.parse(event.body);
-    const { campaign, agent_id, filename, content_type, data } = body;
+    const { filename, content_type, data } = body;
+    const campaign = normalizeCampaign(body.campaign);
+    const agent_id = normalizeAgent(body.agent_id);
 
     if (!campaign || !agent_id || !filename || !data) {
       return {
