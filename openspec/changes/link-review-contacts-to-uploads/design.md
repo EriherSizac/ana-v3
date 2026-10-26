@@ -64,3 +64,15 @@ Mismos que la carga (`ana:contacts:list:upload` + `ana:contacts:list:distribute`
 2. Desplegar ANA Admin con el detalle de carga y la vista sin carga asociada.
 3. Documentar en `README-SUPERVISORES.md` que la revisión se hace en ANA Admin y que `GET /supervisors/review` queda como respaldo.
 - Rollback: ocultar la sección; quitar la columna de la carga no afecta a filas ya entregadas (los estados quedan en `review-state/`).
+
+## Decisiones de implementación
+
+- `report-pending-progress` ya estaba integrado en `installer-2` (`contacts.ts` escribe `review/{campaign}/{agent}/{assignment_id}.csv`; `supervisors.ts` expone `GET /supervisors/review/{campaign}`), así que todo el código de este cambio se implementó sobre ese contrato; solo quedan abiertas las verificaciones en dev (2.3, 3.5, 4.1) y la confirmación con `migrate-cli-to-cognito-login` (4.2).
+- `ana_upload_id` se agrega **después** del procesamiento de `message` (encabezado `...,message,ana_upload_id`), a todas las filas no vacías; `perAgent[].rows` no cambia.
+- `source` se valida (`type:"review"`, `fromUploadId` con formato de `uploadId` o `none`, 1–5 000 items `{agent, assignmentId, phone}`) y se guarda normalizado (agente en minúsculas).
+- Lectura de `review/`: parser con comillas igual al del CLI; una fila con número de columnas distinto al encabezado → `row:null`, `parseError:true`; su teléfono se toma del primer bloque de ≥ 10 dígitos y su `uploadId` de la última columna si tiene el formato `{ts}-{hex}`.
+- Teléfono de una fila: primer alias del CLI presente (`phone_number`, `contact_phone`, `contact_pho`, `phone`); la identidad del estado usa solo dígitos.
+- `resolve` valida antes de escribir: items existentes en `review/` (si no, 400 `Contactos inexistentes`), manifiesto de reasignación (`completed`, `source.type:"review"`, contiene todos los items; si no, 409) y estados (ya resuelto → 409 `Contactos ya resueltos` con la lista; mismo `reassignUploadId` = éxito sin tocar `by`/`at`). Las escrituras van por `(agente, asignación)` con `If-Match`/`If-None-Match` y 3 intentos. `targetAgent` = agente del `perAgent` del manifiesto (modo `single`).
+- El 403 de las rutas de revisión responde siempre `Sin permiso` (también por campaña fuera de alcance), como pide el spec.
+- ANA Admin: el detalle se abre en `/contactos/historial/{uploadId}?campaign=<c>`; `none` como `uploadId` muestra "Por revisar sin carga asociada". El manifiesto del detalle se toma del historial v3 (sin ruta nueva). Si las filas originales no traen `message`, la reasignación pide un mensaje plantilla.
+- La validación de variables (`{x}` que solo resolvería contra `ana_upload_id`) revisa el mensaje plantilla y la columna `message` de las filas válidas; las llaves dobles `{{x}}` no se consideran porque el CLI no usa coincidencia parcial en ellas.

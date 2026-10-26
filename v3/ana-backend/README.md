@@ -234,3 +234,33 @@ npx tsx scripts/build-legacy-chat-index.ts --bucket ana-backend-storage-dev --pr
 npx tsx scripts/build-legacy-chat-index.ts --bucket ana-backend-storage-prod --profile pernexium --apply   # escribe legacy/index/*.json
 npx tsx scripts/build-legacy-chat-index.ts --bucket ... --campaign prueba --apply                        # una campaña
 ```
+
+### Contactos por revisar (vínculo con la carga)
+
+- La carga de administración agrega a cada fila de `agents/` e `historic/` la
+  **columna reservada `ana_upload_id`** (última columna) con el `uploadId`. Un CSV
+  que ya la traiga (sin distinguir mayúsculas) → 400 `<agente>: columna reservada ana_upload_id`.
+  El CLI la conserva en la fila original, así que las filas que reporta
+  `report-pending-progress` en `review/{campaign}/{agent}/{assignmentId}.csv`
+  llevan su `uploadId`. `resultados.csv` y el mensaje no cambian.
+- `source` opcional en `POST /admin/campaigns/{c}/contacts`
+  (`{"type":"review","fromUploadId","items":[{"agent","assignmentId","phone"}]}`, solo con `mode:"single"`)
+  se guarda en el manifiesto de la carga de reasignación.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/admin/campaigns/{campaign}/review-items?uploadId=<id>\|none` | filas de `review/` de esa carga (o sin columna con `none`) con estado `pending`/`reassigned`/`discarded` |
+| POST | `/admin/campaigns/{campaign}/review-items/resolve` | `{"action":"discard"\|"reassign","items":[...],"reassignUploadId"?}`; `reassign` exige un manifiesto `completed` cuyo `source.items` incluya los items; ya resuelto → 409 (salvo mismo `reassignUploadId`, idempotente) |
+
+Permisos: admin o `ana:contacts:list:upload` + `ana:contacts:list:distribute`
+con la campaña. Los estados viven en `review-state/{campaign}/{agent}/{assignmentId}.json`
+(escritura condicional); **ninguna ruta escribe en `review/`**.
+`GET /supervisors/review/{campaign}` (`X-Admin-Key`) queda como respaldo de
+solo lectura hasta el retiro de la llave.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/review-items?uploadId=20261026T1530-ab12cd34"
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"action":"discard","items":[{"agent":"ana.lopez","assignmentId":"20261026T1600-deadbeef","phone":"5215500000001"}]}' \
+  https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/review-items/resolve
+```

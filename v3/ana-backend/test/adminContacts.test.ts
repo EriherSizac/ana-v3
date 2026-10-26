@@ -87,7 +87,7 @@ describe('POST /admin/campaigns/{campaign}/contacts', () => {
     const file = agentsPuts()[0]!.body;
     const lines = file.trimEnd().split('\n');
     expect(lines).toHaveLength(3);
-    expect(lines[1]).toBe('5215500000001,Ana,100,Hola {first_name}\\nSaldo: {total_balance}');
+    expect(lines[1]).toBe('5215500000001,Ana,100,Hola {first_name}\\nSaldo: {total_balance},20261026T100000-abcdef12');
   });
 
   it('body > 5 500 000 bytes → 413 sin S3', async () => {

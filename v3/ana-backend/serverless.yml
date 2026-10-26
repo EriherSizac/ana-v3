@@ -319,6 +319,25 @@ functions:
           authorizer:
             name: cognitoAdminJwt
 
+  # link-review-contacts-to-uploads
+  adminListReviewItems:
+    handler: src/handlers/adminReview.listReview
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/review-items
+          method: get
+          authorizer:
+            name: cognitoAdminJwt
+
+  adminResolveReviewItems:
+    handler: src/handlers/adminReview.resolveReview
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/review-items/resolve
+          method: post
+          authorizer:
+            name: cognitoAdminJwt
+
 resources:
   Resources:
     StorageBucket:

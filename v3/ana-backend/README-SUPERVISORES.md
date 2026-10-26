@@ -895,3 +895,7 @@ con tu usuario de Pernexium, no con `X-Admin-Key`:
 - La **carga de contactos** también se hace en ANA Admin (sección **Contactos**):
   reparte entre los agentes habilitados o asigna a uno, con vista previa e
   historial. Los archivos llegan directo a lo que consume el CLI.
+- Los **contactos por revisar** (interrumpidos al cerrar el CLI en pleno envío)
+  se ven en ANA Admin → Contactos → Historial → detalle de la carga, donde se
+  reasignan o descartan. `GET /supervisors/review/{campaign}` queda como
+  respaldo hasta el retiro de `X-Admin-Key`.

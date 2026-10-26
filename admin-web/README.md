@@ -211,3 +211,21 @@ solo lectura en el índice legado de v3 (`/api/campaigns/{c}/legacy-chats`,
 mensajes se renderizan **solo como texto** (regla ESLint `react/no-danger`); la
 multimedia usa URLs prefirmadas de 5 min y, si una vence, la conversación se
 vuelve a pedir.
+
+### Revisión y reasignación (`/contactos/historial/{uploadId}?campaign=`)
+
+- Cada carga v3 del historial enlaza a su detalle: por agente del manifiesto,
+  los contactos "por revisar" de esa carga (`GET /api/campaigns/{c}/review-items?uploadId=`)
+  con estado, autor y fecha. `/contactos/historial/none?campaign=` muestra los
+  que no tienen carga asociada (cargas por `curl` o anteriores).
+- **Descartar** (el mensaje sí salió): `ConfirmDialog` destructivo →
+  `POST .../review-items/resolve` `discard`.
+- **Reasignar**: elige un agente habilitado v3 → la página arma un CSV con las
+  filas originales **sin** `ana_upload_id`, calcula la vista previa con el mismo
+  plan que la carga (modo "Asignar a un agente") y, tras el `ConfirmDialog` que
+  pide confirmar en WhatsApp que el mensaje no salió, crea la carga nueva con
+  `source` y marca los contactos (`resolve` `reassign` con el `uploadId` nuevo,
+  un reintento). Si el marcado falla, "Reintentar marcado" no crea otra carga.
+- La columna `ana_upload_id` está reservada en v3: un CSV que la traiga se
+  rechaza y una variable `{x}` que solo resolvería contra ella (p. ej.
+  `{upload}`) se marca "Variable desconocida".

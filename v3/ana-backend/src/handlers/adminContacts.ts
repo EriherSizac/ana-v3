@@ -23,6 +23,46 @@ export const MAX_BODY_BYTES = 5_500_000;
 const MAX_FILES = 200;
 const UPLOAD_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const HISTORY_LIMIT = 50;
+/** Columna reservada (link-review-contacts-to-uploads D1): última columna con el uploadId. */
+export const UPLOAD_ID_COLUMN = 'ana_upload_id';
+const ASSIGNMENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const MAX_SOURCE_ITEMS = 5000;
+
+export interface ReviewSource {
+  type: 'review';
+  fromUploadId: string;
+  items: Array<{ agent: string; assignmentId: string; phone: string }>;
+}
+
+/** Valida `source` (origen de una reasignación). Devuelve el source o el mensaje de error. */
+export function parseSource(raw: unknown): ReviewSource | { error: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: 'source inválido' };
+  const r = raw as Record<string, unknown>;
+  if (r.type !== 'review') return { error: 'source.type debe ser review' };
+  if (typeof r.fromUploadId !== 'string' || (r.fromUploadId !== 'none' && !UPLOAD_ID_RE.test(r.fromUploadId))) {
+    return { error: 'source.fromUploadId inválido' };
+  }
+  if (!Array.isArray(r.items) || r.items.length === 0 || r.items.length > MAX_SOURCE_ITEMS) {
+    return { error: `source.items debe tener entre 1 y ${MAX_SOURCE_ITEMS} elementos` };
+  }
+  const items: ReviewSource['items'] = [];
+  for (const it of r.items) {
+    const agent = parseUsername((it as { agent?: unknown })?.agent);
+    const assignmentId = (it as { assignmentId?: unknown })?.assignmentId;
+    const phone = (it as { phone?: unknown })?.phone;
+    if (!agent || typeof assignmentId !== 'string' || !ASSIGNMENT_ID_RE.test(assignmentId) || typeof phone !== 'string' || !phone.replace(/\D/g, '')) {
+      return { error: 'source.items inválido' };
+    }
+    items.push({ agent, assignmentId, phone });
+  }
+  return { type: 'review', fromUploadId: r.fromUploadId, items };
+}
+
+/** Agrega `ana_upload_id` como última columna de cada fila (encabezado incluido). */
+export function appendUploadIdColumn(csv: string, uploadId: string): string {
+  const lines = csv.replace(/\n$/, '').split('\n');
+  return lines.map((l, i) => (i === 0 ? `${l},${UPLOAD_ID_COLUMN}` : l.trim() ? `${l},${uploadId}` : l)).join('\n') + '\n';
+}
 
 export interface ManifestEntry {
   agent: string;
@@ -63,7 +103,7 @@ interface ParsedUpload {
   mode: 'distribute' | 'single';
   message: string;
   files: Array<{ agent: string; csv: string }>;
-  source?: unknown;
+  source?: ReviewSource;
 }
 
 /** Valida el body de la carga. Devuelve los datos o el mensaje de error (400). */
@@ -88,13 +128,20 @@ export function parseUploadBody(body: unknown): ParsedUpload | { error: string }
     seen.add(agent);
     files.push({ agent, csv: stripBom(csv) });
   }
+  let source: ReviewSource | undefined;
+  if (b.source !== undefined && b.source !== null) {
+    const parsedSource = parseSource(b.source);
+    if ('error' in parsedSource) return { error: parsedSource.error };
+    if (b.mode !== 'single') return { error: 'source requiere mode single' };
+    source = parsedSource;
+  }
   return {
     uploadId: b.uploadId,
     fileName: b.fileName.trim(),
     mode: b.mode,
     message: typeof b.message === 'string' ? b.message : '',
     files,
-    ...(b.source !== undefined ? { source: b.source } : {}),
+    ...(source ? { source } : {}),
   };
 }
 
@@ -102,6 +149,7 @@ export function parseUploadBody(body: unknown): ParsedUpload | { error: string }
 export function validateFiles(p: Pick<ParsedUpload, 'files' | 'message'>): string | null {
   for (const f of p.files) {
     const cols = headerColumns(f.csv);
+    if (cols.some((c) => c.toLowerCase() === UPLOAD_ID_COLUMN)) return `${f.agent}: columna reservada ${UPLOAD_ID_COLUMN}`;
     if (!cols.some((c) => (PHONE_COLUMNS as readonly string[]).includes(c))) return `${f.agent}: falta columna de teléfono`;
     const dataRows = f.csv
       .split(/\r?\n/)
@@ -167,7 +215,8 @@ export const uploadContacts = async (event: AdminEvent): Promise<AdminResult> =>
     const written: string[] = [];
     let failure: unknown = null;
     for (const f of parsed.files) {
-      const processed = addMessageColumn(f.csv, message);
+      const withMessage = addMessageColumn(f.csv, message);
+      const processed = { ...withMessage, csv: appendUploadIdColumn(withMessage.csv, parsed.uploadId) };
       const key = `agents/${campaign}/${f.agent}-contacts-${ts}.csv`;
       const historicKey = `historic/agents/${campaign}/${f.agent}-contacts-${ts}.csv`;
       try {

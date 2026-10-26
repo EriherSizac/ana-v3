@@ -21,6 +21,10 @@ import {
   assignmentsTooLong,
   buildPlan,
   checkFileSize,
+  hasReservedColumn,
+  RESERVED_COLUMN_ERROR,
+  unknownVariableError,
+  variablesResolvingToUploadId,
   detectPhoneColumn,
   parseCsvText,
   planHash,
@@ -141,15 +145,25 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   }, [parsed, phone, fleet]);
 
   const hasMessageColumn = !!parsed && !('error' in parsed) && parsed.header.includes('message');
+  // Columna reservada y variables que tomarían el uploadId (solo v3).
+  const reservedError = fleet === 'v3' && parsed && !('error' in parsed) && hasReservedColumn(parsed.header) ? RESERVED_COLUMN_ERROR : null;
+  const variableError = useMemo(() => {
+    if (fleet !== 'v3' || !parsed || 'error' in parsed || reservedError) return null;
+    const texts = [message, ...(validation?.valid ?? []).map((r) => r.record.message ?? '')];
+    const bad = variablesResolvingToUploadId(texts, parsed.header);
+    return bad.length ? unknownVariableError(bad) : null;
+  }, [fleet, parsed, reservedError, message, validation]);
   const noEnabled = enabled !== null && enabled.length === 0;
 
   const previewBlock: string | null = (() => {
     if (!campaign || !fleet) return 'Elige campaña y flota';
     if (noEnabled || enabled === null) return 'Sin agentes habilitados';
     if (mode === 'single' && !agent) return 'Elige el agente';
+    if (reservedError) return reservedError;
     if (!validation) return 'Carga un archivo válido';
     if (validation.valid.length === 0) return 'No hay filas válidas';
     if (fleet === 'v3' && !hasMessageColumn && !message.trim()) return 'Escribe el mensaje';
+    if (variableError) return variableError;
     return null;
   })();
 
@@ -330,6 +344,8 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
         {fileError && <InlineMessage className="mt-3">{fileError}</InlineMessage>}
         {parsed && 'error' in parsed && <InlineMessage className="mt-3">{parsed.error}</InlineMessage>}
         {phone && 'error' in phone && fleet === 'v3' && <InlineMessage className="mt-3">{phone.error}</InlineMessage>}
+        {reservedError && <InlineMessage className="mt-3">{reservedError}</InlineMessage>}
+        {variableError && <InlineMessage className="mt-3">{variableError}</InlineMessage>}
         {parsed && !('error' in parsed) && fleet === 'v4' && (
           <div className="mt-4 max-w-xs">
             <SearchableSelect

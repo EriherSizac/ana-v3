@@ -5,6 +5,10 @@ import {
   assignmentsTooLong,
   buildPlan,
   detectPhoneColumn,
+  hasReservedColumn,
+  RESERVED_COLUMN_ERROR,
+  unknownVariableError,
+  variablesResolvingToUploadId,
   LIMITS,
   parseCsvText,
   planHash,
@@ -89,10 +93,15 @@ export async function verifyPlan(req: UploadRequest, token: string, campaign: { 
   if ('error' in parsed) throw new HttpError('invalid_request', parsed.error);
   const phone = detectPhoneColumn(parsed.header, fleet, req.phoneColumn);
   if ('error' in phone) throw new HttpError('invalid_request', phone.error);
+  if (fleet === 'v3' && hasReservedColumn(parsed.header)) throw new HttpError('invalid_request', RESERVED_COLUMN_ERROR);
   const hasMessageColumn = parsed.header.includes('message');
   if (fleet === 'v3' && !hasMessageColumn && !req.message?.trim()) throw new HttpError('invalid_request', 'Escribe el mensaje');
   const { valid } = validateRows(parsed, fleet, phone.column);
   if (valid.length === 0) throw new HttpError('invalid_request', 'El archivo no tiene filas válidas');
+  if (fleet === 'v3') {
+    const bad = variablesResolvingToUploadId([req.message ?? '', ...valid.map((r) => r.record.message ?? '')], parsed.header);
+    if (bad.length) throw new HttpError('invalid_request', unknownVariableError(bad));
+  }
 
   const roster = await getRoster(fleet, token, campaign[fleet]);
   const enabled = roster.agents.filter((a) => a.enabled).map((a) => a.username);
