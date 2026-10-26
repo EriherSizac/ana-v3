@@ -1,5 +1,9 @@
 # Sistema de Historial de Mensajes
 
+## Autenticación (desde la versión 1.0.47)
+
+A partir de la versión **1.0.47** (login con usuario y contraseña de Pernexium, `migrate-cli-to-cognito-login`) todas las consultas del historial (`GET /backups/latest/...`, `GET /backups/chat/...`, `GET /backups/chats/...`) y los respaldos (`POST /backups/chat`) se hacen desde Node con el ID token de la sesión (`Authorization: Bearer`) y con el agente y la campaña de la sesión activa, nunca con los que envíe la página. Con el modo estricto del backend, un agente solo puede leer y escribir su propio historial en campañas donde está habilitado.
+
 ## Descripción
 
 El sistema permite ver el historial de mensajes enviados a un contacto desde la ventana manual de WhatsApp. Busca automáticamente en los backups de los últimos 4 días.

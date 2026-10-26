@@ -1,5 +1,39 @@
 # ANA - Guía rápida para agentes
 
+## Inicio de sesión (desde la versión 1.0.47)
+
+ANA ya no usa la "palabra del día": entras con tu **usuario y contraseña de
+Pernexium** (los mismos de ANA v4; el usuario no es tu correo).
+
+- **Primer inicio de sesión**: tu supervisor te da un usuario y una **contraseña
+  temporal**. Al entrar, ANA te pide crear una **contraseña nueva** (dos veces).
+- **Verificación en dos pasos (MFA)**: si tu usuario la tiene, ANA te pide el
+  código de 6 dígitos de tu app autenticadora o del SMS. Si es obligatoria y aún
+  no la configuraste, ANA muestra un **código QR y una clave** para registrarlos
+  en tu app autenticadora y te pide el primer código.
+- **Campaña**: después eliges tu campaña de la lista (solo aparecen las campañas
+  donde estás habilitado). Si no aparece ninguna, verás "Tu usuario no está
+  habilitado en ninguna campaña. Contacta a tu supervisor."
+- **Volver a abrir ANA el mismo día**: verás "Sesión activa: <tu usuario>"; confirma
+  la campaña y pulsa **Continuar** (no se vuelve a pedir la contraseña). La sesión
+  dura un día; después ANA te pide usuario y contraseña otra vez.
+- **Cambiar de usuario**: en "Sesión activa" pulsa **Cambiar de usuario**: se
+  cierra la sesión guardada y aparece el formulario vacío.
+- **Cerrar sesión en esta PC**: ejecuta `ANA.exe --logout` (imprime "Sesión cerrada"
+  y termina; funciona aun sin internet).
+- **Olvidé mi contraseña**: pide a tu supervisor que la restablezca.
+
+Avisos mientras trabajas (en la consola y en el recuadro de estado):
+
+- **"Sesión expirada: cierra ANA y vuelve a iniciar sesión"**: la sesión venció o
+  fue revocada. ANA deja de tomar contactos hasta que vuelvas a entrar.
+- **"Tu usuario no está habilitado en esta campaña"**: tu supervisor te
+  deshabilitó o quitó el rol de la campaña. ANA deja de tomar contactos y vuelve a
+  intentar cada 30 segundos.
+
+La sesión se guarda cifrada para tu usuario de Windows (`%APPDATA%\ANA\.agent-session`);
+si se copia a otra cuenta o PC no sirve y ANA pide iniciar sesión.
+
 ## Teclado en la ventana manual
 
 - **AltGr funciona**: puedes escribir `@`, `#`, `\`, `~`, `€`, `[`, `]`, `{`, `}` y `|` con AltGr en teclados en español (Latinoamérica o España).

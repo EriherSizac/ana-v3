@@ -78,6 +78,98 @@ Agente y campaña se normalizan a minúsculas en todas estas rutas (ver arriba).
 | **GET** | **`/credentials/{campaign}`** | **`getCampaignCredentials`** | Obtener credenciales de campaña |
 | **POST** | **`/credentials/upload`** | **`uploadCampaignCredentials`** | Subir credenciales |
 | **POST** | **`/credentials/regenerate`** | **`regenerateDailyPasswords`** | Regenerar passwords diarios |
+
+`/auth/verify` y `/credentials/*` (palabra del día) siguen activas solo durante
+la transición al login con Cognito; se retiran al final del despliegue
+(`migrate-cli-to-cognito-login` tarea 8.1).
+
+## **Autenticación de agente (CLI v3, ID token de Cognito)**
+
+`migrate-cli-to-cognito-login`. El CLI inicia sesión contra el pool de Pernexium
+`us-east-2_UepfOyKpd` con el App Client público **`ana-v3-cli`** y envía
+`Authorization: Bearer <ID token>` y `X-Ana-Cli-Version: <versión>` en todas sus
+llamadas. El backend (`src/lib/agentAuth.ts`, `aws-jwt-verify`) verifica: firma
+contra el JWKS del pool, `iss` del pool, `token_use=id`, `aud` ∈
+`COGNITO_AGENT_CLIENT_IDS` y `exp`; luego **propiedad** (`cognito:username` en
+minúsculas = agente de la ruta o del body) y **roster** (agente derivado de la
+campaña sin `enabled:false`, `v3/agent-roster`, caché de 60 s). `X-Admin-Key`
+**no** sustituye al token.
+
+| **Método** | **Ruta** | **Agente / campaña de** | **Modo** |
+| --- | --- | --- | --- |
+| GET | `/get/chats/{agentId}/{campaignId}` | path | transición |
+| POST | `/contacts/pending` | body `agent_id` / `campaign` | transición |
+| POST | `/backups` | body | transición |
+| GET | `/backups/latest/{agentId}/{campaign}` | path | transición |
+| POST | `/backups/chat` | body | transición |
+| GET | `/backups/chat/{campaign}/{agentId}/{contactPhone}` | path | transición |
+| GET | `/backups/chats/{campaign}/{agentId}` | path | transición |
+| POST | `/media` | body | transición |
+| GET | `/templates?campaign=X&channel=Y` | solo `campaign` (query), sin agente | transición |
+| GET | `/agent/campaigns` | token | **siempre estricta** + authorizer `cognitoAgentJwt` |
+| GET | `/agent/settings` | token | **siempre estricta** + authorizer `cognitoAgentJwt` |
+
+`POST /templates` sigue con `X-Admin-Key` (supervisores).
+
+**Variables** (`serverless.yml` → `provider.environment`, ver `.env.example`):
+
+| Variable | Default | Uso |
+| --- | --- | --- |
+| `AGENT_AUTH_ENFORCED` | `false` | `false` = modo reporte (registra y atiende); `true` = estricto |
+| `COGNITO_USER_POOL_ID` | `us-east-2_UepfOyKpd` | emisor de los tokens (también del authorizer) |
+| `COGNITO_AGENT_CLIENT_IDS` | `''` | id(s) del App Client `ana-v3-cli`, separados por coma. **Pendiente**: el client aún no existe (tarea 1.1); vacío = `/agent/*` responde 503 y en reporte las rutas registran `config:"missing"`. El authorizer `cognitoAgentJwt` toma la variable como **un solo** elemento de `audience` (placeholder `ana-v3-cli-pendiente` si falta): con más de un client hay que agregar un elemento por id en `serverless.yml`. |
+
+**Respuestas**:
+
+- Modo reporte: se atiende como antes y se registra el motivo.
+- Modo estricto: sin token, vencido, inválido u otro client → `401 {"error":"Unauthorized"}`
+  (o `401 {"message":"Unauthorized"}` del authorizer de API Gateway); agente ajeno,
+  fuera del roster o roster ilegible/vencido → `403 {"error":"Forbidden"}`; siempre
+  sin tocar S3.
+- Estricto (o `/agent/*`) sin `COGNITO_USER_POOL_ID`/`COGNITO_AGENT_CLIENT_IDS` →
+  `503 {"error":"Agent auth not configured"}`.
+- `GET /agent/campaigns` → `200 {"username":"erick","campaigns":["prueba","ventas"]}`
+  (habilitadas, minúsculas, orden alfabético; vacío si ninguna).
+
+**Logs**: una línea JSON por solicitud (stdout, sin prefijo de Lambda), nunca con
+el token: `{"evt":"agent_auth","mode":"report|strict","route","reason","agent","campaign","user","cliVersion"}`
+con `reason` ∈ `ok|missing|invalid|expired|wrong_client|mismatch|not_in_roster|roster_error`
+(`cliVersion: "unknown"` = CLI 1.0.46 o anterior). Métrica `AnaAgentAuth/Requests`
+(dimensiones `reason`, `cliVersion`) por metric filter en cada función de agente, y
+consulta guardada `ana-backend-{stage}/agent-auth` en Logs Insights:
+
+```
+filter evt = "agent_auth" | stats count() by reason, cliVersion, agent
+```
+
+Ejemplos (dev; `$ID_TOKEN` = ID token de un usuario de prueba emitido para `ana-v3-cli`):
+
+```bash
+# /agent/* sin token → 401 (aun en modo reporte)
+curl -i https://ana-dev.pernexium.com.mx/agent/campaigns
+# con token → 200 {"username":"...","campaigns":[...]}
+curl -H "Authorization: Bearer $ID_TOKEN" -H "X-Ana-Cli-Version: 1.0.47" https://ana-dev.pernexium.com.mx/agent/campaigns
+# modo reporte: sin token sigue respondiendo 200/404 y registra reason "missing"
+curl -i https://ana-dev.pernexium.com.mx/get/chats/erick/prueba
+```
+
+**Transición y rollback** (design D6/D11): desplegar con `AGENT_AUTH_ENFORCED=false`,
+publicar el CLI, observar 5 días hábiles sin `missing`/`not_in_roster` de agentes
+activos y entonces `AGENT_AUTH_ENFORCED=true` + agregar `authorizer: { name: cognitoAgentJwt }`
+a las 9 rutas de agente y redeploy. Rollback: `AGENT_AUTH_ENFORCED=false`, quitar ese
+authorizer de las rutas fuera de `/agent/*` y redeploy.
+
+**App Client `ana-v3-cli`** (pendiente de crear, tarea 1.1): público (sin secreto),
+`ALLOW_USER_PASSWORD_AUTH` + `ALLOW_REFRESH_TOKEN_AUTH`, revocación de tokens
+activa, *prevent user existence errors* activo, ID/access 60 min, refresh 1 día.
+Id: _pendiente_ (registrar aquí y en `COGNITO_AGENT_CLIENT_IDS`; el CLI lo lee de
+`ANA_COGNITO_CLIENT_ID` o de `DEFAULT_COGNITO.clientId` en `v3/cli-whatsapp/cognito-auth.js`).
+
+**Purga de datos de `agent_id` legados** (design D12, después del retiro de la
+palabra del día y con la revisión legal aprobada): `scripts/purge-legacy-agent-data.ts`
+(dry-run por defecto; `--apply`, `--delete-source`, `--cutover`, `--treat-as-legacy`,
+`--archive-bucket`, `--profile`). Ver el encabezado del script.
+
 ## **ANA Admin: rutas `/admin/*` (id token de Cognito)**
 
 Las rutas bajo `/admin/` las usa ANA Admin (`admin-web/`). **No aceptan
