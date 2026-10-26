@@ -271,6 +271,26 @@ functions:
           authorizer:
             name: cognitoAdminJwt
 
+  # add-cli-remote-settings (GET /agent/settings se registra con el authorizer
+  # de agentes de migrate-cli-to-cognito-login cuando exista).
+  adminGetCliSettings:
+    handler: src/handlers/cliSettings.getCliSettings
+    events:
+      - httpApi:
+          path: /admin/cli-settings
+          method: get
+          authorizer:
+            name: cognitoAdminJwt
+
+  adminUpdateCliSettings:
+    handler: src/handlers/cliSettings.updateCliSettingsHandler
+    events:
+      - httpApi:
+          path: /admin/cli-settings
+          method: post
+          authorizer:
+            name: cognitoAdminJwt
+
 resources:
   Resources:
     StorageBucket:

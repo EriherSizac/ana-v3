@@ -25,6 +25,12 @@ export const SECTIONS: Section[] = [
     description: 'Carga listas de contactos y repártelas entre los agentes habilitados de v3 o v4.',
     isAllowed: (a) => hasPermission(a, PERMISSIONS.CONTACTS_UPLOAD) && hasPermission(a, PERMISSIONS.CONTACTS_DISTRIBUTE),
   },
+  {
+    href: '/configuracion',
+    label: 'Configuración',
+    description: 'Configuración remota del CLI v3 (solo rol Developer).',
+    isAllowed: (a) => a.isDeveloper,
+  },
 ];
 
 /** Secciones visibles para el acceso dado. */

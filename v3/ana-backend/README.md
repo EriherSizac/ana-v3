@@ -181,3 +181,31 @@ curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/ca
 
 La ruta de supervisor con `X-Admin-Key` (`/supervisors/agents/{agent}/{campaign}/contacts`)
 queda como respaldo hasta el retiro de la llave.
+
+### Configuración remota del CLI (`config/cli-settings.json`)
+
+Documento global `{"schemaVersion":1,"settings":{...},"updatedAt","updatedBy"}`
+en el bucket de almacenamiento (`src/lib/cliSettings.ts`). Catálogo cerrado:
+
+| Llave | Tipo | Por defecto | Uso |
+|---|---|---|---|
+| `noWhatsappConsultRegistration` | boolean | `false` | La ventana manual ofrece registrar "Consulta No Whatsapp" en el CRM |
+
+Configuración efectiva = defaults del catálogo + valores guardados válidos
+(un `"true"` en texto o una llave desconocida se ignoran). Objeto inexistente =
+defaults; ilegible u otra versión = error (no se inventan valores). Borrar el
+objeto devuelve todo a los valores por defecto.
+
+| Método | Ruta | Quién | Descripción |
+|---|---|---|---|
+| GET | `/admin/cli-settings` | solo rol **Developer** (de v4 `GET /me`; admin/líder no bastan → 403 `Solo Developer`) | `{settings, catalog, updatedAt, updatedBy}` |
+| POST | `/admin/cli-settings` | ídem | `{"settings":{"noWhatsappConsultRegistration":true}}` (parcial); llave desconocida → 400 `Configuración desconocida: <llave>`; conflicto tras 3 intentos → 409 |
+| GET | `/agent/settings` | CLI con ID token (autenticación de `migrate-cli-to-cognito-login`; se registra con su authorizer de agentes) | `{settings, updatedAt}`; objeto ilegible → 500 `{"error":"Configuración no disponible"}` |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/cli-settings
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"settings":{"noWhatsappConsultRegistration":true}}' https://ana-dev.pernexium.com.mx/admin/cli-settings
+```
+
+Se edita desde ANA Admin → **Configuración**.

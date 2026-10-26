@@ -48,3 +48,12 @@ Un solo poller en el proceso principal (tras el login y cada 5 min, `AbortSignal
 2. ANA Admin: página Configuración.
 3. CLI: release con `remote-settings.js` junto con o después del login Cognito, y con el ajuste de `fix-no-whatsapp-modal-duplicates`.
 - Rollback: borrar `config/cli-settings.json` devuelve todos los valores por defecto.
+
+## Decisiones de implementación
+
+- `GET /agent/settings` **no se registró** todavía: depende de `requireAgentToken` y del authorizer `cognitoAgentJwt` de `migrate-cli-to-cognito-login`, que aún no existen en el código. El cuerpo de la respuesta está implementado y probado (`agentSettingsResponse` en `src/handlers/cliSettings.ts`); falta envolverlo con esa autenticación y agregar la función a `serverless.yml` (tarea 1.3).
+- El catálogo incluye además `label` (nombre legible) para que ANA Admin no lo duplique; `GET /admin/cli-settings` lo devuelve junto con `key/type/default/description`.
+- La comprobación de rol Developer en v3 reutiliza `requireAdminAccess` (v4 `GET /me`) + `isDeveloper` de `src/lib/adminAccess.ts` (misma normalización que `isLeaderRole`).
+- CLI: `remote-settings.js` es un módulo nuevo con dependencias inyectables (`createRemoteSettings`) y una instancia única (`remoteSettings`, `startRemoteSettings`, `getRemoteSetting`). El token lo provee `setTokenProvider`, que conectará el módulo de sesión de `migrate-cli-to-cognito-login`; **sin token no consulta** y el valor queda en el por defecto (seguro), para no generar 401 desde CLIs sin sesión Cognito.
+- Hook mínimo en `index.js`: import + `startRemoteSettings()` tras `initWhatsApp()` (el login actual), para no chocar con los cambios concurrentes del CLI. La exposición a las páginas de las ventanas (`page.exposeFunction`) y su uso en el modal de la ventana manual quedan para `fix-no-whatsapp-modal-duplicates`/tarea 2.2.
+- La URL base del CLI se toma de `ANA_API_URL` (misma que `agent-config.js`); `X-Ana-Cli-Version` de `ANA_CLI_VERSION` (o `unknown`).

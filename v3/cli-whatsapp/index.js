@@ -259,6 +259,7 @@ import {
   insertInteractions,
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
+import { startRemoteSettings } from "./remote-settings.js";
 import { phone } from "./phone-utils.js";
 import { interactionDateTime } from "./interaction-time.js";
 import {
@@ -397,6 +398,8 @@ async function main() {
       }
 
       await initWhatsApp();
+      // Configuración remota (add-cli-remote-settings): poller tras el login.
+      startRemoteSettings();
 
       // Después de initWhatsApp, las credenciales ya están configuradas
       // Ahora podemos abrir la ventana manual si está habilitada
