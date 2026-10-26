@@ -252,14 +252,14 @@ import {
   getMonitorPage,
 } from "./whatsapp-monitor.js";
 import {
-  hasAgentConfig,
   fetchAssignedChats,
   updatePendingContacts,
   loadAgentConfig,
   insertInteractions,
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
-import { startRemoteSettings } from "./remote-settings.js";
+import { remoteSettings, startRemoteSettings } from "./remote-settings.js";
+import { agentSession, backend, sessionStore, getIdToken } from "./agent-runtime.js";
 import { phone } from "./phone-utils.js";
 import { interactionDateTime } from "./interaction-time.js";
 import {
@@ -280,6 +280,13 @@ const REVIEW_ERROR =
 
 // Función principal
 async function main() {
+  // --logout: revoca el refresh token (si hay red), borra .agent-session y termina
+  if (process.argv.includes("--logout")) {
+    await agentSession.logout();
+    console.log("Sesión cerrada");
+    return;
+  }
+
   // Auto-update (solo EXE/pkg). Se desactiva con --no-self-update
   if (!process.argv.includes("--no-self-update")) {
     try {
@@ -337,34 +344,22 @@ async function main() {
   console.log("╚════════════════════════════════════════╝\n");
 
   try {
-    // Solo backend: requiere credenciales y asignaciones del servidor
-    let credentialsExist = hasAgentConfig();
+    // Sin sesión de Cognito reutilizable, la ventana de automatización (abajo)
+    // muestra primero el overlay de login (una sola inicialización del perfil).
+    const credentialsExist = fs.existsSync(sessionStore.filePath);
     if (!credentialsExist) {
       console.log("⚠️  No hay credenciales configuradas.");
       console.log(
-        "   Se abrirá la ventana para configurar credenciales (backend).\n",
+        "   Se abrirá la ventana para iniciar sesión.\n",
       );
-
-      await initWhatsApp();
-      credentialsExist = hasAgentConfig();
-      if (!credentialsExist) {
-        console.log("⚠️  No se detectó configuración de agente todavía.");
-        await waitForEnterIfPkg(
-          "\nConfigura credenciales y vuelve a ejecutar.",
-        );
-        return;
-      }
     }
 
     // Decidir qué ventanas abrir
     const shouldOpenManual = CONFIG.enableManualWindow;
     const shouldOpenMonitor = CONFIG.enableMonitorWindow;
 
-    const agentConfig = loadAgentConfig();
-    const rawCampaign = agentConfig?.campaign || "";
-    const campaignName = rawCampaign.includes("-")
-      ? rawCampaign.split("-").slice(1).join("-")
-      : rawCampaign;
+    // Campaña para el CRM: se calcula después del login (la elige el agente)
+    let campaignName = "";
     const INTERACTIONS_USER_ID = "6898b89b-ab72-4196-92b1-70d51781f68f";
 
     console.log(
@@ -374,7 +369,7 @@ async function main() {
       `👀 Ventana monitor: ${shouldOpenMonitor ? "ACTIVADA" : "DESACTIVADA"}`,
     );
     console.log(
-      `🔐 Credenciales: ${credentialsExist ? "CONFIGURADAS" : "PENDIENTES"}\n`,
+      `🔐 Sesión guardada: ${credentialsExist ? "SÍ" : "NO"}\n`,
     );
 
     // La ventana manual solo se abre si ya hay credenciales configuradas
@@ -398,7 +393,23 @@ async function main() {
       }
 
       await initWhatsApp();
-      // Configuración remota (add-cli-remote-settings): poller tras el login.
+      const identity = agentSession.identity();
+      if (!identity) {
+        console.log("⚠️  No se detectó una sesión de agente.");
+        await waitForEnterIfPkg(
+          "\nConfigura credenciales y vuelve a ejecutar.",
+        );
+        return;
+      }
+      {
+        const rawCampaign = identity.campaign || "";
+        campaignName = rawCampaign.includes("-")
+          ? rawCampaign.split("-").slice(1).join("-")
+          : rawCampaign;
+      }
+      // Configuración remota (add-cli-remote-settings): poller tras el login,
+      // autenticado con el ID token de la sesión (nunca se persiste).
+      remoteSettings.setTokenProvider(getIdToken);
       startRemoteSettings();
 
       // Después de initWhatsApp, las credenciales ya están configuradas
@@ -487,7 +498,7 @@ async function main() {
 
       // Registros locales de otro agente/campaña: se conservan sin procesarse
       {
-        const cfg = loadAgentConfig() || {};
+        const cfg = agentSession.identity() || loadAgentConfig() || {};
         const others = listOtherJournals(DATA_DIR, cfg.agent_id, cfg.campaign);
         if (others.length > 0) {
           console.warn(
@@ -506,8 +517,21 @@ async function main() {
           setStatusWidgetText(monitorPage, "Poll: consultando servidor..."),
         ]);
 
+        // Sesión rechazada por el backend (401 persistente o 403, design D9): no se
+        // consumen ni procesan contactos; se sigue consultando con el intervalo normal.
+        const authBlock = await backend.recheckAuthorization();
+        if (authBlock) {
+          console.warn(`⚠️  ${authBlock}`);
+          await sleepWithCountdown(POLL_INTERVAL_MS, `${authBlock} · reintento`, [
+            page,
+            manualPage,
+            monitorPage,
+          ]);
+          continue;
+        }
+
         // Asignación en curso: reanudar el registro local si existe; si no, poll
-        const journalCfg = loadAgentConfig() || {};
+        const journalCfg = agentSession.identity() || loadAgentConfig() || {};
         let journal = null;
         let assignmentContacts = [];
         let contacts = [];
@@ -572,8 +596,10 @@ async function main() {
         console.log(`📊 Contactos para automatización: ${contacts.length}`);
 
         if (contacts.length === 0 && !journal) {
-          console.log("ℹ️  No hay contactos asignados.");
-          await sleepWithCountdown(POLL_INTERVAL_MS, "Próximo poll", [
+          const authMsg = agentSession.authMessage();
+          if (authMsg) console.warn(`⚠️  ${authMsg}`);
+          else console.log("ℹ️  No hay contactos asignados.");
+          await sleepWithCountdown(POLL_INTERVAL_MS, authMsg ? `${authMsg} · reintento` : "Próximo poll", [
             page,
             manualPage,
             monitorPage,

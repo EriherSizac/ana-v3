@@ -12,6 +12,8 @@
  * el valor sigue siendo el por defecto (seguro).
  */
 
+import { getCliVersion } from './self-update.js';
+
 /** Catálogo local de valores por defecto (mismo que v3/ana-backend/src/lib/cliSettings.ts). */
 export const DEFAULT_SETTINGS = Object.freeze({
   noWhatsappConsultRegistration: false,
@@ -131,7 +133,7 @@ export function createRemoteSettings({
 /** Instancia única del proceso principal. */
 export const remoteSettings = createRemoteSettings({
   baseUrl: process.env.ANA_API_URL || 'https://ow24p7ablb.execute-api.us-east-1.amazonaws.com',
-  cliVersion: process.env.ANA_CLI_VERSION || 'unknown',
+  cliVersion: process.env.ANA_CLI_VERSION || getCliVersion(),
 });
 
 /** Arranca el poller (llamar una vez tras el login). */

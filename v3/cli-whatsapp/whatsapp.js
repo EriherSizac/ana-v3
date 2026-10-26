@@ -3,7 +3,11 @@ import './setup-env.js';
 
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
-import { loadAgentConfig, saveAgentConfig, hasAgentConfig } from './agent-config.js';
+import QRCode from 'qrcode';
+import { loadAgentConfig, saveAgentConfig } from './agent-config.js';
+import { agentSession, backend, cognito } from './agent-runtime.js';
+import { createLoginFlow } from './login-flow.js';
+import { loginOverlayScript } from './login-overlay.js';
 import { phone } from './phone-utils.js';
 
 let autoBrowser = null;
@@ -141,303 +145,71 @@ async function removeBlockingOverlay() {
 }
 
 /**
- * Muestra el overlay de login y espera a que el usuario ingrese los datos
- * @param {boolean} requireAll - Si es true, pide usuario, campaña y palabra. Si es false, solo palabra
- * @returns {Promise<Object>} Configuración del agente
+ * Overlay de login Cognito (migrate-cli-to-cognito-login D8). La máquina de
+ * estados vive en Node (`login-flow.js`); la página solo envía entradas por
+ * `anaLoginAction` y dibuja la vista devuelta. Si la página recarga, el
+ * overlay se vuelve a dibujar en el paso vigente.
+ * @returns {Promise<{ agent_id: string, campaign: string }>}
  */
-async function showLoginOverlay(requireAll = true) {
-  return new Promise(async (resolve) => {
-    const savedConfig = loadAgentConfig();
-    const savedUser = savedConfig?.agent_id ? String(savedConfig.agent_id) : '';
-    const savedCampaign = savedConfig?.campaign ? String(savedConfig.campaign) : '';
-
-    const renderOverlay = async () => {
-      await autoPage.evaluate((args) => {
-        const { requireAll, savedUser, savedCampaign } = args;
-        const existing = document.getElementById('login-overlay');
-        if (existing) existing.remove();
-
-        const overlay = document.createElement('div');
-        overlay.id = 'login-overlay';
-        overlay.style.cssText = `
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0, 0, 0, 0.95);
-          z-index: 9999999;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-family: Arial, sans-serif;
-          color: white;
-        `;
-
-        const userField = requireAll ? `
-          <div style="margin-bottom: 20px; text-align: left;">
-            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-            <input type="text" id="login-user" value="${savedUser || ''}" placeholder="ej: erick" oninput="this.value=this.value.toLowerCase()" style="
-              width: 100%;
-              padding: 12px 15px;
-              border: 2px solid #333;
-              border-radius: 10px;
-              background: #1a1a1a;
-              color: white;
-              font-size: 16px;
-              box-sizing: border-box;
-              outline: none;
-              transition: border-color 0.3s;
-            " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-          </div>
-        ` : '';
-
-        const campaignField = requireAll ? `
-          <div style="margin-bottom: 20px; text-align: left; z-index: 10000000">
-            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-            <input type="text" id="login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" oninput="this.value=this.value.toLowerCase()" style="
-              width: 100%;
-              padding: 12px 15px;
-              border: 2px solid #333;
-              border-radius: 10px;
-              background: #1a1a1a;
-              color: white;
-              font-size: 16px;
-              box-sizing: border-box;
-              outline: none;
-              transition: border-color 0.3s;
-            " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-          </div>
-        ` : `
-          <div style="margin-bottom: 20px; text-align: left;">
-            <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
-            <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
-          </div>
-        `;
-
-        overlay.innerHTML = `
-          <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid #25D366; min-width: 400px;">
-            <div style="font-size: 60px; margin-bottom: 20px;">🔐</div>
-            <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">${requireAll ? 'Iniciar Sesión' : 'Verificación Diaria'}</h1>
-            <p style="margin: 0 0 30px 0; font-size: 14px; opacity: 0.7;">Ingresa tus credenciales para continuar</p>
-            
-            ${userField}
-            ${campaignField}
-            
-            <div style="margin-bottom: 30px; text-align: left;">
-              <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Palabra del Día</label>
-              <div style="display:flex; gap:10px; align-items:center;">
-                <input type="password" id="login-daily-password" placeholder="Ingresa la palabra del día" oninput="this.value=this.value.toLowerCase()" style="
-                  flex: 1;
-                  padding: 12px 15px;
-                  border: 2px solid #333;
-                  border-radius: 10px;
-                  background: #1a1a1a;
-                  color: white;
-                  font-size: 16px;
-                  box-sizing: border-box;
-                  outline: none;
-                  transition: border-color 0.3s;
-                " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-                <button id="login-daily-toggle" type="button" style="
-                  padding: 12px 14px;
-                  background: #1a1a1a;
-                  color: #25D366;
-                  border: 2px solid #333;
-                  border-radius: 10px;
-                  font-size: 14px;
-                  cursor: pointer;
-                  white-space: nowrap;
-                ">Ver</button>
-              </div>
-            </div>
-            
-            <button id="login-submit-btn" style="
-              width: 100%;
-              padding: 15px;
-              background: #25D366;
-              color: white;
-              border: none;
-              border-radius: 10px;
-              font-size: 18px;
-              font-weight: bold;
-              cursor: pointer;
-              transition: background 0.3s;
-            " onmouseover="this.style.background='#1da851'" onmouseout="this.style.background='#25D366'">
-              Verificar Credenciales
-            </button>
-            
-            <p id="login-error" style="margin: 15px 0 0 0; font-size: 14px; color: #ff6b6b; display: none;"></p>
-            <p id="login-loading" style="margin: 15px 0 0 0; font-size: 14px; color: #25D366; display: none;">Verificando...</p>
-          </div>
-        `;
-
-        document.body.appendChild(overlay);
-
-        if (savedUser) window.__savedUser = savedUser;
-        if (savedCampaign) window.__savedCampaign = savedCampaign;
-
-        setTimeout(() => {
-          const firstInput = requireAll ?
-            document.getElementById('login-user') :
-            document.getElementById('login-daily-password');
-          if (firstInput) firstInput.focus();
-        }, 100);
-      }, { requireAll: !!requireAll, savedUser: String(savedUser || ''), savedCampaign: String(savedCampaign || '') });
-    };
-
-    // Exponer función (solo si no existe ya)
-    try {
-      await autoPage.exposeFunction('verifyCredentialsBackend', async (user, campaign, dailyPassword) => {
-        try {
-          const response = await fetch(`${CONFIG.apiBaseUrl}/auth/verify`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ user, campaign, dailyPassword })
-          });
-          
-          const data = await response.json();
-          console.log('[Auth] Respuesta del backend:', data);
-          return data;
-        } catch (error) {
-          console.error('[Auth] Error al verificar credenciales:', error);
-          return { success: false, message: 'Error de conexión con el servidor' };
-        }
-      });
-    } catch (e) {
-      // Ignorar: ya expuesta
-    }
-
-    const attachHandlers = async () => {
-      await autoPage.evaluate((requireAll) => {
-        const btn = document.getElementById('login-submit-btn');
-        const userInput = document.getElementById('login-user');
-        const campaignInput = document.getElementById('login-campaign');
-        const dailyPasswordInput = document.getElementById('login-daily-password');
-        const dailyToggleBtn = document.getElementById('login-daily-toggle');
-        const errorEl = document.getElementById('login-error');
-        const loadingEl = document.getElementById('login-loading');
-
-        if (!btn || btn.dataset.listenerAdded) return;
-        btn.dataset.listenerAdded = 'true';
-
-        const handleSubmit = async () => {
-          const user = requireAll ? userInput.value.trim() : window.__savedUser;
-          const campaign = requireAll ? campaignInput.value.trim() : window.__savedCampaign;
-          const dailyPassword = dailyPasswordInput.value.trim();
-
-          if (requireAll && (!user || !campaign)) {
-            errorEl.textContent = 'Por favor completa todos los campos';
-            errorEl.style.display = 'block';
-            return;
-          }
-
-          if (!dailyPassword) {
-            errorEl.textContent = 'Por favor ingresa la palabra del día';
-            errorEl.style.display = 'block';
-            return;
-          }
-
-          errorEl.style.display = 'none';
-          loadingEl.style.display = 'block';
-          btn.disabled = true;
-          btn.style.opacity = '0.5';
-
-          const result = await window.verifyCredentialsBackend(user, campaign, dailyPassword);
-
-          loadingEl.style.display = 'none';
-          btn.disabled = false;
-          btn.style.opacity = '1';
-
-          if (result.success) {
-            window.__loginResult = { agent_id: user, campaign: campaign };
-            const overlay = document.getElementById('login-overlay');
-            if (overlay) overlay.remove();
-          } else {
-            errorEl.textContent = result.message || 'Credenciales incorrectas';
-            errorEl.style.display = 'block';
-          }
-        };
-
-        btn.addEventListener('click', handleSubmit);
-
-        if (dailyPasswordInput && dailyToggleBtn && !dailyToggleBtn.dataset.listenerAdded) {
-          dailyToggleBtn.dataset.listenerAdded = 'true';
-          dailyToggleBtn.addEventListener('click', () => {
-            try {
-              const isHidden = dailyPasswordInput.type === 'password';
-              dailyPasswordInput.type = isHidden ? 'text' : 'password';
-              dailyToggleBtn.textContent = isHidden ? 'Ocultar' : 'Ver';
-              dailyPasswordInput.focus();
-            } catch (_) {
-              // ignore
-            }
-          });
-        }
-
-        const inputs = [dailyPasswordInput];
-        if (requireAll) inputs.push(userInput, campaignInput);
-
-        inputs.forEach(input => {
-          if (input) {
-            input.addEventListener('keypress', (e) => {
-              if (e.key === 'Enter') handleSubmit();
-            });
-          }
-        });
-      }, requireAll);
-    };
-
-    // Pasar usuario/campaña guardados si aplica
-    if (!requireAll && savedConfig) {
-      await autoPage.evaluate((args) => {
-        window.__savedUser = args.agentId;
-        window.__savedCampaign = args.campaign;
-      }, { agentId: String(savedUser || ''), campaign: String(savedCampaign || '') });
-    }
-
-    await renderOverlay();
-    await attachHandlers();
-
-    // Si hay navegación/refresh durante el login, re-renderizar el overlay
-    const onLoad = async () => {
-      try {
-        const verified = await autoPage.evaluate(() => {
-          try {
-            return localStorage.getItem('automation_login_verified') === 'true';
-          } catch (e) {
-            return false;
-          }
-        });
-        if (verified) return;
-
-        const hasOverlay = await autoPage.evaluate(() => !!document.getElementById('login-overlay'));
-        if (!hasOverlay) {
-          await renderOverlay();
-          await attachHandlers();
-        }
-      } catch (e) {
-        // Ignorar
-      }
-    };
-
-    autoPage.on('load', onLoad);
-
-    const pollResult = setInterval(async () => {
-      try {
-        const loginResult = await autoPage.evaluate(() => window.__loginResult);
-        if (loginResult) {
-          clearInterval(pollResult);
-          autoPage.off('load', onLoad);
-          resolve(loginResult);
-        }
-      } catch (err) {
-        // Contexto destruido (navegación), seguir intentando
-      }
-    }, 200);
+async function showLoginOverlay() {
+  const flow = createLoginFlow({
+    cognito,
+    session: agentSession,
+    listCampaigns: () => backend.fetchAgentCampaigns(),
+    savedConfig: loadAgentConfig(),
+    qrDataUrl: (uri) => QRCode.toDataURL(uri, { margin: 1, width: 220 }),
   });
+
+  let resolveDone;
+  const done = new Promise((resolve) => {
+    resolveDone = resolve;
+  });
+
+  const render = async () => {
+    if (!autoPage || autoPage.isClosed()) return;
+    try {
+      await autoPage.evaluate(loginOverlayScript());
+      await autoPage.evaluate((view) => window.__anaRenderLogin(view), flow.view);
+    } catch (e) {
+      // Contexto destruido por navegación: el evento 'load' vuelve a dibujar
+    }
+  };
+
+  try {
+    await autoPage.exposeFunction('anaLoginAction', async (action, input) => {
+      const view = await flow.submit(String(action || ''), input && typeof input === 'object' ? input : {});
+      if (view?.step === 'done' && flow.result) setImmediate(() => resolveDone(flow.result));
+      return view;
+    });
+  } catch (e) {
+    // Ya expuesta en esta página
+  }
+
+  await flow.start();
+  if (flow.view?.step === 'active') {
+    console.log(`🔐 Sesión activa: ${flow.view.username}`);
+  } else {
+    console.log('🔐 Inicia sesión con tu usuario y contraseña de Pernexium');
+  }
+  await render();
+
+  const onLoad = async () => {
+    if (flow.view?.step === 'done') return;
+    await render();
+  };
+  autoPage.on('load', onLoad);
+
+  const result = await done;
+  autoPage.off('load', onLoad);
+  try {
+    await autoPage.evaluate(() => {
+      const o = document.getElementById('login-overlay');
+      if (o) o.remove();
+    });
+  } catch (e) {
+    // Ignorar
+  }
+  return result;
 }
 
 /**
@@ -669,13 +441,11 @@ export async function initWhatsApp() {
   
   // IMPORTANTE: Pedir credenciales ANTES de esperar la conexión
   // Esto permite que el usuario ingrese sus datos mientras escanea el QR
-  console.log('🔐 Validación de credenciales requerida...');
-  console.log('📝 Ingresa usuario, campaña y palabra del día');
-  
-  // Siempre pedir todos los campos (usuario, campaña y palabra del día)
-  agentConfig = await showLoginOverlay(true);
-  saveAgentConfig(agentConfig);
-  console.log(`✅ Credenciales verificadas: ${agentConfig.agent_id} | Campaña: ${agentConfig.campaign}`);
+  // Login Cognito (o reanudación de la sesión guardada) y selección de campaña.
+  // `.agent-config.json` solo guarda agent_id (username en minúsculas) y campaign.
+  agentConfig = await showLoginOverlay();
+  saveAgentConfig({ agent_id: agentConfig.agent_id, campaign: agentConfig.campaign });
+  console.log(`✅ Sesión iniciada: ${agentConfig.agent_id} | Campaña: ${agentConfig.campaign}`);
 
   // Marcar login como verificado (permite overlay en refresh, pero solo cuando también esté conectado)
   try {

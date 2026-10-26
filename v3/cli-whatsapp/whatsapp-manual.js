@@ -7,7 +7,9 @@ import path from 'path';
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
-import { loadAgentConfig, saveAgentConfig, API_BASE_URL, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
+import { loadAgentConfig, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
+import { backendFetch, sessionIdentity } from './agent-runtime.js';
+import { getRemoteSetting } from './remote-settings.js';
 import { phone, phoneUtilsInitScript } from './phone-utils.js';
 import { domSafetyInitScript } from './dom-safety.js';
 import { manualKeyPolicyInitScript } from './manual-key-policy.js';
@@ -32,268 +34,21 @@ let backupMonitorInterval = null;
 let cachedResultCodesByCampaign = new Map();
 
 /**
- * Muestra el overlay de login en la ventana manual
- * @param {boolean} requireAll - Si es true, pide usuario, campaña y palabra. Si es false, solo palabra
- * @returns {Promise<Object>} Configuración del agente
- */
-async function showManualLoginOverlay(requireAll = true) {
-  return new Promise(async (resolve) => {
-    const savedConfig = loadAgentConfig();
-    
-    await manualPage.evaluate((args) => {
-      const { requireAll, savedUser, savedCampaign } = args;
-      // Escape inline (este overlay no tiene el helper de dom-safety.js)
-      const escapeLocal = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-      
-      const existing = document.getElementById('manual-login-overlay');
-      if (existing) existing.remove();
-      
-      const overlay = document.createElement('div');
-      overlay.id = 'manual-login-overlay';
-      overlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.95);
-        z-index: 9999999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-family: Arial, sans-serif;
-        color: white;
-      `;
-      
-      const userField = requireAll ? `
-        <div style="margin-bottom: 20px; text-align: left;">
-          <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-          <input type="text" id="manual-login-user" value="${escapeLocal(savedUser || '')}" placeholder="ej: erick" style="
-            width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #333;
-            border-radius: 10px;
-            background: #1a1a1a;
-            color: white;
-            font-size: 16px;
-            box-sizing: border-box;
-            outline: none;
-            transition: border-color 0.3s;
-          " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-        </div>
-      ` : '';
-      
-      const campaignField = requireAll ? `
-        <div style="margin-bottom: 20px; text-align: left;">
-          <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-          <input type="text" id="manual-login-campaign" value="${escapeLocal(savedCampaign || '')}" placeholder="ej: prueba" style="
-            width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #333;
-            border-radius: 10px;
-            background: #1a1a1a;
-            color: white;
-            font-size: 16px;
-            box-sizing: border-box;
-            outline: none;
-            transition: border-color 0.3s;
-          " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-        </div>
-      ` : `
-        <div style="margin-bottom: 20px; text-align: left;">
-          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${escapeLocal(savedUser)}</strong></p>
-          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${escapeLocal(savedCampaign)}</strong></p>
-        </div>
-      `;
-      
-      overlay.innerHTML = `
-        <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid #25D366; min-width: 400px;">
-          <div style="font-size: 60px; margin-bottom: 20px;">🔐</div>
-          <h1 style="margin: 0 0 10px 0; font-size: 28px; color: #25D366;">${requireAll ? 'Iniciar Sesión (Manual)' : 'Verificación Diaria'}</h1>
-          <p style="margin: 0 0 30px 0; font-size: 14px; opacity: 0.7;">Ventana de respuestas manuales</p>
-          
-          ${userField}
-          ${campaignField}
-          
-          <div style="margin-bottom: 30px; text-align: left;">
-            <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Palabra del Día</label>
-            <input type="password" id="manual-login-daily-password" placeholder="Ingresa la palabra del día" style="
-              width: 100%;
-              padding: 12px 15px;
-              border: 2px solid #333;
-              border-radius: 10px;
-              background: #1a1a1a;
-              color: white;
-              font-size: 16px;
-              box-sizing: border-box;
-              outline: none;
-              transition: border-color 0.3s;
-            " onfocus="this.style.borderColor='#25D366'" onblur="this.style.borderColor='#333'">
-          </div>
-          
-          <button id="manual-login-submit-btn" style="
-            width: 100%;
-            padding: 15px;
-            background: #25D366;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 18px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background 0.3s;
-          " onmouseover="this.style.background='#1da851'" onmouseout="this.style.background='#25D366'">
-            Verificar Credenciales
-          </button>
-          
-          <p id="manual-login-error" style="margin: 15px 0 0 0; font-size: 14px; color: #ff6b6b; display: none;"></p>
-          <p id="manual-login-loading" style="margin: 15px 0 0 0; font-size: 14px; color: #25D366; display: none;">Verificando...</p>
-        </div>
-      `;
-      
-      document.body.appendChild(overlay);
-      
-      setTimeout(() => {
-        const firstInput = requireAll ? 
-          document.getElementById('manual-login-user') : 
-          document.getElementById('manual-login-daily-password');
-        if (firstInput) firstInput.focus();
-      }, 100);
-      if (savedUser) window.__savedUser = savedUser;
-      if (savedCampaign) window.__savedCampaign = savedCampaign;
-    }, { requireAll, savedUser: savedConfig?.agent_id, savedCampaign: savedConfig?.campaign });
-
-    // Exponer función para verificar credenciales
-    await manualPage.exposeFunction('verifyManualCredentialsBackend', async (user, campaign, dailyPassword) => {
-      try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/auth/verify`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ user, campaign, dailyPassword })
-        });
-        
-        const data = await response.json();
-        console.log('[Auth Manual] Respuesta del backend:', data);
-        return data;
-      } catch (error) {
-        console.error('[Auth Manual] Error al verificar credenciales:', error);
-        return { success: false, message: 'Error de conexión con el servidor' };
-      }
-    });
-
-    // Escuchar el evento de submit
-    const checkSubmit = async () => {
-      await manualPage.evaluate((requireAll) => {
-        return new Promise((innerResolve) => {
-          const btn = document.getElementById('manual-login-submit-btn');
-          const userInput = document.getElementById('manual-login-user');
-          const campaignInput = document.getElementById('manual-login-campaign');
-          const dailyPasswordInput = document.getElementById('manual-login-daily-password');
-          const errorEl = document.getElementById('manual-login-error');
-          const loadingEl = document.getElementById('manual-login-loading');
-          
-          if (!btn || btn.dataset.listenerAdded) return innerResolve(null);
-          
-          btn.dataset.listenerAdded = 'true';
-          
-          const handleSubmit = async () => {
-            const user = requireAll ? userInput.value.trim() : window.__savedUser;
-            const campaign = requireAll ? campaignInput.value.trim() : window.__savedCampaign;
-            const dailyPassword = dailyPasswordInput.value.trim();
-            
-            if (requireAll && (!user || !campaign)) {
-              errorEl.textContent = 'Por favor completa todos los campos';
-              errorEl.style.display = 'block';
-              return;
-            }
-            
-            if (!dailyPassword) {
-              errorEl.textContent = 'Por favor ingresa la palabra del día';
-              errorEl.style.display = 'block';
-              return;
-            }
-            
-            errorEl.style.display = 'none';
-            loadingEl.style.display = 'block';
-            btn.disabled = true;
-            btn.style.opacity = '0.5';
-            
-            const result = await window.verifyManualCredentialsBackend(user, campaign, dailyPassword);
-            
-            loadingEl.style.display = 'none';
-            btn.disabled = false;
-            btn.style.opacity = '1';
-            
-            if (result.success) {
-              window.__manualLoginResult = { 
-                agent_id: user, 
-                campaign: campaign 
-              };
-              
-              const overlay = document.getElementById('manual-login-overlay');
-              if (overlay) overlay.remove();
-            } else {
-              errorEl.textContent = result.message || 'Credenciales incorrectas';
-              errorEl.style.display = 'block';
-            }
-          };
-          
-          btn.addEventListener('click', handleSubmit);
-          
-          const inputs = [dailyPasswordInput];
-          if (requireAll) {
-            inputs.push(userInput, campaignInput);
-          }
-          
-          inputs.forEach(input => {
-            if (input) {
-              input.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') handleSubmit();
-              });
-            }
-          });
-          
-          innerResolve(null);
-        });
-      }, requireAll);
-      
-      const pollResult = setInterval(async () => {
-        try {
-          const loginResult = await manualPage.evaluate(() => window.__manualLoginResult);
-          if (loginResult) {
-            clearInterval(pollResult);
-            resolve(loginResult);
-          }
-        } catch (err) {
-          // Contexto destruido (navegación), limpiar intervalo
-          clearInterval(pollResult);
-        }
-      }, 200);
-    };
-    
-    if (!requireAll && savedConfig) {
-      await manualPage.evaluate((config) => {
-        window.__savedUser = config.agent_id;
-        window.__savedCampaign = config.campaign;
-      }, savedConfig);
-    }
-    
-    checkSubmit();
-  });
-}
-
-/**
  * Ajuste remoto `noWhatsappConsultRegistration` (capacidad v3/cli-remote-settings).
  * Solo `true` estricto habilita el registro; ausencia, error o cualquier otro valor ⇒ false.
  */
 function isNoWhatsappConsultRegistrationEnabled() {
-  // TODO(add-cli-remote-settings): leer el valor vigente de `noWhatsappConsultRegistration`
-  // que exponga la implementación de v3/cli-remote-settings. Hasta que ese cambio exista,
-  // el ajuste no está disponible y el registro queda desactivado (false fijo).
-  return readRegistrationSetting(() => undefined);
+  // Valor vigente del poller único de remote-settings.js (en memoria; default false).
+  return readRegistrationSetting(() => getRemoteSetting('noWhatsappConsultRegistration'));
 }
+
+/** Ruta del backend v3 con agente/campaña de la sesión activa (nunca los de la página). */
+const sessionPath = (build) => {
+  const id = sessionIdentity();
+  if (!id) return null;
+  return build(encodeURIComponent(id.campaign), encodeURIComponent(id.agent_id));
+};
+const NO_SESSION = Object.freeze({ success: false, message: 'Sin sesión activa' });
 
 async function injectNoWhatsappInfoButton(page) {
   const config = loadAgentConfig();
@@ -660,19 +415,18 @@ export async function initManualWhatsApp(allowedContacts = []) {
 
   // Exponer funciones para respaldo de conversaciones
   try {
-    await manualPage.exposeFunction('getChatBackupFromBackend', async (campaign, agentId, contactPhone) => {
+    // `campaign`/`agentId` de la página se ignoran: se usan los de la sesión activa.
+    await manualPage.exposeFunction('getChatBackupFromBackend', async (_campaign, _agentId, contactPhone) => {
       try {
-        const url = `${CONFIG.apiBaseUrl}/backups/chat/${campaign}/${agentId}/${contactPhone}`;
-        console.log(`[ChatBackup] 📡 GET ${url}`);
-        const response = await fetch(url, {
+        const p = sessionPath((c, a) => `/backups/chat/${c}/${a}/${encodeURIComponent(String(contactPhone || ''))}`);
+        if (!p) return NO_SESSION;
+        const response = await backendFetch(p, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
           },
         });
-        console.log(`[ChatBackup] 📡 Response status: ${response.status}`);
         const data = await response.json();
-        console.log(`[ChatBackup] 📡 Response data:`, data);
         return data;
       } catch (error) {
         console.error('[ChatBackup] Error al obtener backup:', error);
@@ -680,14 +434,16 @@ export async function initManualWhatsApp(allowedContacts = []) {
       }
     });
 
-    await manualPage.exposeFunction('saveChatBackupToBackend', async (campaign, agentId, contactPhone, messages) => {
+    await manualPage.exposeFunction('saveChatBackupToBackend', async (_campaign, _agentId, contactPhone, messages) => {
       try {
-        const response = await fetch(`${CONFIG.apiBaseUrl}/backups/chat`, {
+        const id = sessionIdentity();
+        if (!id) return NO_SESSION;
+        const response = await backendFetch('/backups/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ campaign, agent_id: agentId, contact_phone: contactPhone, messages })
+          body: JSON.stringify({ campaign: id.campaign, agent_id: id.agent_id, contact_phone: contactPhone, messages })
         });
         const data = await response.json();
         return data;
@@ -696,15 +452,14 @@ export async function initManualWhatsApp(allowedContacts = []) {
         return { success: false, message: 'Error de conexión' };
       }
     });
-    await manualPage.exposeFunction('listAllChatBackupsFromBackend', async (campaign, agentId) => {
+    await manualPage.exposeFunction('listAllChatBackupsFromBackend', async () => {
       try {
-        const url = `${CONFIG.apiBaseUrl}/backups/chats/${campaign}/${agentId}`;
-        console.log(`[ChatBackup] 📡 LIST ${url}`);
-        const response = await fetch(url, {
+        const p = sessionPath((c, a) => `/backups/chats/${c}/${a}`);
+        if (!p) return NO_SESSION;
+        const response = await backendFetch(p, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
         });
-        console.log(`[ChatBackup] 📡 List response status: ${response.status}`);
         const data = await response.json();
         return data;
       } catch (error) {
@@ -2577,14 +2332,12 @@ async function injectGestionButton(page) {
 /**
  * Obtiene el historial desde el backend (desde Node.js, no desde el navegador)
  */
-async function fetchHistoryFromBackend(agentId, campaign) {
+async function fetchHistoryFromBackend() {
   try {
-    const url = `${API_BASE_URL}/backups/latest/${agentId}/${campaign}`;
-    console.log('📡 [Node.js] Obteniendo historial desde:', url);
-    
-    const response = await fetch(url);
-    console.log('📡 [Node.js] Response status:', response.status);
-    
+    const p = sessionPath((c, a) => `/backups/latest/${a}/${c}`);
+    if (!p) return NO_SESSION;
+    const response = await backendFetch(p);
+
     if (!response.ok) {
       if (response.status === 404) {
         console.log('📭 [Node.js] No hay historial disponible');
@@ -2617,7 +2370,7 @@ async function injectHistoryButton(page) {
   console.log('📌 Exponiendo función getHistoryFromBackend para:', config.agent_id, '/', config.campaign);
   await page.exposeFunction('getHistoryFromBackend', async () => {
     console.log('🔔 getHistoryFromBackend llamada desde el navegador');
-    return await fetchHistoryFromBackend(config.agent_id, config.campaign);
+    return await fetchHistoryFromBackend();
   });
   console.log('✅ Función getHistoryFromBackend expuesta correctamente');
 

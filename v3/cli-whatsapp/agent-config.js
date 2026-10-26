@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { parseAssignmentCsv } from './assignment-csv.js';
 import { phone } from './phone-utils.js';
+import { backendFetch, sessionIdentity } from './agent-runtime.js';
 
 const resolveBaseDir = () => {
   if (process.env.ANA_DATA_DIR) return process.env.ANA_DATA_DIR;
@@ -239,9 +240,9 @@ export const INTERACTIONS_API_BASE_URL = process.env.ANA_INTERACTIONS_API_URL ||
  * @returns {Promise<boolean>} true si el backup fue exitoso
  */
 export async function sendBackup(data) {
-  const config = loadAgentConfig();
+  const config = sessionIdentity();
   if (!config) {
-    console.error('❌ No hay configuración de agente para enviar backup');
+    console.error('❌ No hay sesión de agente para enviar backup');
     return false;
   }
 
@@ -249,7 +250,7 @@ export async function sendBackup(data) {
   console.log(`📤 Enviando backup a: ${url}`);
 
   try {
-    const response = await fetch(url, {
+    const response = await backendFetch('/backups', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -289,9 +290,9 @@ export async function sendBackup(data) {
  *   contactos parseados, o null si no hay asignación o falla
  */
 export async function fetchAssignedChats() {
-  const config = loadAgentConfig();
+  const config = sessionIdentity();
   if (!config) {
-    console.error('❌ No hay configuración de agente para obtener chats');
+    console.error('❌ No hay sesión de agente para obtener chats');
     return null;
   }
 
@@ -301,7 +302,7 @@ export async function fetchAssignedChats() {
     const url = `${API_BASE_URL}/get/chats/${agentId}/${campaignId}`;
     console.log(`📡 Consultando contactos en: ${url}`);
     
-    const response = await fetch(url);
+    const response = await backendFetch(`/get/chats/${agentId}/${campaignId}`);
 
     if (response.ok) {
       const csvText = await response.text();
@@ -312,6 +313,9 @@ export async function fetchAssignedChats() {
       return { csvText, contacts };
     } else if (response.status === 404) {
       console.log('ℹ️  No hay contactos asignados aún para este agente/campaña');
+      return null;
+    } else if (response.status === 401 || response.status === 403) {
+      // El aviso de sesión lo muestra el ciclo de index.js
       return null;
     } else {
       console.error(`❌ Error al obtener contactos: ${response.status} ${response.statusText}`);
@@ -334,9 +338,9 @@ export async function fetchAssignedChats() {
  * @returns {Promise<boolean>} true si la actualización fue exitosa
  */
 export async function updatePendingContacts(contacts, review) {
-  const config = loadAgentConfig();
+  const config = sessionIdentity();
   if (!config) {
-    console.error('❌ No hay configuración de agente para actualizar contactos');
+    console.error('❌ No hay sesión de agente para actualizar contactos');
     return false;
   }
 
@@ -344,7 +348,7 @@ export async function updatePendingContacts(contacts, review) {
   console.log(`📤 Actualizando contactos pendientes en: ${url}`);
 
   try {
-    const response = await fetch(url, {
+    const response = await backendFetch('/contacts/pending', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -381,9 +385,9 @@ export async function updatePendingContacts(contacts, review) {
  * @returns {Promise<string|null>} URL del archivo subido o null si falla
  */
 export async function uploadMedia(filename, base64Data, contentType) {
-  const config = loadAgentConfig();
+  const config = sessionIdentity();
   if (!config) {
-    console.error('❌ No hay configuración de agente para subir media');
+    console.error('❌ No hay sesión de agente para subir media');
     return null;
   }
 
@@ -400,7 +404,7 @@ export async function uploadMedia(filename, base64Data, contentType) {
   console.log(`   Archivo: ${safeFilename}, Tamaño: ${Math.round(base64Data.length / 1024)}KB`);
 
   try {
-    const response = await fetch(url, {
+    const response = await backendFetch('/media', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

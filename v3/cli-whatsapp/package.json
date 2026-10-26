@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "whatsapp-cli-sender",
   "version": "1.0.46",
   "description": "CLI para envÃ­o masivo de WhatsApp",
@@ -14,58 +14,13 @@
     "upload": "powershell -ExecutionPolicy Bypass -File setup-and-upload.ps1"
   },
   "dependencies": {
-    "playwright": "^1.48.2",
     "csv-parser": "^3.0.0",
-    "csv-writer": "^1.6.0"
+    "csv-writer": "^1.6.0",
+    "playwright": "^1.48.2",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "esbuild": "^0.24.2",
     "pkg": "^5.8.1"
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

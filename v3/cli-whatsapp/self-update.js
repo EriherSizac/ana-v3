@@ -161,6 +161,9 @@ const readLocalPackageVersion = () => {
   }
 };
 
+/** Versión del CLI (inyectada en el bundle o de package.json); 'unknown' si no se puede leer. */
+export const getCliVersion = () => String(process.env.ANA_VERSION || readLocalPackageVersion() || 'unknown').trim();
+
 const writeLaunchInstallerScript = (payload) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ana-upd-'));
   const scriptPath = path.join(tmp, 'launch-installer.ps1');
