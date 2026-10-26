@@ -106,6 +106,7 @@ $filesToCopy = @(
     "phone-utils.js",
     "interaction-time.js",
     "dom-safety.js",
+    "manual-key-policy.js",
     "agent-config.js",
     "package.json",
     "package-lock.json"

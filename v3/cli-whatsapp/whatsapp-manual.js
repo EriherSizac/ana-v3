@@ -10,6 +10,7 @@ import { startBackupMonitor } from './chat-backup.js';
 import { loadAgentConfig, saveAgentConfig, API_BASE_URL, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
 import { phone, phoneUtilsInitScript } from './phone-utils.js';
 import { domSafetyInitScript } from './dom-safety.js';
+import { manualKeyPolicyInitScript } from './manual-key-policy.js';
 import { interactionDateTime } from './interaction-time.js';
 
 let manualBrowser = null;
@@ -541,35 +542,13 @@ export async function initManualWhatsApp(allowedContacts = []) {
   // Normalización de teléfonos compartida con Node (phone-utils.js) -> window.__anaPhone
   await manualPage.addInitScript({ content: phoneUtilsInitScript() });
 
-  // Inyectar protecciones ANTES de cargar WhatsApp (EXACTO como en whatsapp.js)
-  await manualPage.addInitScript(() => {
-    // Bloquear atajos de teclado para DevTools
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'F5') return;
+  // Política de teclado (manual-key-policy.js), instalada antes de cargar WhatsApp y en
+  // cada documento nuevo (incluido F5): denegación por defecto de F1–F12 (salvo F5) y de
+  // combinaciones con Ctrl/Cmd/Alt; excepciones para escritura con AltGr, códigos Alt y
+  // atajos de edición dentro de campos editables; DevTools, ver código, guardar,
+  // imprimir, abrir y atrás/adelante siempre bloqueados. También bloquea el menú contextual.
+  await manualPage.addInitScript({ content: manualKeyPolicyInitScript() });
 
-      // Permitir pegar
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) return;
-      if (e.metaKey && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) return;
-
-      const k = String(e.key || '');
-      const isFunctionKey = /^F\d{1,2}$/.test(k);
-      const hasModifier = Boolean(e.ctrlKey || e.metaKey || e.altKey);
-
-      if (isFunctionKey || hasModifier) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    }, true);
-    
-    // Bloquear menú contextual (clic derecho)
-    document.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }, true);
-  });
-  
   // Inyectar restricciones ANTES de cargar WhatsApp
   await applyUIRestrictions(allowedContacts);
   
@@ -691,67 +670,9 @@ export async function initManualWhatsApp(allowedContacts = []) {
   
   console.log('✅ WhatsApp Web (Manual) conectado - Ventana lista!');
   
-  // Aplicar bloqueos INMEDIATAMENTE en la primera carga
+  // Aplicar restricciones de UI INMEDIATAMENTE en la primera carga
+  // (la política de teclado y el bloqueo del menú contextual ya vienen del init script)
   await manualPage.evaluate(() => {
-    // Bloquear atajos de teclado para DevTools
-    document.addEventListener('keydown', (e) => {
-      // F12
-      if (e.key === 'F12') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+I (Windows/Linux)
-      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+J (Console)
-      if (e.ctrlKey && e.shiftKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+C (Inspect)
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+I (Mac)
-      if (e.metaKey && e.altKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+J (Mac Console)
-      if (e.metaKey && e.altKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+C (Mac Inspect)
-      if (e.metaKey && e.altKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    }, true);
-    
-    // Bloquear menú contextual (clic derecho)
-    document.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }, true);
-    
     // Aplicar restricciones de UI
     if (window.applyManualUIRestrictions) {
       window.applyManualUIRestrictions();
@@ -766,54 +687,8 @@ export async function initManualWhatsApp(allowedContacts = []) {
   manualPage.on('load', async () => {
     console.log('🔄 Página recargada, re-aplicando protecciones...');
     
-    // Re-aplicar bloqueos de teclado y menú contextual
+    // Re-aplicar restricciones de UI (la política de teclado se reinstala sola como init script)
     await manualPage.evaluate(() => {
-      // Bloquear atajos de teclado para DevTools
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'F12') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'J') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'I') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'J') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'C') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-      }, true);
-      
-      // Bloquear menú contextual
-      document.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }, true);
-      
       // Re-aplicar restricciones de UI
       if (window.applyManualUIRestrictions) {
         window.applyManualUIRestrictions();
