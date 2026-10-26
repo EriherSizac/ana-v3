@@ -38,7 +38,7 @@ Nuevo app client `ana-v3-cli` en el pool: sin secreto, flujos `ALLOW_USER_PASSWO
 - Alternativa: `@aws-sdk/client-cognito-identity-provider`. Rechazada por ahora: exige fijar una versión vieja compatible con Node 18 o subir el Node embebido (cambio de `cli-distribution` con su propio riesgo). Si se sube Node a 22 LTS en otro cambio, reemplazar el cliente propio por el SDK es local a este módulo.
 
 ### D3. ID token como bearer; identidad = `cognito:username` en minúsculas
-Igual que v4: el authorizer JWT de HTTP API valida `aud`, que solo traen los ID tokens. `agent_id` deja de escribirse a mano: se deriva del token, de modo que el CLI nunca puede pedir datos de otro agente aunque la página le pase otros valores. Supuesto: los usernames de Cognito de los agentes son iguales a los `agent_id` actuales (ver Open Questions).
+Igual que v4: el authorizer JWT de HTTP API valida `aud`, que solo traen los ID tokens. `agent_id` deja de escribirse a mano: se deriva del token, de modo que el CLI nunca puede pedir datos de otro agente aunque la página le pase otros valores. Los usernames de Cognito **no** coinciden con los `agent_id` actuales (confirmado): cada agente entra con su usuario existente del pool (el mismo de v4) y no se mapea `agent_id` viejo → username. Los datos guardados bajo `agent_id` legados quedan huérfanos y se tratan en D12.
 
 ### D4. Verificación en el handler con `aws-jwt-verify`, más authorizer nativo en estricto
 `src/lib/agentAuth.ts` exporta `requireAgent(event, {agent, campaign})` y `requireAgentToken(event)`; usa `CognitoJwtVerifier` (`tokenUse: 'id'`, `clientId: COGNITO_AGENT_CLIENT_IDS`), que cachea el JWKS por contenedor. Devuelve `null` (continuar) o la respuesta 401/403/503, siempre antes de cualquier llamada a S3 de datos del agente. Para rutas `POST` se parsea el body primero (las validaciones 400 existentes no tocan S3).
@@ -64,7 +64,19 @@ Pasos en el mismo overlay (fondo azul, sin `alert/confirm/prompt`): usuario+cont
 Ante 401: forzar renovación y reintentar una vez; si falla, o ante 403, el ciclo se trata como sin contactos, se muestra el aviso y se sigue consultando (mismo enfoque que el plan anterior: no se reabre el login en caliente por el bloqueador de clics de la ventana de automatización). Con refresh token de 1 día, el caso normal es reabrir ANA al día siguiente.
 
 ### D10. Retiro de palabra del día y `/credentials/*`
-Se mantienen durante la transición (los CLIs viejos las usan para entrar). Se eliminan (funciones, handlers `auth.ts`/`credentials.ts`, rutas de `serverless.yml`, secciones del README y de `setup-campaign.sh`) cuando, con el modo estricto activo, `verifyCredentials` no tiene invocaciones durante el periodo acordado. Después se borran los `credentials.csv` (contienen frases en claro), una vez que el roster está poblado.
+Se mantienen durante la transición (los CLIs viejos las usan para entrar). Se eliminan (funciones, handlers `auth.ts`/`credentials.ts`, rutas de `serverless.yml`, secciones del README y de `setup-campaign.sh`) cuando, con el modo estricto activo, `verifyCredentials` no tiene invocaciones durante 5 días hábiles (D11). Después se borran los `credentials.csv` (contienen frases en claro) como parte de la purga de D12, una vez que el roster está poblado.
+
+### D11. Duraciones y periodos de observación (confirmados)
+Refresh token del client `ana-v3-cli`: **1 día**. Observación: **5 días hábiles** con cero `missing`/`not_in_roster` de agentes activos antes de activar el modo estricto, y otros **5 días hábiles** sin invocaciones de `verifyCredentials` (con el estricto activo) antes de retirar `/auth/verify` y `/credentials/*`.
+
+### D12. Datos de `agent_id` legados: se conservan los respaldos de chat, se purga el resto
+Como los usernames no coinciden (D3), en la fase de retiro (tras el estricto, junto con el retiro de `/auth/verify` y `/credentials/*`) un script único `v3/ana-backend/scripts/purge-legacy-agent-data.ts` limpia lo escrito bajo `agent_id` legados:
+- **Legado** = el agente de la llave no es un username del pool (`ListUsers`, normalizado) y el objeto tiene `LastModified` anterior al release del CLI (`--cutover <ISO>`). Si el agente coincide con un username del pool se reporta como ambiguo y no se toca, salvo que figure en un archivo `--treat-as-legacy` revisado por una persona. Nunca toca `versions/` (autoupdate) ni objetos de usernames de Cognito.
+- **Se mueven a `legacy/`** (retención; consultables con `add-legacy-chat-history`): `backups/{campaign}/{agent}/...`, `backups/{campaign}/{YYYY-MM}/{agent}_{DD}.json` y `media/{campaign}/{agent}/...` → `legacy/backups/...` y `legacy/media/...`, conservando el resto de la llave. Copia sin sobrescribir, verificación de conteo y tamaño por prefijo, y borrado de originales solo con `--delete-source`.
+- **Se purgan**: `agents/{campaign}/{agent}-contacts-*`, `assignments/agents/{campaign}/{agent}-contacts-*`, `chats/{agent}-{campaign}.csv`, `review/{campaign}/{agent}/...` (si `report-pending-progress` se publicó antes que este CLI) y `agents/{campaign}/credentials.csv`. Antes de borrar, el script exporta esas llaves (salvo `credentials.csv`) a un bucket de archivo dedicado (`ana-legacy-archive-prod`, lifecycle a Glacier) y verifica que el conteo copiado coincide. `credentials.csv` no se archiva: solo contiene frases en claro ya inútiles y archivarlas prolonga su exposición.
+- Dry-run por defecto (inventario por prefijo con conteo y tamaño); `--apply` es obligatorio para mover, exportar o borrar; registra en un archivo local las llaves movidas/borradas, nunca su contenido.
+- Alternativa: copiar también los respaldos al bucket de archivo. Descartada: `legacy/` ya es la retención y debe seguir consultable; el bucket de archivo solo cubre lo que se borra.
+- Alternativa: conservar todo y dar una herramienta de administración por `agent_id`. Descartada por decisión del usuario: solo se conserva el historial de chats.
 
 ### Interacción con otros cambios
 - `secure-assignment-consumption` (reducido a las tres lecturas `GET /supervisors/...`): no toca los requisitos de este cambio salvo `backend-api-security` "Rutas intencionalmente públicas", que ambos modifican de forma compatible (los dos quitan las lecturas de supervisor; este además quita las rutas del CLI). **Archivar `secure-assignment-consumption` antes** que este.
@@ -73,12 +85,16 @@ Se mantienen durante la transición (los CLIs viejos las usan para entrar). Se e
 - `add-cli-remote-settings`: define `GET /agent/settings`; este cambio solo aporta la autenticación (`requireAgentToken`, authorizer). Si se despliega antes, debe usar este módulo o su propia protección temporal.
 - `report-pending-progress` y `normalize-whatsapp-phone-country-code` cambian llamadas del CLI a `/contacts/pending` y `/backups/chat`: el header de autenticación lo agrega el wrapper común (`backendFetch`), sin tocar sus requisitos.
 - `fix-historial-xss` corrige el render; este cambio cierra la escritura anónima en `POST /backups/chat`. Son complementarios.
+- `add-agent-roster-management`: su renombrado de campañas al catálogo de v4 corre antes de la siembra de rosters (y del release de este CLI); la purga de D12 corre después de su pasada final, así que solo encuentra nombres de campaña del catálogo.
+- `add-legacy-chat-history`: lee `legacy/backups/` y `legacy/media/` en solo lectura desde ANA Admin; requiere que D12 haya movido los datos.
 
 ## Risks / Trade-offs
 
 - [Agente sin usuario en Cognito o sin roster al llegar el CLI nuevo → no puede trabajar] → Fase 0 obligatoria: alta de todos los agentes activos (desde `credentials.csv` + roster) y prueba de login de cada supervisor antes del release; verificar con `GET /agent/campaigns` por usuario.
-- [Usernames de Cognito distintos a los `agent_id` actuales → asignaciones y respaldos huérfanos] → Ver Open Questions; si difieren, los supervisores suben contactos al username nuevo y los respaldos viejos quedan solo por `X-Admin-Key`.
-- [Activar estricto con CLIs viejos activos → sin asignaciones ni respaldos] → Criterio basado en logs (cero `missing` de agentes activos y cero `not_in_roster` durante el periodo acordado); rollback: `AGENT_AUTH_ENFORCED=false`, quitar el authorizer y redeploy.
+- [Usernames de Cognito distintos a los `agent_id` actuales (confirmado) → las asignaciones pendientes bajo el `agent_id` viejo no llegan al CLI nuevo] → Antes del release, los supervisores re-suben los contactos pendientes a nombre del username de Cognito; los respaldos de chat pasan a `legacy/` y el resto se purga (D12).
+- [Los respaldos de chat son historial de cobranza con posibles obligaciones de retención] → No se borran, se mueven a `legacy/`; aun así el `--apply` de la purga exige una revisión legal/de retención documentada (puerta operativa, tarea 8.4).
+- [Purgar objetos de un username real que coincide con un `agent_id` legado] → Los coincidentes se reportan como ambiguos y solo se tratan si una persona los lista en `--treat-as-legacy`.
+- [Activar estricto con CLIs viejos activos → sin asignaciones ni respaldos] → Criterio basado en logs (cero `missing` de agentes activos y cero `not_in_roster` durante 5 días hábiles, D11); rollback: `AGENT_AUTH_ENFORCED=false`, quitar el authorizer y redeploy.
 - [Release del CLI defectuoso] → El autoupdate solo sube de versión: rollback = republicar el código anterior con versión mayor. El backend en modo reporte acepta ambos CLIs.
 - [Contraseña transmitida a Cognito (no SRP)] → TLS directo a AWS, nunca se registra ni pasa por nuestro backend; MFA del pool como segundo factor.
 - [Refresh token robado de la PC] → DPAPI lo ata al usuario de Windows; duración 1 día; revocable (`RevokeToken`/`AdminUserGlobalSignOut`) y deshabilitar en roster corta el acceso en ≤ 60 s.
@@ -88,16 +104,14 @@ Se mantienen durante la transición (los CLIs viejos las usan para entrar). Se e
 
 ## Migration Plan
 
-0. **Preparación**: crear el app client `ana-v3-cli`; alta en el pool (username = `agent_id` actual, contraseña temporal) de todos los agentes activos; poblar rosters (`add-agent-roster-management` desplegado). Sin esto no se publica el CLI.
+0. **Preparación**: crear el app client `ana-v3-cli`; confirmar que cada agente activo tiene usuario en el pool (su username existente; alta con contraseña temporal solo de los faltantes); poblar los rosters con esos usernames (`add-agent-roster-management` desplegado, con las campañas ya renombradas al catálogo); re-subir los contactos pendientes a nombre del username. Sin esto no se publica el CLI.
 1. **Backend en modo reporte**: desplegar con `AGENT_AUTH_ENFORCED=false`, `COGNITO_AGENT_CLIENT_IDS=<ana-v3-cli>`; verificar que CLI 1.0.46 sigue funcionando y que aparecen logs `reason:"missing"`.
 2. **Piloto**: 1–2 agentes con el CLI nuevo (`--no-self-update` desde el build); verificar `reason:"ok"` en todas las rutas.
 3. **Release del CLI** por autoupdate; comunicar a los agentes el primer login (contraseña temporal → nueva → MFA si aplica).
-4. **Monitoreo** hasta cumplir el criterio: cero `missing`/`not_in_roster` de agentes activos.
+4. **Monitoreo** durante 5 días hábiles con cero `missing`/`not_in_roster` de agentes activos (D11).
 5. **Estricto**: `AGENT_AUTH_ENFORCED=true` y authorizer adjunto a todas las rutas de agente; redeploy. Rollback: revertir ambos y redeploy.
-6. **Retiro**: tras el periodo sin invocaciones de `/auth/verify`, eliminar `/auth/verify` y `/credentials/*`; borrar `credentials.csv`.
+6. **Retiro**: tras 5 días hábiles sin invocaciones de `/auth/verify`, eliminar `/auth/verify` y `/credentials/*`; con la revisión legal/de retención aprobada, ejecutar `purge-legacy-agent-data.ts` (D12): mover respaldos y media legados a `legacy/`, exportar y purgar asignaciones y `chats/*.csv`, y borrar los `credentials.csv`.
 
 ## Open Questions
 
-- Duración del refresh token del client del CLI (propuesta: 1 día) y del periodo de observación antes del estricto y antes del retiro (propuesta: 5 días hábiles cada uno). Son valores de configuración/operación.
-- ¿Los usernames de Cognito de los agentes coinciden con los `agent_id` actuales? Si no, decidir si se migran los prefijos de respaldos (`backups/{campaign}/{agent}/...`) en un cambio aparte.
 - `user_id` de las interacciones del CRM: si el CRM identifica usuarios por el `sub` de este mismo pool, el CLI podría enviar el `sub` del token en lugar del UUID fijo; requiere confirmar con el equipo del CRM y queda como cambio posterior de `v3/crm-interactions`.

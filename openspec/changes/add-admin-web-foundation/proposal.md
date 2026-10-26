@@ -32,6 +32,6 @@ _Ninguna._
 
 - Código nuevo: `admin-web/` (app completa), `.github/workflows/admin-web.yml` (el repo no tiene `.github/` hoy).
 - Dependencias nuevas (solo en `admin-web/`): `next`, `react`, `tailwindcss`, `aws-amplify@^6`, `aws-jwt-verify`, `lucide-react`, `vitest`, `@testing-library/react`.
-- Infraestructura: hosting SSR de Next.js con dominio `ana-admin.pernexium.com.mx`; App Client de Cognito usado por la app debe estar en la allowlist de audiencias del authorizer de v4 (`v4/backend/serverless.yml`, parámetro `clientId`) para que `GET /me` acepte sus tokens; callback/orígenes del App Client se coordinan con quien administra el pool.
+- Infraestructura: AWS Amplify Hosting (SSR de Next.js) con dominio `ana-admin.pernexium.com.mx` (DNS coordinado con quien administra `pernexium.com.mx`); la app usa el mismo App Client que v4 (`1r6niimhkl2fmias6kk85n4ou4`), que ya está en el `audience` del authorizer de v4, así que `GET /me` acepta sus tokens sin cambios en v4; orígenes del App Client se coordinan con quien administra el pool.
 - Dependencia en tiempo de ejecución: backend v4 desplegado en `us-east-2` (`GET /me`, `GET /agents/campaigns`) y API de Roles de Pernexium.
 - Changes dependientes: `add-agent-roster-management`, `add-contact-upload-console` y `add-cli-remote-settings` requieren esta base.

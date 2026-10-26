@@ -24,7 +24,7 @@ Las llaves en S3 de los respaldos son `backups/{campaign}/{agent_id}/{contact_ph
 - Corregir la URL del chat automático sin alterar ningún payload al CRM ni ninguna llave de respaldo.
 
 **Non-Goals:**
-- Unificar `phone_number` de interacciones (10 dígitos vs `+52` en Gestión): no hay evidencia de que el CRM falle con ninguno y cambiarlo puede afectar reportes.
+- Unificar `phone_number` de interacciones (10 dígitos vs `+52` en Gestión): decidido no hacerlo (D4).
 - Migrar llaves de respaldo a `52`+10.
 - Los botones "Abrir" del historial (propiedad de `fix-historial-xss`).
 - El respaldo masivo (`chat-backup.js`), que guarda el teléfono tal como aparece (`+` y dígitos) dentro del JSON y no lo usa como llave.
@@ -50,6 +50,10 @@ Antes de los `addInitScript` existentes, cada página (manual) registra `page.ad
 
 ### D3. Qué se considera número MX
 Solo longitudes exactas 10 / 12 (`52`) / 13 (`521`). Un número de 10 dígitos siempre es nacional MX (los agentes y carteras son MX). Prefijos antiguos (`044`, `045`, `01`) no se reconocen y pasan sin cambio; se fija con prueba.
+
+### D4. Gestión → CRM conserva `+52XXXXXXXXXX` (decisión confirmada)
+El teléfono que Gestión envía al CRM (`/client-info` y la interacción) se mantiene en `+52` + 10 dígitos (`toGestionCrmPhone`); es el comportamiento correcto y no se unifica con los 10 dígitos de los flujos automático, monitor y modal sin WhatsApp. Este cambio solo ajusta las longitudes reconocidas (D3) en Gestión.
+- Alternativa: unificar todos los flujos en un formato. Descartada: no hay evidencia de que el CRM falle con ninguno y cambiarlo puede afectar reportes existentes.
 
 ## Risks / Trade-offs
 

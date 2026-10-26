@@ -32,7 +32,7 @@ El CLI portable embebe Node 18.20.2 (`build-portable.ps1:47`), cuya distribució
 Los agentes y las carteras son de México y el CRM de Pernexium reporta en hora del centro. Usar la zona del equipo (la corrección "mínima": `getFullYear/getMonth/getDate` locales) arreglaría la incoherencia fecha/hora solo en equipos bien configurados; en la práctica hay equipos con Windows en UTC o en zona de EE. UU., y entonces fecha **y** hora quedarían desplazadas. Una zona explícita hace el dato independiente del equipo y coherente entre agentes.
 - Alternativa: zona del equipo. Descartada por lo anterior.
 - Alternativa: enviar UTC y que el CRM convierta. Cambiaría el contrato del CRM (externo) y los reportes existentes; descartada.
-- Agentes fuera de la zona centro (p. ej. Tijuana, Cancún): sus interacciones quedan en hora del centro, igual que el resto del equipo de cobranza; se considera el comportamiento deseado para reportes consolidados (ver Open Questions).
+- Decisión confirmada: no hay agentes fuera de la zona centro (CDMX), así que `America/Mexico_City` fija es correcta. La zona sigue siendo un parámetro del helper si eso cambiara.
 
 ### D2. API del helper
 `v3/cli-whatsapp/interaction-time.js`:
@@ -59,6 +59,3 @@ Implementación con un único `Intl.DateTimeFormat('en-CA', { timeZone, year:'nu
 
 Sin migración de datos. Release normal (build + upload). Rollback = publicar una versión mayor con el código anterior.
 
-## Open Questions
-
-- ¿Hay agentes que operen fuera de la zona centro y cuyos reportes deban quedar en su hora local? No cambia el diseño (la zona es un parámetro del helper), solo el valor de `INTERACTIONS_TIME_ZONE`.

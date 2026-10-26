@@ -15,6 +15,7 @@
 **Non-Goals:**
 - Subidas de más de 4 MB a v3 (requeriría presign a S3 en v3; se deja para cuando haga falta).
 - Reemplazar o retirar la ruta de supervisor con `X-Admin-Key`.
+- Contactos "por revisar" en el detalle de una carga (seguimiento). `report-pending-progress` guarda los contactos interrumpidos en `review/{campaign}/{agent}/{assignment_id}.csv`, pero no encaja limpio aquí: `GET /get/chats` entrega solo el CSV sin su llave, así que el CLI no conoce el `{ts}`/`uploadId` de la carga y `assignment_id` no se puede unir con el manifiesto. Un cambio posterior puede (a) agregar una vista "Por revisar" por campaña y agente sobre `review/`, con la acción "Reasignar" que precarga una carga nueva en modo "Asignar a un agente", o (b) incluir el `uploadId` en el CSV que escribe D3 para unirlo al detalle.
 
 ## Decisions
 

@@ -36,5 +36,5 @@
 ## 6. CI y despliegue
 
 - [ ] 6.1 Crear `.github/workflows/admin-web.yml` (filtro `admin-web/**`, Node 20, `npm ci`, `lint`, `check:design`, `typecheck`, `test`, `build`); verificar con un PR de prueba que el workflow corre y falla si se introduce `alert()`
-- [ ] 6.2 Configurar el hosting (Amplify Hosting propuesto) con dominio `ana-admin.pernexium.com.mx` y variables de servidor; confirmar el App Client compartido y, si difiere del de v4, agregarlo al `audience` del authorizer en `v4/backend/serverless.yml` por parámetro; verificar que `GET /api/me` responde 200 en el entorno desplegado
+- [ ] 6.2 Configurar Amplify Hosting con dominio `ana-admin.pernexium.com.mx` y las variables (client `1r6niimhkl2fmias6kk85n4ou4` en `NEXT_PUBLIC_COGNITO_CLIENT_ID` y en `COGNITO_ALLOWED_CLIENT_IDS`); coordinar el registro DNS con quien administra `pernexium.com.mx`; verificar que el dominio sirve por HTTPS y que `GET /api/me` responde 200 en el entorno desplegado con un token de ese client
 - [ ] 6.3 Prueba manual de aceptación: SSO desde otra app Pernexium del apex, login con MFA, gate con un agente (Sin acceso), un líder y un admin, cierre de sesión; registrar resultados en el PR

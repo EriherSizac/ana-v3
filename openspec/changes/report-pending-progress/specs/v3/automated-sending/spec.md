@@ -26,7 +26,7 @@ Después de procesar cada contacto de una asignación, el CLI SHALL hacer `POST 
 ## ADDED Requirements
 
 ### Requirement: Registro local de la asignación en curso
-Al recibir una asignación con contactos y antes del primer envío, el CLI SHALL guardar en su directorio de datos, en un archivo por agente y campaña, el CSV recibido y el estado de cada contacto (`pendiente`, `en curso`, `procesado`). MUST marcar `en curso` antes de abrir el chat y `procesado` al obtener el resultado, y cada escritura MUST ser atómica para que un cierre no deje el archivo corrupto.
+Al recibir una asignación con contactos y antes del primer envío, el CLI SHALL guardar en su directorio de datos, en un archivo por agente y campaña, el CSV recibido y el estado de cada contacto (`pendiente`, `en curso`, `procesado`, `por revisar`). MUST marcar `en curso` antes de abrir el chat y `procesado` al obtener el resultado, y cada escritura MUST ser atómica para que un cierre no deje el archivo corrupto.
 
 #### Scenario: Asignación recibida
 - **WHEN** el poll devuelve una asignación de 10 contactos
@@ -57,15 +57,26 @@ Al iniciar el ciclo de envío y antes del primer poll, si existe un registro loc
 - **THEN** el CLI no envía nada de ese registro, lo renombra conservando su contenido, avisa en consola y continúa con el poll
 
 ### Requirement: Contacto interrumpido durante el envío
-Si al reanudar un contacto figura `en curso`, el CLI MUST NOT reenviarle el mensaje, porque no puede saber si WhatsApp lo envió; SHALL marcarlo `procesado`, incluirlo en `resultados.csv` con `status: error` y el error "Envío interrumpido por cierre del CLI; no se reintenta", y MUST NOT registrar interacción en el CRM para él.
+Si al reanudar un contacto figura `en curso`, el CLI MUST NOT reenviarle el mensaje, porque no puede saber si WhatsApp lo envió; SHALL marcarlo `por revisar`, incluirlo en `resultados.csv` con `status: por_revisar` y el error "Envío interrumpido por cierre del CLI; revisar antes de reenviar", y MUST NOT registrar interacción en el CRM para él.
 
 #### Scenario: Cierre justo al enviar
 - **WHEN** el CLI se cerró mientras enviaba al contacto 6 y se vuelve a abrir
-- **THEN** el contacto 6 no recibe un mensaje nuevo y aparece en `resultados.csv` como interrumpido
+- **THEN** el contacto 6 no recibe un mensaje nuevo y aparece en `resultados.csv` con `status: por_revisar`
 - **AND** la reanudación continúa con el contacto 7
 
+### Requirement: Reporte de contactos por revisar
+En cada llamada a `/contacts/pending` de una asignación con contactos `por revisar`, el CLI SHALL incluir `review: {assignment_id, contacts}` con el identificador de la asignación del registro local y las filas originales de esos contactos, sin incluirlos en `contacts`. Si el backend ignora el campo o la llamada falla, MUST continuar igual que con el reporte de pendientes.
+
+#### Scenario: Reporte tras reanudar
+- **WHEN** al reanudar el contacto 6 queda `por revisar` y el CLI termina el contacto 7 de 10
+- **THEN** envía en `contacts` las filas 8 a 10 y en `review.contacts` la fila 6
+
+#### Scenario: Asignación sin interrupciones
+- **WHEN** ningún contacto de la asignación está `por revisar`
+- **THEN** el CLI no envía el campo `review`
+
 ### Requirement: Cierre del registro local
-Cuando todos los contactos del registro están `procesado`, el CLI SHALL enviar `contacts: []` a `/contacts/pending` y después eliminar el registro local, antes de volver a consultar el servidor. El CLI MUST NOT consultar una asignación nueva mientras exista un registro con contactos pendientes para el agente y campaña configurados.
+Cuando todos los contactos del registro están `procesado` o `por revisar`, el CLI SHALL enviar `contacts: []` (con `review` si hay contactos `por revisar`) a `/contacts/pending` y después eliminar el registro local, antes de volver a consultar el servidor. El CLI MUST NOT consultar una asignación nueva mientras exista un registro con contactos pendientes para el agente y campaña configurados.
 
 #### Scenario: Asignación terminada
 - **WHEN** se procesa el último contacto pendiente

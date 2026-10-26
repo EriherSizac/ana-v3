@@ -53,6 +53,7 @@ Script `scripts/migrate-campaign-case.ts` (ejecutado con `npx tsx`), que:
 
 - `secure-assignment-consumption` modifica en `v3/agent-assignments` los requisitos "Consulta de contactos listos del agente", "Listado de asignaciones pendientes", "Consulta de la asignación pendiente más reciente" y "Consumo único de la asignación por el CLI". Este cambio **no** modifica esos bloques: modifica solo "Disposición de llaves S3 de asignaciones" y agrega un requisito nuevo, así que los deltas no chocan y pueden archivarse en cualquier orden.
 - En código ambos tocan `chats.ts`, `supervisors.ts` y `auth.ts`. El orden no importa para la conducta (el guard de token compara agente/campaña ya normalizados), pero quien se implemente segundo debe rebasar sobre el primero: la normalización va al leer los parámetros y el guard de autenticación antes de cualquier acceso a S3.
+- `add-agent-roster-management` renombra en v3 las campañas que no están en el catálogo de v4 (`scripts/rename-campaigns.ts`). **La migración de este cambio corre primero**: el renombrado opera sobre nombres ya normalizados y aborta si encuentra una llave con mayúsculas de una campaña origen sin su copia normalizada (los originales inertes que deja esta migración solo se reportan). No se fusionan: este script queda acotado a mayúsculas/espacios en `agents/` y `assignments/agents/`, sin borrar.
 
 ## Risks / Trade-offs
 

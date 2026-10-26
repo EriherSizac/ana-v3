@@ -26,7 +26,7 @@ Raíz del repo, independiente de `v3/` y `v4/` porque opera contra ambos backend
 - Alternativa: pantallas dentro de `v4/desktop` — descartada: los supervisores de v3 no usan el desktop y el SSO por cookie es solo web.
 
 ### D2. SSO con Amplify v6 + `CookieStorage` en el apex
-Se replica literal `lib/amplify.ts` y `AmplifyProvider` del doc SSO. Para que el SSO funcione de verdad, ANA Admin MUST usar el **mismo App Client** que las otras apps web Pernexium: Amplify nombra las cookies `CognitoIdentityServiceProvider.<clientId>.<username>.*`, así que un client distinto no ve la sesión de las demás aunque el pool sea el mismo (el doc SSO solo cubre la parte de validación por allowlist). Si se decide un client propio, la app funciona igual pero sin SSO automático.
+Se replica literal `lib/amplify.ts` y `AmplifyProvider` del doc SSO. Para que el SSO funcione de verdad, ANA Admin MUST usar el **mismo App Client** que las otras apps web Pernexium: Amplify nombra las cookies `CognitoIdentityServiceProvider.<clientId>.<username>.*`, así que un client distinto no ve la sesión de las demás aunque el pool sea el mismo (el doc SSO solo cubre la parte de validación por allowlist). **Decisión**: ANA Admin usa el mismo App Client que v4, `1r6niimhkl2fmias6kk85n4ou4` (pool `us-east-2_UepfOyKpd`); no es secreto. `NEXT_PUBLIC_COGNITO_CLIENT_ID` toma ese valor y `COGNITO_ALLOWED_CLIENT_IDS` lo incluye.
 - Alternativa: Hosted UI/OAuth con redirect — descartada: las demás apps usan login propio por SRP y no hay Hosted UI configurada.
 
 ### D3. BFF en route handlers de Next.js
@@ -45,7 +45,7 @@ El cliente obtiene el id token con `fetchAuthSession()` y lo envía en `Authoriz
 El BFF llama a v4 `GET /me` con el token del usuario; caché en memoria del proceso por `username` hasta 60 s (nunca se cachean errores). `isDeveloper` se deriva en el BFF de `roleNames` con la misma normalización que `isLeaderRole` de v4 (NFD, sin diacríticos, minúsculas, `/developer/`).
 - Alternativa: reimplementar `resolveUserAccess` en el BFF — descartada: duplica reglas (denies, líder, superadmin) y obliga a credenciales para la tabla `roleperms` de v4 en otra cuenta/región.
 - Alternativa: solo API de Roles (permisos inline) — descartada: ignora el almacén local `roleperms` y las reglas de líder, y daría resultados distintos a v4.
-- Consecuencia: el App Client de ANA Admin debe estar en `audience` del authorizer de v4 (si es el mismo client que ya usa v4, no hay cambio; si no, se agrega por parámetro de despliegue).
+- Consecuencia: como ANA Admin usa el mismo client que v4 (D2), su token ya está en el `audience` del authorizer de v4 y no hay cambio de despliegue en v4.
 
 ### D6. Gate de entrada y permisos
 Entrada: `isAdmin || isDeveloper || permissions ∩ {ana:admin:agents:manage, ana:contacts:list:upload} ≠ ∅`. Se usan los arrays de `/me` directamente, no `can()` de v4, para no depender del flag `PERMISSIONS_ENFORCED` (que en v4 está en `false` y abriría todo). El permiso nuevo `ana:admin:agents:manage` se agrega al catálogo de v4 en `add-agent-roster-management`; hasta entonces solo llega por permisos inline de la API de Roles (v4 ya los consume si empiezan con `ana:`) o vía `isAdmin`.
@@ -57,8 +57,9 @@ Entrada: `isAdmin || isDeveloper || permissions ∩ {ana:admin:agents:manage, an
 - Fuentes: Jost por Google Fonts en `globals.css`, Inter con `next/font/google`.
 
 ### D8. Hosting y dominio
-Propuesta: AWS Amplify Hosting (SSR de Next.js) en la cuenta de Pernexium, dominio `ana-admin.pernexium.com.mx`, con rol de cómputo IAM para `cognito-idp:ListUsers` (lo usa `add-agent-roster-management`); variables de servidor en la configuración del hosting. Los specs no dependen del proveedor: solo exigen HTTPS en un subdominio de `.pernexium.com.mx`.
+**Decisión**: AWS Amplify Hosting (SSR de Next.js) en la cuenta de Pernexium, dominio `ana-admin.pernexium.com.mx`, con rol de cómputo IAM para `cognito-idp:ListUsers` (lo usa `add-agent-roster-management`); variables de servidor en la configuración del hosting. Los specs no dependen del proveedor: solo exigen HTTPS en un subdominio de `.pernexium.com.mx`.
 - Alternativas: Vercel (credenciales AWS de larga vida fuera de la cuenta), OpenNext/SST sobre Lambda (más piezas a mantener).
+- El registro DNS del subdominio se coordina con quien administra `pernexium.com.mx` (tarea 6.2).
 
 ### D9. Pruebas y CI
 Vitest + Testing Library (jsdom) para componentes y helpers; los route handlers se prueban como funciones con `Request` sintéticos, JWKS de prueba y `fetch` mockeado. Workflow `.github/workflows/admin-web.yml` con `paths: admin-web/**`: `npm ci`, `lint`, `check:design`, `typecheck`, `test`, `build`.
@@ -68,9 +69,9 @@ Vitest + Testing Library (jsdom) para componentes y helpers; los route handlers 
 | Variable | Ámbito | Uso |
 |---|---|---|
 | `NEXT_PUBLIC_COGNITO_USER_POOL_ID` | público | `us-east-2_UepfOyKpd` |
-| `NEXT_PUBLIC_COGNITO_CLIENT_ID` | público | App Client compartido (D2) |
+| `NEXT_PUBLIC_COGNITO_CLIENT_ID` | público | App Client compartido `1r6niimhkl2fmias6kk85n4ou4` (D2) |
 | `NEXT_PUBLIC_COOKIE_DOMAIN` | público | `.pernexium.com.mx` / `localhost` |
-| `COGNITO_ALLOWED_CLIENT_IDS` | servidor | allowlist de `aud` |
+| `COGNITO_ALLOWED_CLIENT_IDS` | servidor | allowlist de `aud` (incluye `1r6niimhkl2fmias6kk85n4ou4`) |
 | `ANA_V4_API_BASE` | servidor | backend v4 |
 | `ANA_V3_API_BASE` | servidor | backend v3 (lo usan changes dependientes) |
 | `ROLES_API_BASE`, `ROLES_API_KEY` | servidor | API de Roles (changes dependientes) |
@@ -85,12 +86,11 @@ Vitest + Testing Library (jsdom) para componentes y helpers; los route handlers 
 
 ## Migration Plan
 
-1. Crear el App Client/allowlist necesarios (o confirmar el client compartido) y, si aplica, desplegar v4 con el client id agregado a `audience`.
-2. Desplegar `admin-web` en el hosting con las variables de entorno; registrar el dominio.
+1. Configurar las variables con el client compartido `1r6niimhkl2fmias6kk85n4ou4` (sin cambios en v4) y coordinar con el administrador del pool los orígenes de la app si el client los restringe.
+2. Desplegar `admin-web` en Amplify Hosting con las variables de entorno; registrar `ana-admin.pernexium.com.mx` con quien administra el DNS.
 3. Probar SSO desde otra app Pernexium y el gate de entrada con un agente, un líder y un admin.
 - Rollback: retirar el dominio/hosting; ningún backend cambia de comportamiento en esta change.
 
 ## Open Questions
 
-- ¿Cuál es el client id del App Client web compartido por las apps Pernexium con SSO (y coincide con el `1r6niimhkl2fmias6kk85n4ou4` de v4)? Es un valor de despliegue; no cambia specs ni tareas.
-- Confirmar Amplify Hosting como proveedor y quién administra el DNS de `pernexium.com.mx`.
+_Ninguna._ (Client compartido, hosting y dominio quedaron decididos en D2 y D8.)

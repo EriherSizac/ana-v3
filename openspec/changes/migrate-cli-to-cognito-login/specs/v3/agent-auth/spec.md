@@ -108,7 +108,7 @@ El sistema SHALL exponer `GET /agent/campaigns`, que siempre exige un ID token v
 
 ### Requirement: Endpoint de verificación de credenciales
 **Reason**: La palabra del día se elimina; el CLI se autentica directamente contra Cognito y el backend verifica el ID token en cada solicitud.
-**Migration**: Los CLIs actualizados usan el login Cognito (`v3/cli-agent-session`). `POST /auth/verify` se mantiene durante la transición y se retira cuando, con el modo estricto activo, no registra invocaciones durante el periodo acordado; después responde 404 de API Gateway.
+**Migration**: Los CLIs actualizados usan el login Cognito (`v3/cli-agent-session`). `POST /auth/verify` se mantiene durante la transición y se retira cuando, con el modo estricto activo, no registra invocaciones durante 5 días hábiles; después responde 404 de API Gateway.
 
 ### Requirement: Validación de campos de entrada
 **Reason**: Pertenecía a `POST /auth/verify`, que se retira.
