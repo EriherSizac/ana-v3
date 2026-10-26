@@ -13,12 +13,17 @@ El sistema ahora implementa un **límite de 45 mensajes por lote** con una **pau
   - El sistema entra en pausa de 2 horas
   - Automáticamente reanuda el envío después de la pausa
 
-### 2. Actualización de Contactos Pendientes
-Cuando se alcanza el límite:
-1. Los contactos no enviados se extraen de la lista
-2. Se envían al endpoint `/contacts/pending` en el backend
-3. El archivo CSV en S3 se actualiza con solo los contactos pendientes
-4. El sistema puede retomar desde donde quedó
+### 2. Actualización de Contactos Pendientes y reanudación local
+El servidor entrega cada asignación una sola vez (`GET /get/chats` la borra al entregarla), así que el progreso se protege en dos lugares:
+
+1. **Registro local** (`%APPDATA%\ANA\assignment-journal-<agente>-<campaña>.json`): al recibir la asignación, antes del primer envío, el CLI guarda el CSV recibido y el estado de cada contacto (`pending`, `in_flight`, `done`, `por_revisar`). Marca `in_flight` antes de abrir el chat y `done` al obtener el resultado; cada escritura es atómica.
+2. **Reporte tras cada contacto**: después de cada contacto procesado el CLI envía a `POST /contacts/pending` las filas originales de los contactos que faltan, en su orden. Así `chats/{agent_id}-{campaign}.csv` en S3 refleja los pendientes reales (sirve para recuperarlos si se pierde el equipo). Al terminar la asignación envía `contacts: []` y borra el registro local.
+
+**Si el CLI se cierra a mitad de ciclo** (Ctrl+C, cierre de ventana, reinicio, autoupdate):
+- Al volver a abrirlo, antes de consultar el servidor, reanuda la asignación registrada para el mismo agente y campaña y envía **solo los contactos pendientes**; los ya procesados no reciben un segundo mensaje.
+- Un contacto que quedó `in_flight` (cierre justo durante el envío) **no se reenvía**: queda `por_revisar`, aparece en `resultados.csv` con `status: por_revisar` y se reporta al backend en el campo `review` para que el supervisor confirme en WhatsApp si el mensaje salió.
+- Un registro de otro agente o campaña se conserva sin procesarse (se lista en consola al arrancar). Un registro ilegible se renombra a `*.invalid-<fecha>.json` y no se envía nada de él.
+- La deduplicación es solo dentro de una asignación: una asignación nueva con los mismos deudores se envía completa.
 
 ### 3. Timer de 2 Horas
 - **Duración**: 2 horas (7,200,000 ms)
@@ -73,7 +78,7 @@ Contactos totales: 100
 
 ### POST `/contacts/pending`
 
-Actualiza el archivo CSV con los contactos pendientes.
+Actualiza el archivo CSV con los contactos pendientes (filas originales de la asignación). El campo `review` es opcional: solo se envía si hay contactos por revisar y se guarda en `review/{campaign}/{agent_id}/{assignment_id}.csv`.
 
 **Request Body:**
 ```json
@@ -82,11 +87,17 @@ Actualiza el archivo CSV con los contactos pendientes.
   "agent_id": "agente-001",
   "contacts": [
     {
-      "phone": "+52 55 1234 5678",
-      "name": "Juan Pérez",
-      "variable1": "valor1"
+      "contact_phone": "5215512345678",
+      "contact_name": "Juan Pérez",
+      "message": "Hola {{name}}"
     }
-  ]
+  ],
+  "review": {
+    "assignment_id": "20261026T1530-ab12cd34",
+    "contacts": [
+      { "contact_phone": "5215598765432", "contact_name": "Ana López", "message": "Hola {{name}}" }
+    ]
+  }
 }
 ```
 
@@ -95,9 +106,12 @@ Actualiza el archivo CSV con los contactos pendientes.
 {
   "message": "Contactos pendientes actualizados",
   "path": "chats/agente-001-campana-ventas-2024.csv",
-  "remainingContacts": 55
+  "remainingContacts": 1,
+  "reviewContacts": 1
 }
 ```
+
+Los supervisores consultan los contactos por revisar con `GET /supervisors/review/{campaign}` (cabecera `X-Admin-Key`).
 
 ## Configuración
 
@@ -127,5 +141,5 @@ const PAUSE_DURATION = 2 * 60 * 60 * 1000; // 2 horas
 
 - El programa **debe permanecer ejecutándose** durante la pausa de 2 horas
 - Si cierras el programa durante la pausa, deberás reiniciarlo manualmente
-- Los contactos pendientes se obtienen automáticamente del servidor al reiniciar
+- Al reiniciar, los contactos pendientes se retoman del registro local del equipo (no del servidor, que ya entregó la asignación)
 - El sistema funciona tanto con contactos del servidor como del archivo local

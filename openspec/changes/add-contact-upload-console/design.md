@@ -77,7 +77,7 @@ El BFF pide el presign con el id token del usuario (así `operatorid` = el super
 - Además de las causas del spec, en v4 una fila con **más** columnas que el encabezado es inválida ("Más columnas que el encabezado"), porque `csv-parse` con `columns:true` rechaza el archivo completo. "Sin teléfono" y "Teléfono con menos de 10 dígitos" se reportan como causas separadas.
 - Un teléfono repetido se compara contra las filas **válidas** anteriores (la primera aparición válida se conserva).
 - Hash del plan: SHA-256 (`crypto.subtle`, igual en navegador y Node) de `flota|modo|agentes` + `(índice, agente, dígitos del teléfono)` por fila.
-- Pruebas de equivalencia: `parseCSV` del CLI no se exporta (y `agent-config.js` tiene efectos de import), así que la prueba extrae la función del código fuente; contra v4 se usan `csv-parse` y `normalizeContactRow` reales importados de `v4/backend`. El workflow de CI se dispara también con cambios en esos archivos.
+- Pruebas de equivalencia: el CLI expone el parser puro `assignment-csv.js` (`parseAssignmentCsv`, tras el merge de `installer-2`), que la prueba importa directamente; contra v4 se usan `csv-parse` y `normalizeContactRow` reales importados de `v4/backend`. El workflow de CI se dispara también con cambios en esos archivos.
 - Vista previa del mensaje v4 aproximada (campos simples y `{mensaje}` anidado); el formato de dinero y las expresiones se aplican al enviar en el desktop.
 
 **v3**

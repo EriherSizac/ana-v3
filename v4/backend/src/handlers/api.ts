@@ -1,10 +1,9 @@
 // File: api
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
-import { PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import {
   PutObjectCommand,
   GetObjectCommand,
@@ -13,14 +12,14 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
-  ddb,
-  CONVERSATIONS_TABLE,
-  MESSAGES_TABLE,
-  messageSk,
-  convKey,
-} from '../lib/dynamo';
+  listConversations,
+  listMessages,
+  putMessage,
+  putConversationMeta,
+  markRead,
+} from '../lib/conversations';
 import { s3, CSV_BUCKET, MEDIA_BUCKET } from '../lib/s3';
-import { ok, created, bad, claimUser } from '../lib/http';
+import { ok, bad, claimUser } from '../lib/http';
 import { resolveUserAccess, can, type UserAccess } from '../lib/access';
 import { ANA_PERMISSIONS, sanitizeRolePermissions } from '../lib/permissions';
 import { setRolePermissions, getRolePermissions } from '../lib/rolePerms';
@@ -66,18 +65,21 @@ export const handler = async (
         if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
         const target = await resolveViewTarget(access, event.queryStringParameters?.operatorId);
         if (!target) return bad('sin permiso', 403);
-        return await listConversations(target);
+        return await listConversations(target, event.queryStringParameters ?? {});
       }
       case 'GET /conversations/{chatId}/messages': {
         if (!can(access, ANA_PERMISSIONS.CHATS_VIEW)) return bad('sin permiso', 403);
         const target = await resolveViewTarget(access, event.queryStringParameters?.operatorId);
         if (!target) return bad('sin permiso', 403);
-        return await listMessages(target, event.pathParameters?.chatId);
+        return await listMessages(target, event.pathParameters?.chatId, event.queryStringParameters ?? {});
       }
       case 'PUT /messages':
         return await putMessage(user, JSON.parse(event.body ?? '{}'));
       case 'PUT /conversations/meta':
         return await putConversationMeta(user, JSON.parse(event.body ?? '{}'));
+      case 'POST /conversations/{chatId}/read':
+        // Siempre la partición propia (se ignora ?operatorId=).
+        return await markRead(user, event.pathParameters?.chatId);
       case 'POST /uploads/presign':
         // Hard check (no depende del flag de enforcement): subir CSV es solo
         // para líderes/admin o roles con el grant explícito — nunca agentes.
@@ -146,118 +148,7 @@ async function uploadsHistory(
   return ok({ campaign, items: await listUploads(campaign, { srcKey }) });
 }
 
-async function listConversations(user: string): Promise<APIGatewayProxyResultV2> {
-  const res = await ddb.send(
-    new QueryCommand({
-      TableName: CONVERSATIONS_TABLE,
-      KeyConditionExpression: 'operatorId = :u',
-      ExpressionAttributeValues: { ':u': user },
-    }),
-  );
-  const items = (res.Items ?? []).sort(
-    (a, b) => (b.lastMessageTime ?? 0) - (a.lastMessageTime ?? 0),
-  );
-  return ok({ conversations: items });
-}
-
-async function listMessages(
-  user: string,
-  chatId?: string,
-): Promise<APIGatewayProxyResultV2> {
-  if (!chatId) return bad('falta chatId');
-  // convKey incluye operatorId → solo lee la partición del propio operador.
-  const res = await ddb.send(
-    new QueryCommand({
-      TableName: MESSAGES_TABLE,
-      KeyConditionExpression: 'convKey = :k',
-      ExpressionAttributeValues: { ':k': convKey(user, chatId) },
-      ScanIndexForward: true,
-    }),
-  );
-  return ok({ chatId, messages: res.Items ?? [] });
-}
-
-async function putMessage(user: string, msg: any): Promise<APIGatewayProxyResultV2> {
-  const { chatId, id, timestamp } = msg;
-  if (!chatId || !id || !timestamp) return bad('faltan chatId/id/timestamp');
-
-  // Whitelist: nunca confiar en el body completo (evita mass-assignment).
-  const item = {
-    convKey: convKey(user, chatId),
-    sk: messageSk(Number(timestamp), String(id)),
-    operatorId: user,
-    chatId: String(chatId),
-    id: String(id),
-    timestamp: Number(timestamp),
-    body: typeof msg.body === 'string' ? msg.body : '',
-    fromMe: !!msg.fromMe,
-    from: String(msg.from ?? ''),
-    to: String(msg.to ?? ''),
-    type: String(msg.type ?? 'chat'),
-    // Punteros de media en S3 (los bytes viven en MediaBucket, no en Dynamo).
-    ...(msg.mediaKey ? { mediaKey: String(msg.mediaKey) } : {}),
-    ...(msg.mimetype ? { mimetype: String(msg.mimetype) } : {}),
-    ...(msg.filename ? { filename: String(msg.filename) } : {}),
-  };
-
-  await ddb.send(
-    new PutCommand({
-      TableName: MESSAGES_TABLE,
-      Item: item,
-      ConditionExpression: 'attribute_not_exists(sk)', // no sobre-escribir
-    }),
-  ).catch((e) => {
-    if (e?.name !== 'ConditionalCheckFailedException') throw e; // idempotente
-  });
-
-  await ddb.send(
-    new UpdateCommand({
-      TableName: CONVERSATIONS_TABLE,
-      Key: { operatorId: user, chatId: String(chatId) },
-      UpdateExpression:
-        'SET lastMessage = :b, lastMessageTime = :t ADD unreadCount :u',
-      ExpressionAttributeValues: {
-        ':b': item.body,
-        ':t': item.timestamp,
-        ':u': item.fromMe ? 0 : 1,
-      },
-    }),
-  );
-
-  return created({ ok: true });
-}
-
-/**
- * Guarda los datos del contacto en la conversación (PK=operatorId, SK=chatId):
- * campaña + fila completa del CSV. Permite registrar interacciones al CRM al
- * abrir el chat sin re-consultar nada. Merge (no pisa lastMessage).
- */
-async function putConversationMeta(
-  user: string,
-  payload: { chatId?: string; campaign?: string; contact?: Record<string, string> },
-): Promise<APIGatewayProxyResultV2> {
-  const chatId = payload.chatId;
-  if (!chatId) return bad('falta chatId');
-  const contact = payload.contact ?? {};
-  const name =
-    contact.name || contact.nombre ||
-    `${contact.first_name ?? ''} ${contact.last_name ?? ''}`.trim();
-
-  await ddb.send(
-    new UpdateCommand({
-      TableName: CONVERSATIONS_TABLE,
-      Key: { operatorId: user, chatId: String(chatId) },
-      UpdateExpression:
-        'SET campaign = :c, contact = :ct' + (name ? ', contactName = :n' : ''),
-      ExpressionAttributeValues: {
-        ':c': String(payload.campaign ?? ''),
-        ':ct': contact,
-        ...(name ? { ':n': name } : {}),
-      },
-    }),
-  );
-  return ok({ ok: true });
-}
+// Conversaciones/mensajes (resumen, paginación, leída): ver lib/conversations.ts.
 
 // Key de la sesión WhatsApp del operador (un zip por usuario). El scope por
 // username del JWT aísla: un agente solo lee/escribe SU sesión.

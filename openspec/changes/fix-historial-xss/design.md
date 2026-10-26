@@ -77,3 +77,33 @@ Otros sumideros revisados sin hallazgos: no hay `insertAdjacentHTML`, `outerHTML
 2. Verificación manual con un respaldo plantado (ver tasks).
 3. `npm run build` (incrementa versión patch, genera `dist/ANA.exe` y `dist/latest.json`, invoca `setup-and-upload.ps1`) y confirmar `versions/latest.json` en S3.
 4. Rollback: el autoupdate nunca baja de versión (`self-update.js` solo actualiza si la remota es mayor), así que revertir significa revertir el commit y publicar otra versión patch con `npm run build`. Volver a subir un `latest.json` antiguo solo detiene la propagación a quien aún no actualizó.
+
+## Decisiones de implementación
+
+- **Script `test`:** ya existía como `node --test` (añadido por `fix-cli-double-brace-templates`; `node --test test/` falla en Node 22). Se reutiliza tal cual; la tarea 1.3 se verificó con `npm test` y con el bundle de `esbuild` (generado fuera de `dist/` para no dejar artefactos).
+- **Orden de init scripts:** `domSafetyInitScript()` se registra primero en `initManualWhatsApp`, seguido de `phoneUtilsInitScript()` (de `normalize-whatsapp-phone-country-code`) y después los init scripts existentes.
+- **"Abrir chat" usa `window.__anaDomSafety.phone10ForWhatsappUrl`** (exige 10 dígitos, como pide el requisito "Teléfono saneado al abrir chat desde el historial") y no `window.__anaPhone.toLast10`, que devuelve menos de 10 dígitos sin error. Si el helper no cargó, el fallback devuelve `''` y no se navega (falla cerrada). En la fila se usa `contact_phone` crudo guardado en `dataset.phone`; en la burbuja, el `phoneNumber` con el que se cargó el historial.
+- **`dataset` en lugar de atributos interpolados:** los botones de la fila ya no llevan `data-phone`/`data-phone10` en la plantilla; se asigna `dataset.phone` después de crear el nodo y ambos botones lo leen.
+- **Overlays de login muertos:** `escapeLocal` inline; `${savedUser}` sin valor ahora muestra vacío en lugar de `undefined` (código no invocado).
+- **Cuerpo del mensaje en la burbuja:** al asignarse con `textContent`, se eliminan los espacios y saltos de indentación que la plantilla anterior añadía alrededor del texto dentro del `pre-wrap`; el texto y sus saltos de línea propios se conservan.
+- **`build-portable.ps1`:** se agregó `dom-safety.js` a `$filesToCopy` (no estaba en tasks, pero sin él el portable falla con `ERR_MODULE_NOT_FOUND`).
+
+### Auditoría actualizada de `innerHTML` (post-implementación, tarea 4.2)
+
+| Ubicación | Interpolación restante | Estado |
+|---|---|---|
+| `whatsapp-manual.js:96` overlay login (muerto) | `escapeLocal(savedUser/savedCampaign)`, `requireAll` | Escapado |
+| `whatsapp-manual.js:399`, `425`, `437`, `448` | Estático | Sin cambio |
+| `whatsapp-manual.js:429` píldoras sin WhatsApp | `pills` (últimos 4 dígitos, filtrados con `\D`) | Interno |
+| `whatsapp-manual.js:1346`, `1369`, `1697`, `1750` | Estático / `numbers.length` / cuenta regresiva | Interno |
+| `whatsapp-manual.js:1832` toast, `1884` notificación de respaldo | `type`, hora local; `message` por `textContent` | Corregido |
+| `whatsapp-manual.js:2451`, `2480` | Estático | Sin cambio |
+| `whatsapp-manual.js:2504` formulario de gestión | `esc(...)` en texto y atributos `value` | Escapado |
+| `whatsapp-manual.js:2561` error de gestión | Estático + `textContent` | Corregido |
+| `whatsapp-manual.js:2572`, `2668`, `2764`, `2801`–`2827` | Estático / vaciado | Sin cambio |
+| `whatsapp-manual.js:2845` fila del historial | Solo marcado; datos por `textContent`/`dataset` | Corregido |
+| `whatsapp-manual.js:3146` encabezado de la burbuja | Solo marcado; resumen por `textContent` | Corregido |
+| `whatsapp-manual.js:3207` mensaje de la burbuja | Solo marcado + colores internos; datos por `textContent` | Corregido |
+| `whatsapp-monitor.js:106` overlay login (muerto) | `escapeLocal(...)` | Escapado |
+| `chat-backup.js:713` | Estático | Sin cambio |
+| `chat-backup.js:795` overlay respaldo masivo | `statusIcon`, `statusColor`, `percentage`, `prog.current/total` (internos); `prog.message` por `textContent` | Corregido |

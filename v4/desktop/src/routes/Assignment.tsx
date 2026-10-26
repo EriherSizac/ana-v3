@@ -1,25 +1,44 @@
 // File: Mi asignación — el agente revisa, selecciona y aprueba sus envíos.
 // Created: 2026-06-10
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../ui/Button';
-import { TemplateEditor } from '../ui/TemplateEditor';
+import { TemplateEditor, getUnknownTemplateVars } from '../ui/TemplateEditor';
 import { ProgressBar } from './Campaigns';
 import { maskPhone } from '../lib/api';
 import type { AssignedJob, SendProgress } from '../types/ana';
 
+const isPending = (j: AssignedJob) => !j.status || j.status === 'pending' || j.status === 'leased';
+const isDone = (j: AssignedJob) =>
+  j.status === 'sent' || j.status === 'no_whatsapp' || j.status === 'error';
+/** Archivo de un job (misma clave que usa el main para la plantilla). */
+const fileKey = (j: AssignedJob) => j.srcKey || j.campaignId;
+/** Nombre legible del archivo: último segmento del srcKey o la campaña. */
+const fileLabel = (j: AssignedJob) =>
+  (j.srcKey ? j.srcKey.split('/').pop() : '') || j.campaign || j.campaignId;
+
+interface FileGroup {
+  key: string;
+  label: string;
+  jobs: AssignedJob[]; // seleccionados de este archivo
+  defaultTemplate: string;
+  columns: string[];
+  sampleRow: Record<string, string>;
+}
+
 /**
  * Equivalente v4 de la asignación de v3: el poller del main publica los jobs
- * pendientes del agente; aquí los revisa, elige a quiénes enviar y con qué
- * plantilla, y aprueba. Lo no seleccionado queda pendiente (reaparece).
+ * pendientes del agente; aquí los revisa, elige a quiénes enviar y, POR CADA
+ * ARCHIVO seleccionado, con qué plantilla; y aprueba. Cada job se envía con la
+ * plantilla de su archivo. Lo no seleccionado queda pendiente (reaparece).
  */
 export function Assignment() {
   const [jobs, setJobs] = useState<AssignedJob[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [template, setTemplate] = useState('');
-  const [templateTouched, setTemplateTouched] = useState(false);
+  // Plantillas editadas por el agente, por archivo (las no editadas usan la del upload).
+  const [edited, setEdited] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [progress, setProgress] = useState<SendProgress>({ phase: 'idle' });
   const [query, setQuery] = useState('');
@@ -28,17 +47,14 @@ export function Assignment() {
   useEffect(() => {
     const apply = (next: AssignedJob[]) => {
       setJobs(next);
-      // Selección estable entre polls: conserva lo marcado, marca lo nuevo.
+      // Selección estable entre polls: conserva lo marcado que SIGUE pendiente
+      // (descarta lo ya procesado) y marca los pendientes nuevos.
       setSelected((prev) => {
-        const ids = new Set(next.map((j) => j.jobId));
-        const keep = new Set([...prev].filter((id) => ids.has(id)));
-        for (const j of next) if (!prev.has(j.jobId) && !keep.has(j.jobId)) keep.add(j.jobId);
+        const pendingIds = new Set(next.filter((j) => !j.auto && isPending(j)).map((j) => j.jobId));
+        const keep = new Set([...prev].filter((id) => pendingIds.has(id)));
+        for (const id of pendingIds) if (!prev.has(id)) keep.add(id);
         return keep;
       });
-      // Plantilla por defecto = la del upload, mientras el agente no la edite.
-      if (next.length > 0) {
-        setTemplate((t) => (templateTouched && t ? t : next[0].template));
-      }
     };
     // Hidratar al montar con la asignación vigente (el evento del poller solo
     // llega cada ~5s; sin esto la vista queda en blanco al entrar al tab).
@@ -49,14 +65,9 @@ export function Assignment() {
       offJobs();
       offProgress();
     };
-  }, [templateTouched]);
+  }, []);
 
   const sendingNow = progress.phase === 'sending' || progress.phase === 'waiting';
-
-  const isPending = (j: AssignedJob) =>
-    !j.status || j.status === 'pending' || j.status === 'leased';
-  const isDone = (j: AssignedJob) =>
-    j.status === 'sent' || j.status === 'no_whatsapp' || j.status === 'error';
 
   // Pendientes: por aprobar (manual). Enviados: historial, más reciente arriba.
   const pendingJobs = useMemo(() => jobs.filter((j) => !j.auto && isPending(j)), [jobs]);
@@ -66,13 +77,38 @@ export function Assignment() {
   );
   const list = tab === 'pending' ? pendingJobs : sentJobs;
 
-  const firstSelected = pendingJobs.find((j) => selected.has(j.jobId)) ?? pendingJobs[0];
-  // El líder no fijó plantilla → el agente debe escribir el mensaje.
-  const templateRequired = !firstSelected?.template?.trim();
-  const columns = useMemo(
-    () => (firstSelected ? Object.keys(firstSelected.row) : []),
-    [firstSelected],
-  );
+  // Un grupo (editor de plantilla) por archivo con jobs seleccionados.
+  const groups = useMemo<FileGroup[]>(() => {
+    const map = new Map<string, FileGroup>();
+    for (const j of pendingJobs) {
+      if (!selected.has(j.jobId)) continue;
+      const k = fileKey(j);
+      let g = map.get(k);
+      if (!g) {
+        g = {
+          key: k,
+          label: fileLabel(j),
+          jobs: [],
+          defaultTemplate: j.template ?? '',
+          columns: Object.keys(j.row ?? {}),
+          sampleRow: j.row ?? {},
+        };
+        map.set(k, g);
+      }
+      g.jobs.push(j);
+    }
+    return [...map.values()];
+  }, [pendingJobs, selected]);
+
+  const templateOf = (g: FileGroup) => edited[g.key] ?? g.defaultTemplate;
+  // Validación por archivo: vacía o con variables que su CSV no tiene.
+  const problems = groups.map((g) => {
+    const tpl = templateOf(g);
+    if (!tpl.trim()) return { empty: true, unknown: [] as string[] };
+    return { empty: false, unknown: getUnknownTemplateVars(tpl, g.columns) };
+  });
+  const invalid = problems.some((p) => p.empty || p.unknown.length > 0);
+  const selectedPending = groups.reduce((n, g) => n + g.jobs.length, 0);
 
   // Filtra por nombre, credit_id o últimos dígitos del teléfono.
   const jobName = (j: AssignedJob) =>
@@ -113,7 +149,11 @@ export function Assignment() {
 
   async function send() {
     setStatus(null);
-    const res = await window.ana.approveJobs([...selected], template || undefined);
+    const templates: Record<string, string> = {};
+    for (const g of groups) templates[g.key] = templateOf(g);
+    const ids = groups.flatMap((g) => g.jobs.map((j) => j.jobId));
+    // El main responde en cuanto el envío arranca; el avance va por la tarjeta.
+    const res = await window.ana.approveJobs(ids, templates);
     setStatus(res.ok ? 'Envío iniciado.' : `Error: ${res.error ?? 'desconocido'}`);
   }
 
@@ -147,7 +187,7 @@ export function Assignment() {
             {tab === 'pending' ? (
               <label className="flex items-center gap-2 text-sm font-semibold text-text-muted">
                 <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} />
-                {selected.size}/{pendingJobs.length} seleccionados
+                {selectedPending}/{pendingJobs.length} seleccionados
               </label>
             ) : (
               <span className="text-sm font-semibold text-text-muted">
@@ -221,37 +261,50 @@ export function Assignment() {
 
           {tab === 'pending' && (
             <>
-              <div>
-                <label className="block text-sm font-semibold text-text-muted">
-                  Mensaje
-                  {templateRequired ? (
-                    <span className="ml-1 text-error-70">(obligatorio: el líder no fijó uno)</span>
-                  ) : (
-                    <span className="ml-1 font-normal text-text-light">(puedes editarlo)</span>
+              {/* Un editor por archivo seleccionado: cada contacto recibe la plantilla de su carga. */}
+              {groups.map((g, i) => (
+                <div key={g.key}>
+                  <label className="block text-sm font-semibold text-text-muted">
+                    Mensaje
+                    {groups.length > 1 && (
+                      <span className="ml-1 font-normal text-text">
+                        · {g.label} ({g.jobs.length} seleccionado{g.jobs.length === 1 ? '' : 's'})
+                      </span>
+                    )}
+                    {!g.defaultTemplate.trim() ? (
+                      <span className="ml-1 text-error-70">(obligatorio: el líder no fijó uno)</span>
+                    ) : (
+                      <span className="ml-1 font-normal text-text-light">(puedes editarlo)</span>
+                    )}
+                  </label>
+                  <div className="mt-1">
+                    <TemplateEditor
+                      value={templateOf(g)}
+                      onChange={(t) => setEdited((m) => ({ ...m, [g.key]: t }))}
+                      columns={g.columns}
+                      sampleRow={g.sampleRow}
+                    />
+                  </div>
+                  {problems[i]?.empty && (
+                    <p className="mt-1 text-xs text-error-70">Escribe el mensaje antes de enviar.</p>
                   )}
-                </label>
-                <div className="mt-1">
-                  <TemplateEditor
-                    value={template}
-                    onChange={(t) => {
-                      setTemplate(t);
-                      setTemplateTouched(true);
-                    }}
-                    columns={columns}
-                    sampleRow={firstSelected?.row ?? null}
-                  />
+                  {problems[i] && problems[i].unknown.length > 0 && (
+                    <p className="mt-1 text-xs text-error-70">
+                      Variables que este archivo no tiene:{' '}
+                      <span className="font-mono">
+                        {problems[i].unknown.map((v) => `{${v}}`).join(', ')}
+                      </span>
+                    </p>
+                  )}
                 </div>
-              </div>
+              ))}
 
               <Button
                 onClick={send}
-                disabled={selected.size === 0 || sendingNow || !template.trim()}
+                disabled={selectedPending === 0 || sendingNow || invalid}
               >
-                {sendingNow ? 'Enviando…' : `Enviar a ${selected.size} contacto(s)`}
+                {sendingNow ? 'Enviando…' : `Enviar a ${selectedPending} contacto(s)`}
               </Button>
-              {!template.trim() && (
-                <p className="text-xs text-error-70">Escribe el mensaje antes de enviar.</p>
-              )}
 
               {status && (
                 <div className="rounded-xl bg-primary-light-90 px-4 py-2 text-sm text-text-muted">

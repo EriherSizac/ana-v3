@@ -2,9 +2,9 @@
 
 ## 1. Helper de escape y pruebas
 
-- [ ] 1.1 Crear `v3/cli-whatsapp/dom-safety.js` con `escapeHtml`, `digitsOnly`, `phone10ForWhatsappUrl` (funciones puras y autocontenidas, sin referencias externas) y `domSafetyInitScript()` que devuelve el código que define `window.__anaDomSafety`; verificar con `node -e "import('./dom-safety.js').then(m=>console.log(m.escapeHtml('<a \"x\">&\\'')))"` desde `v3/cli-whatsapp` que imprime `&lt;a &quot;x&quot;&gt;&amp;&#39;`
-- [ ] 1.2 Crear `v3/cli-whatsapp/test/dom-safety.test.js` (`node:test` + `node:assert`) que cubra: los cinco caracteres, `null`/`undefined`/números/objetos, texto ya escapado (doble escape esperado), payloads `<img src=x onerror=…>` y `"><svg onload=…>`, `phone10ForWhatsappUrl` con `521551234567"8`, `+52 1 55 1234 5678`, menos de 10 dígitos, y que `new Function('return (' + escapeHtml.toString() + ')')()` produce la misma salida; verificar que `node --test test/` pasa
-- [ ] 1.3 Agregar `"test": "node --test test/"` a `scripts` de `v3/cli-whatsapp/package.json` y verificar que `npm test` pasa y que `npx esbuild index.js --bundle --platform=node --format=cjs --outfile=dist/app.cjs --external:playwright` sigue generando el bundle sin errores
+- [x] 1.1 Crear `v3/cli-whatsapp/dom-safety.js` con `escapeHtml`, `digitsOnly`, `phone10ForWhatsappUrl` (funciones puras y autocontenidas, sin referencias externas) y `domSafetyInitScript()` que devuelve el código que define `window.__anaDomSafety`; verificar con `node -e "import('./dom-safety.js').then(m=>console.log(m.escapeHtml('<a \"x\">&\\'')))"` desde `v3/cli-whatsapp` que imprime `&lt;a &quot;x&quot;&gt;&amp;&#39;`
+- [x] 1.2 Crear `v3/cli-whatsapp/test/dom-safety.test.js` (`node:test` + `node:assert`) que cubra: los cinco caracteres, `null`/`undefined`/números/objetos, texto ya escapado (doble escape esperado), payloads `<img src=x onerror=…>` y `"><svg onload=…>`, `phone10ForWhatsappUrl` con `521551234567"8`, `+52 1 55 1234 5678`, menos de 10 dígitos, y que `new Function('return (' + escapeHtml.toString() + ')')()` produce la misma salida; verificar que `node --test test/` pasa
+- [x] 1.3 Agregar `"test": "node --test test/"` a `scripts` de `v3/cli-whatsapp/package.json` y verificar que `npm test` pasa y que `npx esbuild index.js --bundle --platform=node --format=cjs --outfile=dist/app.cjs --external:playwright` sigue generando el bundle sin errores
 - [ ] 1.4 Registrar `manualPage.addInitScript({ content: domSafetyInitScript() })` en `initManualWhatsApp` antes del primer `addInitScript` existente; verificar en la ventana manual, tras cargar y tras F5, que `typeof window.__anaDomSafety.escapeHtml === 'function'` (comprobación con un `page.evaluate` temporal o `logToNodeConsole` durante desarrollo, retirado después)
 
 ## 2. Historial (lista y burbuja)
@@ -22,8 +22,8 @@
 
 ## 4. Higiene en código muerto y auditoría
 
-- [ ] 4.1 Escapar `savedUser`/`savedCampaign` en los overlays de login no usados de `whatsapp-manual.js` (~51–92) y `whatsapp-monitor.js` (~61–102) con un escape inline equivalente (no se inyecta el helper en la ventana monitor); verificar con `node --check whatsapp-manual.js` y `node --check whatsapp-monitor.js`
-- [ ] 4.2 Ejecutar `grep -n "innerHTML" whatsapp-manual.js whatsapp-monitor.js chat-backup.js` y confirmar, contra la tabla de `design.md`, que cada `innerHTML` restante con `${…}` solo interpola valores internos o escapados; actualizar la tabla de `design.md` si cambiaron números de línea
+- [x] 4.1 Escapar `savedUser`/`savedCampaign` en los overlays de login no usados de `whatsapp-manual.js` (~51–92) y `whatsapp-monitor.js` (~61–102) con un escape inline equivalente (no se inyecta el helper en la ventana monitor); verificar con `node --check whatsapp-manual.js` y `node --check whatsapp-monitor.js`
+- [x] 4.2 Ejecutar `grep -n "innerHTML" whatsapp-manual.js whatsapp-monitor.js chat-backup.js` y confirmar, contra la tabla de `design.md`, que cada `innerHTML` restante con `${…}` solo interpola valores internos o escapados; actualizar la tabla de `design.md` si cambiaron números de línea
 
 ## 5. Verificación manual en WhatsApp Web real
 

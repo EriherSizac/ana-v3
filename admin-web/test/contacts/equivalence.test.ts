@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parse } from 'csv-parse/sync';
 import { describe, expect, it } from 'vitest';
 import { agentFiles, buildPlan, parseCsvText, validateRows, validRowsCsv, v4Assignments, previewMessage, type ParsedCsv, type Plan } from '@/lib/contacts';
@@ -12,31 +13,16 @@ import { addMessageColumn, messageToSingleLine } from '../../../v3/ana-backend/s
  * Equivalencia (tarea 1.2): lo que el plan de ANA Admin promete por fila es lo
  * que obtienen `csvTrigger` de v4 (csv-parse + normalizeContactRow + reparto
  * `targets[i % n]` sobre `Object.entries(assignments)`) y el CLI v3
- * (`parseCSV` de agent-config.js sobre el archivo que escribe v3).
+ * (`parseAssignmentCsv` de assignment-csv.js sobre el archivo que escribe v3).
  */
 const root = join(__dirname, '..', '..', '..');
 const fixture = (name: string) => readFileSync(join(__dirname, '..', 'fixtures', 'contacts', name), 'utf8');
 
-/** Extrae `parseCSV` del código fuente del CLI (no se exporta y el módulo tiene efectos de import). */
-function loadCliParseCSV(): (text: string) => Array<Record<string, string>> {
-  const src = readFileSync(join(root, 'v3', 'cli-whatsapp', 'agent-config.js'), 'utf8');
-  const start = src.indexOf('function parseCSV(csvText) {');
-  if (start < 0) throw new Error('parseCSV no encontrado en agent-config.js');
-  let depth = 0;
-  let end = -1;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}') {
-      depth--;
-      if (depth === 0) {
-        end = i + 1;
-        break;
-      }
-    }
-  }
-  return new Function(`${src.slice(start, end)}; return parseCSV;`)();
-}
-const cliParseCSV = loadCliParseCSV();
+/** Parser real del CLI (módulo puro assignment-csv.js, sin efectos al importarse). */
+const cliModulePath = join(root, 'v3', 'cli-whatsapp', 'assignment-csv.js');
+const { parseAssignmentCsv: cliParseCSV } = (await import(/* @vite-ignore */ pathToFileURL(cliModulePath).href)) as {
+  parseAssignmentCsv: (text: string) => Array<Record<string, string>>;
+};
 
 /** Réplica de expandWeights + round-robin de csvTrigger. */
 function triggerTargets(assignments: Record<string, number>, n: number): string[] {
@@ -82,7 +68,7 @@ describe('equivalencia con v4 (csv-parse + normalizeContactRow)', () => {
   });
 });
 
-describe('equivalencia con el CLI v3 (parseCSV sobre el archivo escrito por v3)', () => {
+describe('equivalencia con el CLI v3 (parseAssignmentCsv sobre el archivo escrito por v3)', () => {
   it.each(CASES)('$name: cada agente recibe exactamente sus filas con el mensaje interpolado', ({ fixture: f, phone, enabled }) => {
     const p = parseCsvText(fixture(f), 'v3') as ParsedCsv;
     const rows = validateRows(p, 'v3', phone).valid;

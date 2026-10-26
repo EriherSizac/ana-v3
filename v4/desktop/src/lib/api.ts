@@ -1,6 +1,6 @@
 // File: Pide presign, sube el CSV a S3 (dispara csvTrigger → tabla jobs).
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { currentToken } from './auth';
@@ -44,22 +44,53 @@ export async function getMediaUrl(key: string): Promise<string> {
   return (await res.json()).url;
 }
 
+const query = (params: Record<string, string | undefined>) => {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${k}=${encodeURIComponent(v!)}`)
+    .join('&');
+  return qs ? `?${qs}` : '';
+};
+
 // operatorId opcional: ver conversaciones de un agente (líder/admin).
-export async function getConversations(operatorId?: string): Promise<Conversation[]> {
-  const qs = operatorId ? `?operatorId=${encodeURIComponent(operatorId)}` : '';
-  const res = await fetch(`${API_BASE}/conversations${qs}`, { headers: await authHeaders() });
+// Paginado: `nextToken` de la respuesta anterior trae la página siguiente.
+export async function getConversationsPage(
+  operatorId?: string,
+  nextToken?: string,
+): Promise<{ conversations: Conversation[]; nextToken?: string }> {
+  const res = await fetch(`${API_BASE}/conversations${query({ operatorId, nextToken })}`, {
+    headers: await authHeaders(),
+  });
   if (!res.ok) throw new Error('no se pudieron cargar conversaciones');
-  return (await res.json()).conversations ?? [];
+  const data = await res.json();
+  return { conversations: data.conversations ?? [], nextToken: data.nextToken };
 }
 
-export async function getMessages(chatId: string, operatorId?: string): Promise<Message[]> {
-  const qs = operatorId ? `?operatorId=${encodeURIComponent(operatorId)}` : '';
+/** Página de mensajes: los más recientes en orden ascendente; nextToken = anteriores. */
+export async function getMessagesPage(
+  chatId: string,
+  operatorId?: string,
+  nextToken?: string,
+): Promise<{ messages: Message[]; nextToken?: string }> {
   const res = await fetch(
-    `${API_BASE}/conversations/${encodeURIComponent(chatId)}/messages${qs}`,
+    `${API_BASE}/conversations/${encodeURIComponent(chatId)}/messages${query({ operatorId, nextToken })}`,
     { headers: await authHeaders() },
   );
   if (!res.ok) throw new Error('no se pudieron cargar mensajes');
-  return (await res.json()).messages ?? [];
+  const data = await res.json();
+  return { messages: data.messages ?? [], nextToken: data.nextToken };
+}
+
+/** Marca la conversación propia como leída (unreadCount = 0). Errores ignorados. */
+export async function markConversationRead(chatId: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}/read`, {
+      method: 'POST',
+      headers: await authHeaders(),
+    });
+  } catch {
+    /* no crítico para la UI */
+  }
 }
 
 export interface AgentEntry {
@@ -105,12 +136,14 @@ export interface ManualInteraction {
   contactable?: boolean;
   promiseDate?: string;
   promiseAmount?: number;
+  /** UUID por apertura del modal: el backend registra una sola vez por requestId. */
+  requestId?: string;
 }
 
 /** Registra una gestión manual en el CRM desde el chat. */
 export async function reportManualInteraction(
   i: ManualInteraction,
-): Promise<{ reported: boolean; creditId?: string }> {
+): Promise<{ reported: boolean; creditId?: string; reason?: string }> {
   const res = await fetch(`${API_BASE}/interactions/manual`, {
     method: 'POST',
     headers: await authHeaders(),
@@ -120,7 +153,10 @@ export async function reportManualInteraction(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error ?? 'no se pudo registrar la gestión');
   }
-  return await res.json();
+  const out = await res.json();
+  // El CRM falló y el backend liberó la reserva: reintentar con el MISMO requestId.
+  if (out?.retryable) throw new Error('El CRM no respondió; intenta de nuevo.');
+  return out;
 }
 
 // --- Líder/admin: send-jobs por campaña ---
@@ -233,8 +269,4 @@ export async function uploadCsv(file: File, cfg: CampaignConfig): Promise<void> 
 }
 
 /** Enmascara número para mostrar (regla: masking solo visual). */
-export function maskPhone(jid: string): string {
-  const digits = jid.replace(/\D/g, '');
-  if (digits.length < 4) return '***';
-  return `***${digits.slice(-4)}`;
-}
+export { maskPhone } from './mask';

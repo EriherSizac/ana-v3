@@ -232,7 +232,7 @@ function waitForEnterIfPkg(message) {
     });
   });
 }
-import { CONFIG } from "./config.js";
+import { CONFIG, __dirname_export as DATA_DIR } from "./config.js";
 import { CONSTANTS } from "./constants.js";
 import { saveResults, saveResponses } from "./csv-utils.js";
 import {
@@ -259,6 +259,23 @@ import {
   insertInteractions,
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
+import { phone } from "./phone-utils.js";
+import { interactionDateTime } from "./interaction-time.js";
+import {
+  createJournal,
+  loadJournal,
+  markInFlight,
+  markDone,
+  markForReview,
+  pendingRows,
+  inFlightRows,
+  reviewRows,
+  removeJournal,
+  listOtherJournals,
+} from "./assignment-journal.js";
+
+const REVIEW_ERROR =
+  "Envío interrumpido por cierre del CLI; revisar antes de reenviar";
 
 // Función principal
 async function main() {
@@ -430,6 +447,52 @@ async function main() {
       let sentSinceLastPause = 0;
       let cycle = 0;
 
+      // Escritura del registro local: un fallo de disco no detiene el envío
+      const journalStep = (fn, journal, index) => {
+        if (!journal) return;
+        try {
+          fn(journal, index);
+        } catch (e) {
+          console.error(
+            "⚠️  No se pudo actualizar el registro local de la asignación:",
+            e?.message || e,
+          );
+        }
+      };
+
+      // Reporte a /contacts/pending: filas originales de los pendientes (o [] al final)
+      // y, si hay, los contactos por revisar en `review`
+      const reportAssignmentProgress = async (
+        journal,
+        assignmentContacts,
+        final = false,
+      ) => {
+        const rawOf = (row) => assignmentContacts[row.index]?.__raw || {};
+        const pendingRaw = final ? [] : pendingRows(journal).map(rawOf);
+        const toReview = reviewRows(journal);
+        const review =
+          toReview.length > 0
+            ? {
+                assignment_id: journal.assignment_id,
+                contacts: toReview.map(rawOf),
+              }
+            : undefined;
+        const ok = await updatePendingContacts(pendingRaw, review);
+        if (!ok) console.error("❌ Error al actualizar contactos pendientes");
+        return ok;
+      };
+
+      // Registros locales de otro agente/campaña: se conservan sin procesarse
+      {
+        const cfg = loadAgentConfig() || {};
+        const others = listOtherJournals(DATA_DIR, cfg.agent_id, cfg.campaign);
+        if (others.length > 0) {
+          console.warn(
+            `⚠️  Registros de asignación de otros agentes/campañas (no se procesan): ${others.join(", ")}`,
+          );
+        }
+      }
+
       while (true) {
         cycle++;
         const manualPage = getManualPage();
@@ -440,11 +503,72 @@ async function main() {
           setStatusWidgetText(monitorPage, "Poll: consultando servidor..."),
         ]);
 
-        console.log("📡 Obteniendo contactos del servidor...");
-        const contacts = (await fetchAssignedChats()) || [];
+        // Asignación en curso: reanudar el registro local si existe; si no, poll
+        const journalCfg = loadAgentConfig() || {};
+        let journal = null;
+        let assignmentContacts = [];
+        let contacts = [];
+        const resumed = loadJournal({
+          dir: DATA_DIR,
+          agentId: journalCfg.agent_id,
+          campaign: journalCfg.campaign,
+        });
+        if (resumed.status === "invalid") {
+          console.warn(
+            `⚠️  Registro local de la asignación ilegible o inconsistente (${resumed.reason}); se renombró a ${resumed.invalidPath} y no se envía nada de él.`,
+          );
+        } else if (resumed.status === "ok") {
+          journal = resumed.journal;
+          assignmentContacts = resumed.contacts;
+          // Contactos "en curso" al cerrar: no se reenvían, quedan por revisar
+          for (const row of inFlightRows(journal)) {
+            journalStep(markForReview, journal, row.index);
+            const c = assignmentContacts[row.index] || {};
+            console.warn(
+              `⚠️  Contacto interrumpido durante el envío (${c.phone}); queda por revisar y no se reenvía.`,
+            );
+            results.push({
+              ...c,
+              status: "por_revisar",
+              error: REVIEW_ERROR,
+              sent_at: new Date().toISOString(),
+              response: "",
+            });
+          }
+          contacts = pendingRows(journal).map((r) => assignmentContacts[r.index]);
+          console.log(
+            `♻️  Reanudando asignación ${journal.assignment_id} con ${contacts.length} contactos pendientes`,
+          );
+        }
+
+        if (!journal) {
+          console.log("📡 Obteniendo contactos del servidor...");
+          const fetched = await fetchAssignedChats();
+          assignmentContacts = fetched?.contacts || [];
+          contacts = assignmentContacts;
+          if (assignmentContacts.length > 0) {
+            try {
+              journal = createJournal({
+                dir: DATA_DIR,
+                agentId: journalCfg.agent_id,
+                campaign: journalCfg.campaign,
+                csvText: fetched.csvText,
+                rows: assignmentContacts.map((c, index) => ({
+                  index,
+                  phone: c.phone,
+                })),
+              });
+            } catch (e) {
+              console.error(
+                "⚠️  No se pudo crear el registro local de la asignación; se envía sin reanudación:",
+                e?.message || e,
+              );
+            }
+          }
+        }
         console.log(`📊 Contactos para automatización: ${contacts.length}`);
 
-        if (contacts.length === 0) {
+        if (contacts.length === 0 && !journal) {
           console.log("ℹ️  No hay contactos asignados.");
           await sleepWithCountdown(POLL_INTERVAL_MS, "Próximo poll", [
             page,
@@ -467,7 +591,9 @@ async function main() {
             `\n[${idx}/${contacts.length}] Procesando: ${contact.name}`,
           );
 
+          journalStep(markInFlight, journal, contact.__rowIndex);
           const result = await sendMessage(contact, contact.message);
+          journalStep(markDone, journal, contact.__rowIndex);
           results.push(result);
           sentSinceLastPause += 1;
           const remainingToPause = Math.max(
@@ -488,14 +614,9 @@ async function main() {
             console.log("📋 [DEBUG] Objeto contact completo:");
             console.log(JSON.stringify(contact, null, 2));
 
-            const now = new Date();
-            const contact_date = now.toISOString().slice(0, 10);
-            const hh = String(now.getHours()).padStart(2, "0");
-            const mm = String(now.getMinutes()).padStart(2, "0");
-            const nextH = String((now.getHours() + 1) % 24).padStart(2, "0");
-            const phoneDigits = String(contact.phone || "").replace(/\D/g, "");
-            const phone10 =
-              phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
+            // Fecha/hora en America/Mexico_City (interaction-time.js)
+            const { contact_date, contact_time, range_time } = interactionDateTime();
+            const phone10 = phone.toLast10(contact.phone);
             const subdictamen =
               result?.status === "no_whatsapp"
                 ? "No tiene Whatsapp"
@@ -531,8 +652,8 @@ async function main() {
                 user_id: INTERACTIONS_USER_ID,
                 subdictamen,
                 contact_date,
-                contact_time: `${hh}:${mm}`,
-                range_time: `${hh}:00 - ${nextH}:00`,
+                contact_time,
+                range_time,
                 action_channel: "whatsapp",
                 action: "whatsapp",
                 contactable: result?.status === "sent",
@@ -615,6 +736,11 @@ async function main() {
             );
           }
 
+          // Pendientes reales tras cada contacto (no bloquea el ciclo si falla)
+          if (journal) {
+            await reportAssignmentProgress(journal, assignmentContacts);
+          }
+
           if (i < contacts.length - 1) {
             const delayMs = CONSTANTS.getRandomDelay();
             const delaySec = Math.round(delayMs / 1000);
@@ -648,11 +774,24 @@ async function main() {
         console.log(
           `\n☁️  Marcando contactos como procesados en el servidor...`,
         );
-        const updated = await updatePendingContacts([]);
+        const updated = journal
+          ? await reportAssignmentProgress(journal, assignmentContacts, true)
+          : await updatePendingContacts([]);
         if (!updated) {
           console.error(
             "❌ Error al actualizar contactos pendientes (limpiar lista).",
           );
+        }
+        // Asignación terminada: se elimina el registro local antes del siguiente poll
+        if (journal) {
+          try {
+            removeJournal(journal);
+          } catch (e) {
+            console.error(
+              "⚠️  No se pudo eliminar el registro local de la asignación:",
+              e?.message || e,
+            );
+          }
         }
 
         await saveResults(results);

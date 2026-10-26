@@ -46,8 +46,17 @@ App de envío/gestión de WhatsApp para cobranza (Pernexium). Reescritura comple
 1. `client.on('message')` en main. Si trae media → `downloadMedia` → `POST /media/presign` → PUT a `MediaBucket` (`media/<op>/`).
 2. `PUT /messages` → DynamoDB guarda el **puntero** (`mediaKey`), nunca los bytes. Renderer escucha evento IPC → actualiza vista.
 
+### Sesión, presencia y actualización (desktop)
+- **Token**: el renderer (Amplify) entrega el **ID token** al main y lo renueva 5 min antes de `exp` (`fetchAuthSession({ forceRefresh: true })`). El main (`electron/auth/tokenBroker.ts`) pide uno nuevo (`auth:token-request`, espera 10 s) si al suyo le quedan < 2 min, y ante un 401 invalida, pide otro y reintenta una vez (backend, poller y respaldo de sesión WhatsApp). Si la sesión no se puede renovar, la app vuelve al login con "Tu sesión expiró. Vuelve a iniciar sesión."; el main detiene poller y heartbeat **sin** borrar la sesión local de WhatsApp.
+- **Poller**: un 401/500/error de red no publica una asignación vacía; se conserva la última.
+- **Heartbeat**: `POST /agents/heartbeat` solo con WhatsApp `connected` (no en QR/autenticando): al registrar campaña, al conectar y cada 5 min.
+- **Actualización**: listeners/intervalo del updater se registran una vez por proceso (`electron/update/updaterCore.ts`); sin bypass "continuar sin actualizar" (error → Reintentar + reintento cada 60 s; salida solo con contraseña maestra de Sistemas, ver README). Al descargar, el poller deja de iniciar jobs y se espera el job en curso (máx 3 min) antes de cerrar WhatsApp e instalar.
+
 ### Restore conversaciones
 - UI pide `GET /conversations` y `GET /conversations/{chatId}/messages` → DynamoDB es la fuente de verdad. Local es solo caché de sesión viva.
+- **Paginación** (`backend/src/lib/conversations.ts`): `GET /conversations?limit=&nextToken=` consulta el GSI `operator-recent-index` (`operatorId` + `lastMessageTime`, más reciente primero; `limit` default 100, máx. 200). `GET /conversations/{chatId}/messages?limit=&nextToken=` devuelve los `limit` más recientes (default 200, máx. 500) en orden ascendente; `nextToken` (base64url de `LastEvaluatedKey`) trae la página siguiente/anterior; un token inválido o de otra partición → 400 `{"error":"nextToken inválido"}`. El desktop muestra "Cargar más" y "Ver mensajes anteriores".
+- **Resumen**: `PUT /messages` solo actualiza la conversación si el mensaje es nuevo; `lastMessage`/`lastMessageTime` solo si es igual o más reciente; `unreadCount` +1 solo para entrantes. `POST /conversations/{chatId}/read` pone `unreadCount = 0` en la conversación propia (no la crea); el desktop la llama al abrir un chat propio.
+- **Mensajes propios de otros dispositivos**: el cliente escucha `message_create` con `fromMe` y los respalda igual que los entrantes. Los enviados por la app usan el `timestamp` de WhatsApp, así ambos caminos producen la misma `sk` y el mensaje queda una sola vez.
 
 ## Roles & permisos
 
@@ -84,6 +93,28 @@ rutas `GET /conversations` y `.../messages` aceptan `?operatorId=`:
 - Picker: `GET /agents/campaigns` (admin: todas; líder: las suyas) + `GET /agents?campaign=`.
 - La vista es **solo lectura** desde otra cuenta: responder requiere la sesión
   WhatsApp del agente dueño, que vive en la máquina de ese agente.
+
+## Seguridad del desktop
+
+- **Ventana**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`; el renderer solo ve `window.ana` (preload).
+- **Navegación**: `will-navigate`/`will-redirect` cancelan cualquier URL fuera de la app (`file://…/dist/index.html` empaquetado o el servidor de Vite en dev). `setWindowOpenHandler` siempre deniega; un enlace `https:` se abre en el navegador del sistema (`shell.openExternal`), otros esquemas se ignoran.
+- **Teclado (build instalado)**: F12 siempre bloqueado; Ctrl/Cmd+Shift+I/J/C y Ctrl/Cmd+U solo sin Alt, para que AltGr (Ctrl+Alt en Windows) escriba `@`, `\`, `|` (`shouldBlockKey` en `electron/ipc/guard.ts`).
+- **CSP** (meta inyectada por `vite.config.ts`, `src/lib/csp.ts`): `default-src 'self'`; `script-src 'self'`; `style-src 'self' 'unsafe-inline'`; `img-src`/`media-src 'self' data: blob: https://*.amazonaws.com`; `font-src 'self' data:`; `connect-src 'self' <VITE_API_BASE> https://cognito-idp.us-east-2.amazonaws.com https://*.amazonaws.com`; `object-src 'none'`; `base-uri 'none'`; `form-action 'none'`. En `vite` (dev) se agregan el servidor de Vite y `ws:`. Fuentes Inter/Jost empaquetadas con `@fontsource` (sin Google Fonts).
+- **Guard IPC** (`electron/ipc/guard.ts`): todo `ipcMain.handle` pasa por `handle(channel, validador, handler)` en `main.ts`. Rechaza con `{ok:false, error:"solicitud inválida"}` si el emisor no es el frame principal de la ventana con la URL de la app o si los argumentos no cumplen: JID `^\d{8,15}@c\.us$`, texto 1–4096, media ≤ 16 MB de tipo `image/*`, `audio/*`, `video/*` o `application/pdf` con nombre saneado, `jobIds` ≤ 5000 de ≤ 200, plantillas ≤ 4096, token JWT o `null`, campaña ≤ 100, contraseña de emergencia ≤ 256.
+
+  | Canal | Argumentos validados |
+  |---|---|
+  | `auth:set-token` | token JWT o `null`, `{reason:'expired'}` opcional |
+  | `auth:provide-token` | token JWT o `null` |
+  | `agent:register` | campaña ≤ 100 o `null` |
+  | `jobs:approve` | `jobIds`, plantillas por archivo |
+  | `jobs:get-assignment`, `update:check`, `update:retry`, `update:bypass-status`, `wa:start`, `wa:stop`, `wa:reset`, `wa:get-state` | sin argumentos |
+  | `update:bypass` | contraseña ≤ 256 |
+  | `wa:send-reply` | JID, texto |
+  | `wa:typing` | JID, booleano |
+  | `wa:send-media` | JID, media |
+
+- **WhatsApp (Chromium de whatsapp-web.js)**: se lanza con su sandbox activo (sin `--no-sandbox` ni `--disable-setuid-sandbox`); se conservan `--disable-dev-shm-usage` y `--disable-gpu`.
 
 ## Layout del repo
 

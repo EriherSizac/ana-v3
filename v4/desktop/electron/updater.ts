@@ -1,77 +1,48 @@
-// File: Auto-update obligatorio desde S3. Al arrancar, si hay versión nueva la UI se
+// File: Auto-update obligatorio desde S3 (adaptador Electron de update/updaterCore).
 // Created: 2026-06-10
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { app, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { UpdaterCore, type InstallHooks } from './update/updaterCore';
 
 /**
  * Auto-update obligatorio desde S3. Al arrancar, si hay versión nueva la UI se
- * bloquea (UpdateGate) mientras se descarga; luego reinstala y reinicia. No se
- * puede usar la app hasta estar al día.
+ * bloquea (UpdateGate) mientras se descarga; luego espera el job en curso,
+ * reinstala y reinicia. No se puede usar la app hasta estar al día, salvo el
+ * acceso de emergencia de Sistemas (update/bypass.ts) cuando el chequeo falla.
  *
- * Eventos enviados al renderer (`update:status`):
- *  { phase: 'checking' | 'downloading' (+percent) | 'installing' | 'none' | 'error' }
- *
- * En dev (no empaquetado) se omite (no hay feed) → la UI se desbloquea sola.
+ * Los listeners y el intervalo se registran UNA vez por proceso (UpdaterCore);
+ * si el renderer se recarga y vuelve a pedir el chequeo, solo se re-emite la
+ * última fase. En dev (no empaquetado) se emite `none` sin consultar el feed.
  */
-export function setupUpdater(win: BrowserWindow, beforeInstall?: () => Promise<void>): void {
-  const send = (s: Record<string, unknown>) => win.webContents.send('update:status', s);
+let core: UpdaterCore | null = null;
+let target: BrowserWindow | null = null;
 
-  if (!app.isPackaged) {
-    send({ phase: 'none' }); // dev: nada que actualizar
-    return;
-  }
+function getCore(): UpdaterCore {
+  if (!core) core = new UpdaterCore({ updater: autoUpdater, isPackaged: app.isPackaged });
+  return core;
+}
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+export function setupUpdater(win: BrowserWindow, hooks: InstallHooks = {}): void {
+  target = win;
+  getCore().setup((s) => {
+    if (target && !target.isDestroyed()) target.webContents.send('update:status', s);
+  }, hooks);
+}
 
-  autoUpdater.on('checking-for-update', () => send({ phase: 'checking' }));
-  autoUpdater.on('update-available', (i) =>
-    send({ phase: 'downloading', version: i.version, percent: 0 }),
-  );
-  autoUpdater.on('download-progress', (p) =>
-    send({ phase: 'downloading', percent: Math.round(p.percent) }),
-  );
-  autoUpdater.on('update-downloaded', async () => {
-    send({ phase: 'installing' });
-    // Cierra WhatsApp/Chromium ANTES de instalar: si sigue vivo, bloquea los
-    // archivos y el instalador NSIS se cuelga (la app queda en "Instalando…").
-    try {
-      await beforeInstall?.();
-    } catch {
-      /* aun así intentamos instalar */
-    }
-    // isSilent=false → el instalador NSIS es visible (no se queda invisible si
-    // el silent falla). isForceRunAfter=true → reabre la app al terminar.
-    setTimeout(() => autoUpdater.quitAndInstall(false, true), 500);
-  });
-  autoUpdater.on('update-not-available', () => send({ phase: 'none' }));
-  // Un 404 del feed (latest.yml ausente) NO es un fallo bloqueante: significa
-  // "no hay canal de updates publicado aún" → continuar como si estuviera al día.
-  autoUpdater.on('error', (e) => {
-    const msg = String(e);
-    if (/404|latest\.yml|Not Found|ERR_FILE_NOT_FOUND/i.test(msg)) {
-      send({ phase: 'none' });
-      return;
-    }
-    send({ phase: 'error', message: msg });
-  });
+/** Reintento del chequeo (botón "Reintentar" o reintento automático de 60 s). */
+export function retryUpdate(): void {
+  getCore().retry();
+}
 
-  const check = () =>
-    autoUpdater.checkForUpdates().catch((e) => {
-      const msg = String(e);
-      // 404 = sin feed → no es error bloqueante; en chequeos periódicos, ignora.
-      if (!/404|latest\.yml|Not Found|ERR_FILE_NOT_FOUND/i.test(msg)) {
-        send({ phase: 'error', message: msg });
-      }
-    });
+/** Desbloquea esta sesión del proceso (acceso de emergencia validado). */
+export function markUpdateBypassed(): void {
+  getCore().markBypassed();
+}
 
-  check();
-  // Chequeo periódico: si el equipo nunca cierra la app, igual se actualiza.
-  // Al encontrar versión nueva descarga y el handler de 'update-downloaded'
-  // fuerza la instalación (cierra WhatsApp + reinicia).
-  const CHECK_EVERY_MS = 30 * 60 * 1000; // cada 30 min
-  setInterval(check, CHECK_EVERY_MS);
+/** Última fase emitida (para decidir si el bypass aplica). */
+export function lastUpdateStatus() {
+  return getCore().lastStatus();
 }

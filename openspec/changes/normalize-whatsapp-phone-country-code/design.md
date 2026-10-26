@@ -65,3 +65,11 @@ El teléfono que Gestión envía al CRM (`/client-info` y la interacción) se ma
 ## Migration Plan
 
 Sin migración de datos. Release normal del CLI (build + upload). Rollback = publicar una versión mayor con el código anterior.
+
+## Decisiones de implementación
+
+- **Llave de respaldo con 12 dígitos que empiezan con `521`.** Con D1/D3 literal, `521234567890` (12 dígitos, `52` + un "nacional" que empieza con `1`) daría la llave `5211234567890`, mientras que la implementación anterior devolvía los dígitos tal cual. Para no crear una llave nueva en ese caso límite (requisito "Estabilidad de la llave de respaldo"), `toBackupKeyPhone` conserva esos 12 dígitos sin cambio. Las demás salidas no se ven afectadas (CRM y URL coinciden con las implementaciones previas); una prueba con oráculos lo fija.
+- **`phoneUtilsInitScript()`** se exporta desde `phone-utils.js` para construir el contenido de `addInitScript` (`window.__anaPhone = (createPhoneUtils.toString())();`) en un solo lugar; la ventana manual lo registra antes del script de protecciones. Se verificó que el código sigue siendo autocontenido también tras empaquetar `phone-utils.js` con `esbuild` (mismas opciones que `build:bundle`).
+- **Monitor:** `phoneDigits` (que se sigue pasando a `getGestionDataFromBackendForMonitor` y a los logs) se obtiene con `phone.parseMxPhone(phoneE164).digits` en lugar de un `replace(/\D/g, '')` ad hoc; el valor es el mismo.
+- **Gestión:** se eliminó la función Node `normalizePhoneForBackend` de `whatsapp-manual.js`; `getGestionDataFromBackend` llama directamente a `phone.toGestionCrmPhone`. Las funciones del navegador conservan su nombre local (`normalizePhoneForBackend`/`normalizePhone`) como envoltorio de una línea sobre `window.__anaPhone.toBackupKeyPhone` para minimizar el diff.
+- **`sendMessage`** registra en consola la URL del chat (`🔗 Abriendo chat: ...`) para la verificación manual de la tarea 2.1.

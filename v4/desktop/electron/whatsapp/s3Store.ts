@@ -1,10 +1,11 @@
 // File: Store de RemoteAuth (whatsapp-web.js) respaldado en S3 vía el backend.
 // Created: 2026-06-10
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import fs from 'node:fs';
 import path from 'node:path';
+import type { AuthFetch } from '../auth/tokenBroker';
 
 /**
  * Store que RemoteAuth usa para persistir la sesión de WhatsApp como un zip.
@@ -20,23 +21,20 @@ import path from 'node:path';
 export class S3SessionStore {
   constructor(
     private apiBase: string,
-    private getToken: () => string | null,
+    // fetch con token fresco y reintento ante 401 (auth/tokenBroker.ts).
+    private authFetch: AuthFetch,
     private dataPath: string,
     // Notifica etapas a la UI ("Obteniendo sesión remota…", etc.).
     private onStage: (msg: string) => void = () => {},
   ) {}
 
   private headers() {
-    const token = this.getToken();
-    return {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    };
+    return { 'content-type': 'application/json' };
   }
 
   private async presign(op: 'put' | 'get'): Promise<string | null> {
     try {
-      const res = await fetch(`${this.apiBase}/wa-session/presign`, {
+      const res = await this.authFetch(`${this.apiBase}/wa-session/presign`, {
         method: 'POST',
         headers: this.headers(),
         body: JSON.stringify({ op }),
@@ -50,7 +48,7 @@ export class S3SessionStore {
 
   async sessionExists(_opts: { session: string }): Promise<boolean> {
     try {
-      const res = await fetch(`${this.apiBase}/wa-session/exists`, {
+      const res = await this.authFetch(`${this.apiBase}/wa-session/exists`, {
         headers: this.headers(),
       });
       if (!res.ok) return false;
@@ -103,7 +101,7 @@ export class S3SessionStore {
 
   async delete(_opts: { session: string }): Promise<void> {
     try {
-      await fetch(`${this.apiBase}/wa-session/delete`, {
+      await this.authFetch(`${this.apiBase}/wa-session/delete`, {
         method: 'POST',
         headers: this.headers(),
       });

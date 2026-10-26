@@ -1,7 +1,9 @@
 // File: Worker de envío. Corre en el main process.
 // Created: 2026-06-10
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
+
+import type { AuthFetch } from '../auth/tokenBroker';
 
 /**
  * Worker de envío. Corre en el main process.
@@ -15,6 +17,10 @@
  * Al enviar: agrupa por archivo (srcKey), un archivo a la vez, rate limit
  * humano (máx 7 mensajes / 20 min, ≥2 min entre cada uno) y ack por job.
  * El CSV de S3 se borra solo cuando ya no quedan jobs de ese archivo.
+ *
+ * Todas las llamadas usan `authFetch` (token fresco + reintento ante 401). Un
+ * 401/no-2xx/red al consultar NO publica una asignación vacía: se conserva la
+ * última publicada hasta la siguiente consulta exitosa.
  */
 export interface SendJob {
   jobId: string;
@@ -45,7 +51,9 @@ export interface Progress {
 
 export interface PollerDeps {
   apiBase: string;
-  getToken: () => string | null;
+  /** ¿Hay sesión? (token presente, sin renovar). */
+  hasSession: () => boolean;
+  authFetch: AuthFetch;
   runJob: (job: SendJob) => Promise<{ success: boolean; error?: string; noWhatsapp?: boolean }>;
   onProgress: (p: Progress) => void;
   /** Jobs del operador (pendientes + historial). El renderer los separa. */
@@ -58,10 +66,14 @@ const WINDOW_MS = 20 * 60 * 1000; // ventana de 20 min
 const MAX_PER_WINDOW = 7; // máx 7 mensajes por ventana
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const isPending = (j: SendJob) => !j.status || j.status === 'pending' || j.status === 'leased';
 
 export class JobPoller {
   private running = false;
   private sending = false;
+  private paused = false; // actualización pendiente: no iniciar jobs nuevos
+  private current: Promise<unknown> | null = null; // job en curso (runJob + ack)
+  private batch: Promise<void> | null = null; // lote aprobado en curso
   private sentAt: number[] = []; // timestamps de envíos recientes (rate limit)
   private known = new Map<string, SendJob>(); // jobId → job (último poll)
   private lastAssignment: SendJob[] = []; // última asignación manual publicada
@@ -83,86 +95,136 @@ export class JobPoller {
     this.running = false;
   }
 
+  /** Deja de iniciar jobs (el que esté en curso termina con su ack). */
+  pauseNewJobs() {
+    this.paused = true;
+  }
+
+  /** ¿Hay un job enviándose ahora mismo? */
+  hasJobInFlight(): boolean {
+    return this.current !== null;
+  }
+
+  /** Resuelve cuando termina el job en curso (o de inmediato), máximo `timeoutMs`. */
+  async waitIdle(timeoutMs: number): Promise<void> {
+    const c = this.current;
+    if (!c) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      c.catch(() => undefined),
+      new Promise<void>((r) => (timer = setTimeout(r, timeoutMs))),
+    ]);
+    if (timer) clearTimeout(timer);
+  }
+
   /**
-   * Envía los jobs seleccionados (en orden de asignación), opcionalmente con
-   * una plantilla distinta a la del upload. Los no seleccionados no se tocan.
+   * Envía los jobs seleccionados (en orden de asignación). `templates` trae la
+   * plantilla aprobada POR ARCHIVO (clave = `fileKey(job)`: srcKey o
+   * campaignId); cada job se envía con la de su archivo y, si no viene, con la
+   * suya. Responde en cuanto el envío arranca (no espera el lote); el avance
+   * sigue por `onProgress`. Los no seleccionados no se tocan.
    */
   async approve(
     jobIds: string[],
-    templateOverride?: string,
+    templates: Record<string, string> = {},
   ): Promise<{ ok: boolean; error?: string }> {
+    if (this.paused) return { ok: false, error: 'Actualización pendiente: no se inician envíos' };
     if (this.sending) return { ok: false, error: 'Ya hay un envío en curso' };
-    const token = this.deps.getToken();
-    if (!token) return { ok: false, error: 'Sin sesión' };
+    if (!this.deps.hasSession()) return { ok: false, error: 'Sin sesión' };
 
     const wanted = new Set(jobIds);
     // Solo lo que sigue pendiente (nunca reenvía algo ya procesado).
-    const selected = [...this.known.values()].filter(
-      (j) => wanted.has(j.jobId) && (!j.status || j.status === 'pending' || j.status === 'leased'),
-    );
+    const selected = [...this.known.values()].filter((j) => wanted.has(j.jobId) && isPending(j));
     if (selected.length === 0) return { ok: false, error: 'Sin envíos seleccionados' };
+    // Ningún archivo puede quedar sin mensaje (el líder no fijó uno y el agente no escribió).
+    for (const j of selected) {
+      if (!(templates[fileKey(j)] ?? j.template ?? '').trim())
+        return { ok: false, error: 'Falta el mensaje de un archivo' };
+    }
 
     this.sending = true;
-    try {
-      for (const group of groupByFile(selected)) {
-        if (!this.running) break;
-        await this.processFile(group, token, templateOverride);
-      }
-      return { ok: true };
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? String(e) };
-    } finally {
-      this.sending = false;
-    }
+    // Arranca en el siguiente tick: la respuesta llega antes del primer envío.
+    this.batch = new Promise<void>((resolve) =>
+      setTimeout(() => {
+        void (async () => {
+          try {
+            for (const group of groupByFile(selected)) {
+              if (!this.running || this.paused) break;
+              await this.processFile(group, templates);
+            }
+          } catch (e) {
+            console.error('[poller] lote aprobado falló:', e);
+          } finally {
+            this.sending = false;
+            this.batch = null;
+            resolve();
+          }
+        })();
+      }, 0),
+    );
+    return { ok: true };
+  }
+
+  /** Lote aprobado en curso (para pruebas y diagnóstico); resuelve al terminar. */
+  currentBatch(): Promise<void> {
+    return this.batch ?? Promise.resolve();
   }
 
   private async loop() {
     while (this.running) {
-      const token = this.deps.getToken();
-      if (!token || this.sending) {
+      if (!this.deps.hasSession() || this.sending) {
         await sleep(2000);
         continue;
       }
-      try {
-        const jobs = await this.fetchJobs(token);
-        this.known = new Map(jobs.map((j) => [j.jobId, j]));
-
-        // Publica TODO (pendientes + historial): el renderer los separa en tabs.
-        this.lastAssignment = jobs;
-        this.deps.onAssignment(jobs);
-        if (jobs.length === 0) this.deps.onProgress({ phase: 'idle' });
-
-        // Directos (POST /send) AÚN pendientes: se envían solos, sin aprobación.
-        const isPending = (j: SendJob) => !j.status || j.status === 'pending' || j.status === 'leased';
-        const autos = jobs.filter((j) => j.auto && isPending(j));
-        if (autos.length > 0) {
-          this.sending = true;
-          try {
-            for (const group of groupByFile(autos)) {
-              if (!this.running) break;
-              await this.processFile(group, token);
-            }
-          } finally {
-            this.sending = false;
-          }
-        }
-      } catch {
-        /* red caída: reintenta en el próximo poll */
-      }
+      await this.pollOnce();
       await sleep(POLL_INTERVAL_MS);
     }
   }
 
-  private async fetchJobs(token: string): Promise<SendJob[]> {
-    const res = await fetch(`${this.deps.apiBase}/jobs/poll`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return [];
-    const { jobs } = (await res.json()) as { jobs: { id: string; job: SendJob }[] };
-    return jobs.map((j) => j.job);
+  /** Un ciclo: consulta, publica (solo si la consulta fue exitosa) y envía directos. */
+  async pollOnce(): Promise<void> {
+    try {
+      const jobs = await this.fetchJobs();
+      if (jobs === null) return; // 401/no-2xx/red: conserva la última asignación
+      this.known = new Map(jobs.map((j) => [j.jobId, j]));
+
+      // Publica TODO (pendientes + historial): el renderer los separa en tabs.
+      this.lastAssignment = jobs;
+      this.deps.onAssignment(jobs);
+      if (jobs.length === 0) this.deps.onProgress({ phase: 'idle' });
+
+      // Directos (POST /send) AÚN pendientes: se envían solos, sin aprobación.
+      const autos = jobs.filter((j) => j.auto && isPending(j));
+      if (autos.length > 0 && !this.paused) {
+        this.sending = true;
+        try {
+          for (const group of groupByFile(autos)) {
+            if (!this.running || this.paused) break;
+            await this.processFile(group);
+          }
+        } finally {
+          this.sending = false;
+        }
+      }
+    } catch {
+      /* red caída: reintenta en el próximo poll */
+    }
   }
 
-  private async processFile(group: SendJob[], token: string, templateOverride?: string) {
+  /** Jobs del operador o null si la consulta no fue exitosa (no publicar). */
+  private async fetchJobs(): Promise<SendJob[] | null> {
+    try {
+      // authFetch ya invalida el token y reintenta una vez ante 401.
+      const res = await this.deps.authFetch(`${this.deps.apiBase}/jobs/poll`);
+      if (!res.ok) return null;
+      const { jobs } = (await res.json()) as { jobs: { id: string; job: SendJob }[] };
+      return jobs.map((j) => j.job);
+    } catch {
+      return null;
+    }
+  }
+
+  private async processFile(group: SendJob[], templates: Record<string, string> = {}) {
     const total = group.length;
     let done = 0;
     let sent = 0;
@@ -172,21 +234,33 @@ export class JobPoller {
     this.deps.onProgress({ phase: 'sending', campaignId, total, done, sent, failed });
 
     for (const job of group) {
-      if (!this.running) return;
+      if (!this.running || this.paused) return;
       await this.rateLimitWait(campaignId, total, done, sent, failed);
-      if (!this.running) return;
+      if (!this.running || this.paused) return;
 
-      const effective = templateOverride ? { ...job, template: templateOverride } : job;
-      const r = await this.deps.runJob(effective);
-      this.sentAt.push(Date.now());
+      // Plantilla aprobada para el archivo de ESTE job (no la de otro archivo).
+      const tpl = templates[fileKey(job)];
+      const effective = tpl !== undefined ? { ...job, template: tpl } : job;
+      const work = (async () => {
+        const r = await this.deps.runJob(effective);
+        this.sentAt.push(Date.now());
+        // Marca el job (no lo borra): queda en el historial con su resultado.
+        const status = r.success ? 'sent' : r.noWhatsapp ? 'no_whatsapp' : 'error';
+        await this.ack([{ jobId: job.jobId, status }]);
+        return { r, status } as const;
+      })();
+      this.current = work;
+      let outcome: Awaited<typeof work>;
+      try {
+        outcome = await work;
+      } finally {
+        this.current = null;
+      }
       done += 1;
-      r.success ? (sent += 1) : (failed += 1);
-      // Marca el job (no lo borra): queda en el historial con su resultado.
-      const status = r.success ? 'sent' : r.noWhatsapp ? 'no_whatsapp' : 'error';
-      await this.ack(token, [{ jobId: job.jobId, status }]);
+      outcome.r.success ? (sent += 1) : (failed += 1);
       // Refleja el nuevo estado en memoria (para la próxima publicación).
       const k = this.known.get(job.jobId);
-      if (k) k.status = status;
+      if (k) k.status = outcome.status;
       this.deps.onProgress({
         phase: 'sending',
         campaignId,
@@ -199,10 +273,8 @@ export class JobPoller {
     }
 
     // Borra el CSV de S3 solo si ya no quedan jobs PENDIENTES de ese archivo.
-    const remaining = [...this.known.values()].some(
-      (j) => j.srcKey === srcKey && (!j.status || j.status === 'pending' || j.status === 'leased'),
-    );
-    if (srcKey && !remaining) await this.deleteFile(token, srcKey);
+    const remaining = [...this.known.values()].some((j) => j.srcKey === srcKey && isPending(j));
+    if (srcKey && !remaining) await this.deleteFile(srcKey);
     this.deps.onProgress({ phase: 'fileDone', campaignId, total, done, sent, failed });
   }
 
@@ -230,15 +302,15 @@ export class JobPoller {
 
       this.deps.onProgress({ phase: 'waiting', campaignId, total, done, sent, failed, waitMs });
       await sleep(Math.min(waitMs, 1000)); // tick de 1s para refrescar countdown
-      if (!this.running) return;
+      if (!this.running || this.paused) return;
     }
   }
 
-  private async ack(token: string, acks: { jobId: string; status: string }[]) {
+  private async ack(acks: { jobId: string; status: string }[]) {
     try {
-      await fetch(`${this.deps.apiBase}/jobs/ack`, {
+      await this.deps.authFetch(`${this.deps.apiBase}/jobs/ack`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ acks }),
       });
     } catch {
@@ -246,11 +318,11 @@ export class JobPoller {
     }
   }
 
-  private async deleteFile(token: string, key: string) {
+  private async deleteFile(key: string) {
     try {
-      await fetch(`${this.deps.apiBase}/uploads/delete`, {
+      await this.deps.authFetch(`${this.deps.apiBase}/uploads/delete`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ key }),
       });
     } catch {
@@ -259,11 +331,14 @@ export class JobPoller {
   }
 }
 
+/** Clave del archivo de un job (la misma que usa la UI para la plantilla por archivo). */
+export const fileKey = (j: Pick<SendJob, 'srcKey' | 'campaignId'>) => j.srcKey || j.campaignId;
+
 /** Agrupa jobs por archivo (srcKey), preservando orden de aparición. */
 function groupByFile(jobs: SendJob[]): SendJob[][] {
   const map = new Map<string, SendJob[]>();
   for (const j of jobs) {
-    const k = j.srcKey || j.campaignId;
+    const k = fileKey(j);
     if (!map.has(k)) map.set(k, []);
     map.get(k)!.push(j);
   }

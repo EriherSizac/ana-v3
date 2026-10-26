@@ -56,8 +56,13 @@ Descuento: {{discount}}
 - `{{last_name}}` - Apellido
 - `{{credit}}` - Crédito
 - `{{discount}}` - Descuento
-- `{{total_balanc}}` - Balance
+- `{{total_balance}}` - Balance (alias heredado: `{{total_balanc}}`)
 - `{{product}}` - Producto
+- `{{columna}}` - Cualquier otra columna del CSV, por nombre mapeado o por nombre original (p. ej. `{{contact_name}}`)
+- `{{total_balance * 0.5}}` - Expresiones matemáticas con columnas numéricas (2 decimales si no es entero)
+- `{columna}` - Llaves simples: campo mapeado, columna original o primera columna cuyo nombre contenga el texto
+
+La plantilla se interpreta en una sola pasada: `{{name}}` y `{name}` producen el mismo valor, y los valores insertados no se vuelven a interpretar. Un marcador sin coincidencia se envía literal.
 
 ## ▶️ Uso
 

@@ -1,6 +1,6 @@
 // File: App
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { useEffect, useState } from 'react';
@@ -11,7 +11,14 @@ import { Assignment } from './routes/Assignment';
 import { AdminRolePerms } from './routes/AdminRolePerms';
 import { UpdateGate } from './routes/UpdateGate';
 import { FloatingProgress } from './ui/FloatingProgress';
-import { hasSession, logout, pushTokenToMain } from './lib/auth';
+import {
+  hasSession,
+  logout,
+  pushTokenToMain,
+  installTokenBridge,
+  onSessionExpired,
+  SESSION_EXPIRED_MESSAGE,
+} from './lib/auth';
 import { getMe, type UserAccess } from './lib/api';
 import { can, ANA_PERMISSIONS } from './lib/permissions';
 import type { UpdateStatus } from './types/ana';
@@ -20,9 +27,13 @@ type Tab = 'chats' | 'assignment' | 'campaigns' | 'admin';
 export type WaStatus = 'idle' | 'qr' | 'authenticated' | 'connected' | 'disconnected';
 
 export function App() {
-  // Gate de auto-update: bloquea TODO hasta estar al día (o continuar offline).
-  // En dev (Vite) no hay feed → se salta.
+  // Gate de auto-update: bloquea TODO hasta estar al día (o acceso de
+  // emergencia de Sistemas). En dev (Vite) no hay feed → se salta.
   const [updated, setUpdated] = useState(import.meta.env.DEV);
+  // Acceso de emergencia usado en esta sesión → banner persistente.
+  const [bypassed, setBypassed] = useState(false);
+  // Aviso en el login cuando la sesión no se pudo renovar.
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [access, setAccess] = useState<UserAccess | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
@@ -62,6 +73,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    // Responde las solicitudes de token del main y vuelve al login si la
+    // sesión no se puede renovar (sin borrar WhatsApp local).
+    installTokenBridge();
+    return onSessionExpired(() => {
+      setAccess(null);
+      setLoginNotice(SESSION_EXPIRED_MESSAGE);
+      setAuthed(false);
+    });
+  }, []);
+
+  useEffect(() => {
     void hasSession().then(async (ok) => {
       if (ok) {
         await pushTokenToMain(); // re-hidratar token al main tras refresh
@@ -88,6 +110,7 @@ export function App() {
   }
 
   async function onLogin() {
+    setLoginNotice(null);
     await loadAccess();
     setAuthed(true);
   }
@@ -95,9 +118,24 @@ export function App() {
   // Update encontrado a media sesión → overlay bloqueante mientras instala.
   if (midUpdate) return <UpdatingOverlay st={midUpdate} />;
   // Antes que nada: forzar actualización.
-  if (!updated) return <UpdateGate onReady={() => setUpdated(true)} />;
-  if (authed === null) return <div className="min-h-screen bg-neutral-30" />;
-  if (!authed) return <Login onDone={onLogin} />;
+  if (!updated)
+    return (
+      <UpdateGate
+        onReady={(bypass) => {
+          setBypassed(bypass);
+          setUpdated(true);
+        }}
+      />
+    );
+  const banner = bypassed ? <BypassBanner /> : null;
+  if (authed === null) return <div className="min-h-screen bg-neutral-30">{banner}</div>;
+  if (!authed)
+    return (
+      <>
+        {banner}
+        <Login onDone={onLogin} notice={loginNotice} />
+      </>
+    );
 
   const isAdmin = !!access?.isAdmin;
   const isLeader = !!access?.isLeader;
@@ -106,6 +144,7 @@ export function App() {
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-neutral-30">
+      {banner}
       <header className="pernexium-gradient sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b border-white/10 px-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="font-heading text-lg font-bold tracking-wide text-white">
@@ -179,7 +218,9 @@ function UpdatingOverlay({ st }: { st: UpdateStatus }) {
       <span className="mt-1 rounded-full bg-white/15 px-3 py-0.5 text-sm text-white">ana</span>
       <div className="mt-10 w-full max-w-sm">
         <p className="text-sm font-semibold text-white">
-          {st.phase === 'installing'
+          {st.phase === 'installing' && st.waitingForJob
+            ? 'Terminando el envío en curso…'
+            : st.phase === 'installing'
             ? 'Instalando actualización y reiniciando…'
             : `Descargando actualización… ${st.percent ?? 0}%`}
         </p>
@@ -190,6 +231,18 @@ function UpdatingOverlay({ st }: { st: UpdateStatus }) {
         )}
         <p className="mt-3 text-xs text-white/70">La app se reiniciará sola al terminar.</p>
       </div>
+    </div>
+  );
+}
+
+/** Banner persistente: la app corre sin actualizar por acceso de emergencia. */
+function BypassBanner() {
+  return (
+    <div
+      role="alert"
+      className="sticky top-0 z-40 bg-error-60 px-3 py-1 text-center text-xs font-semibold text-white"
+    >
+      Sin actualizar — acceso de emergencia
     </div>
   );
 }

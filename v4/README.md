@@ -79,7 +79,8 @@ npm run publish   # build + electron-builder --win --publish always (sube .exe +
 
 ### Comportamiento en el cliente
 - **Instalación**: el `.exe` oneClick instala solo (sin "siguiente, siguiente"), crea accesos y abre la app.
-- **Update obligatorio**: al abrir, la app revisa S3. Si hay versión nueva → pantalla **bloqueante** mientras descarga; luego reinstala y reinicia. No se puede usar hasta estar al día. Sin red → permite continuar tras aviso (si no, quedaría inservible offline).
+- **Update obligatorio**: al abrir, la app revisa S3. Si hay versión nueva → pantalla **bloqueante** mientras descarga; si hay un envío en curso, espera a que termine (máx 3 min, overlay "Terminando el envío en curso…") y luego reinstala y reinicia. No se puede usar hasta estar al día. Si el chequeo falla (sin red o feed caído, salvo 404 = canal sin publicar) la pantalla muestra "No se pudo verificar la actualización", **Reintentar** y reintenta sola cada 60 s; **no** hay botón para continuar sin actualizar.
+- **Acceso de emergencia (Sistemas)**: solo si el build se compiló con `ANA_UPDATE_BYPASS_HASH`. Sistemas genera el hash con `npm run hash-bypass` (`scripts/hash-bypass-password.mjs`, imprime `scrypt$<sal>$<hash>`; la contraseña nunca se guarda) y compila con `$env:ANA_UPDATE_BYPASS_HASH="scrypt$..."; npm run dist`. En la pantalla de error aparece "Acceso de emergencia (Sistemas)": pide la contraseña maestra (máx 5 intentos, luego bloqueo de 15 min), desbloquea solo hasta cerrar la app, muestra el banner "Sin actualizar — acceso de emergencia" y registra el uso en `%APPDATA%/ana/update-bypass.log`.
 - Mass deploy: distribuye el primer `.exe` por GPO/Intune/script; las siguientes versiones llegan solas.
 
 > Para evitar SmartScreen en Windows conviene **firmar** el `.exe` (cert code-signing). Funciona sin firmar, con advertencia la primera vez.

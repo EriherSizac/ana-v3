@@ -59,3 +59,10 @@ Implementación con un único `Intl.DateTimeFormat('en-CA', { timeZone, year:'nu
 
 Sin migración de datos. Release normal (build + upload). Rollback = publicar una versión mayor con el código anterior.
 
+
+## Decisiones de implementación
+
+- **Fallback sin zona:** si `Intl.DateTimeFormat` rechaza la zona, `interactionDateTime` usa la fecha y hora local del equipo (ambas del mismo instante) y emite la advertencia en consola una sola vez por proceso, para no inundar el log del monitor, que lo llama en cada ciclo.
+- **Defensa `24` → `00`:** además de `hourCycle: 'h23'`, si algún ICU devolviera `24` a medianoche se normaliza a `00`.
+- **Prueba de independencia de zona:** los procesos hijos importan el módulo por URL `file://` con `--input-type=module -e`, de modo que la prueba funciona igual en Windows y POSIX. La suite completa también pasa con `TZ=UTC npm test`.
+- **Sitios reemplazados:** los cuatro bloques `now/contact_date/hh/mm/nextH` se sustituyeron por `const { contact_date, contact_time, range_time } = interactionDateTime();` y los campos se expanden por nombre; el `getHours` del log "Poll tick" del monitor se conserva (no es dato del CRM).

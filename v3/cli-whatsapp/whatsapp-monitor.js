@@ -11,6 +11,8 @@ import {
   searchClientInfoByPhone,
   INTERACTIONS_API_BASE_URL,
 } from './agent-config.js';
+import { phone } from './phone-utils.js';
+import { interactionDateTime } from './interaction-time.js';
 
 let cachedResultCodesByCampaign = new Map();
 
@@ -33,6 +35,8 @@ async function showMonitorLoginOverlay(requireAll = true) {
 
     await monitorPage.evaluate((args) => {
       const { requireAll, savedUser, savedCampaign } = args;
+      // Escape inline (este overlay no tiene el helper de dom-safety.js)
+      const escapeLocal = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
       const existing = document.getElementById('monitor-login-overlay');
       if (existing) existing.remove();
@@ -58,7 +62,7 @@ async function showMonitorLoginOverlay(requireAll = true) {
         ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-          <input type="text" id="monitor-login-user" value="${savedUser || ''}" placeholder="ej: erick" style="
+          <input type="text" id="monitor-login-user" value="${escapeLocal(savedUser || '')}" placeholder="ej: erick" style="
             width: 100%;
             padding: 12px 15px;
             border: 2px solid #333;
@@ -78,7 +82,7 @@ async function showMonitorLoginOverlay(requireAll = true) {
         ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-          <input type="text" id="monitor-login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" style="
+          <input type="text" id="monitor-login-campaign" value="${escapeLocal(savedCampaign || '')}" placeholder="ej: prueba" style="
             width: 100%;
             padding: 12px 15px;
             border: 2px solid #333;
@@ -94,8 +98,8 @@ async function showMonitorLoginOverlay(requireAll = true) {
       `
         : `
         <div style="margin-bottom: 20px; text-align: left;">
-          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
-          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${escapeLocal(savedUser)}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${escapeLocal(savedCampaign)}</strong></p>
         </div>
       `;
 
@@ -468,8 +472,8 @@ async function monitorUnreadLoop() {
     const phoneE164 = normalizePhoneForBackend(phoneRaw);
     console.log('📞 [Monitor] phoneE164 normalizado:', phoneE164);
     
-    const phoneDigits = String(phoneE164 || '').replace(/\D/g, '');
-    const phone10 = phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
+    const phoneDigits = phone.parseMxPhone(phoneE164).digits;
+    const phone10 = phone.toLast10(phoneE164);
     console.log('📞 [Monitor] phone10:', phone10);
     
     if (!phone10) {
@@ -530,11 +534,8 @@ async function monitorUnreadLoop() {
     console.log('✅ [Monitor] creditId válido, preparando interacción...');
 
     const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
-    const now = new Date();
-    const contact_date = now.toISOString().slice(0, 10);
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
+    // Fecha/hora en America/Mexico_City (interaction-time.js)
+    const { contact_date, contact_time, range_time } = interactionDateTime();
 
     const subdictamen = 'CLIENTE NO DEFINE';
 
@@ -552,8 +553,8 @@ async function monitorUnreadLoop() {
         user_id: INTERACTIONS_USER_ID,
         subdictamen,
         contact_date,
-        contact_time: `${hh}:${mm}`,
-        range_time: `${hh}:00 - ${nextH}:00`,
+        contact_time,
+        range_time,
         action_channel: 'whatsapp',
         action: 'whatsapp',
         contactable: true,

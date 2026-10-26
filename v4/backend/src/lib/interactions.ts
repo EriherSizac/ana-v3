@@ -1,11 +1,13 @@
 // File: Cliente del API de interactions del CRM (registro de envíos de campaña).
 // Created: 2026-06-10
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 // Mismo API que usaba v3-cli, pero la key vive aquí (env del Lambda, backend/.env)
 // y nunca en el desktop. Gotcha heredado de v3: el CRM a veces guarda teléfonos
 // sin el prefijo +52 → todo lookup/insert con 404 reintenta sin el prefijo.
+import { normalizeMx } from './phone';
+
 const BASE = process.env.INTERACTIONS_API_BASE!;
 const KEY = process.env.INTERACTIONS_API_KEY!;
 // user_id del CRM con el que se registran interacciones (mapa por operador: pendiente).
@@ -13,14 +15,13 @@ export const CRM_USER_ID = process.env.INTERACTIONS_USER_ID ?? '';
 
 const headers = { 'content-type': 'application/json', 'X-Api-Key': KEY };
 
-/** +52XXXXXXXXXX a partir de un crudo MX (10/12/13 dígitos). */
+/**
+ * `+` + teléfono normalizado con las reglas de México (lib/phone.ts, las mismas
+ * del desktop). '' si no se puede normalizar (no se busca en el CRM).
+ */
 export function toE164Mx(rawPhone: string): string {
-  const digits = String(rawPhone || '').replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.length === 10) return `+52${digits}`;
-  if (digits.startsWith('521') && digits.length === 13) return `+52${digits.slice(3)}`;
-  if (digits.startsWith('52') && digits.length === 12) return `+${digits}`;
-  return `+${digits}`;
+  const n = normalizeMx(rawPhone);
+  return n ? `+${n}` : '';
 }
 
 /** Últimos 10 dígitos (formato que el CRM usa en phone_number). */
@@ -45,6 +46,7 @@ export async function searchCreditIdByPhone(
       }),
     });
 
+  if (!phoneE164) return ''; // teléfono inválido: no se busca
   try {
     let res = await post(phoneE164);
     if (res.status === 404 && phoneE164.startsWith('+52')) res = await post(phoneE164.slice(3));
@@ -56,6 +58,33 @@ export async function searchCreditIdByPhone(
     console.error('[interactions] client-info falló', e);
     return '';
   }
+}
+
+// Zona de Ciudad de México (sin horario de verano desde 2022; se usa la base
+// de zonas de Intl, no un offset fijo). Independiente de TZ de la Lambda (UTC).
+const MX_TZ = 'America/Mexico_City';
+const mxFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: MX_TZ,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** Fecha/hora de un instante en Ciudad de México: YYYY-MM-DD, HH:MM y franja HH:00 - HH+1:00. */
+export function mxDateParts(at: Date): { date: string; time: string; range: string } {
+  const parts: Record<string, string> = {};
+  for (const p of mxFormatter.formatToParts(at)) parts[p.type] = p.value;
+  const hour = Number(parts.hour) % 24; // algunos runtimes devuelven "24" a medianoche
+  const hh = String(hour).padStart(2, '0');
+  const next = String((hour + 1) % 24).padStart(2, '0');
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${hh}:${parts.minute}`,
+    range: `${hh}:00 - ${next}:00`,
+  };
 }
 
 export interface InteractionInput {
@@ -73,17 +102,16 @@ export interface InteractionInput {
 
 /** Inserta la interacción outbound en el CRM (shape idéntico al de v3-cli). */
 export async function insertInteraction(i: InteractionInput): Promise<boolean> {
-  const hh = String(i.at.getHours()).padStart(2, '0');
-  const mm = String(i.at.getMinutes()).padStart(2, '0');
-  const nextH = String((i.at.getHours() + 1) % 24).padStart(2, '0');
+  // Fecha y hora de México (no de la Lambda, que corre en UTC).
+  const mx = mxDateParts(i.at);
   const interaction = {
     credit_id: i.creditId,
     campaign_name: i.campaign,
     user_id: CRM_USER_ID,
     subdictamen: i.subdictamen,
-    contact_date: i.at.toISOString().slice(0, 10),
-    contact_time: `${hh}:${mm}`,
-    range_time: `${hh}:00 - ${nextH}:00`,
+    contact_date: mx.date,
+    contact_time: mx.time,
+    range_time: mx.range,
     action_channel: 'whatsapp',
     action: 'whatsapp',
     contactable: i.contactable,

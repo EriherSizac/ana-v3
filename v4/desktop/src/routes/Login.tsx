@@ -1,6 +1,6 @@
 // File: Login
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import { useState } from 'react';
@@ -10,7 +10,7 @@ import { login, confirmLogin, type LoginStep } from '../lib/auth';
 
 // Regla design-system: login SIEMPRE fondo azul, identificador = username
 // (no email, sin type="email" ni regex de correo).
-export function Login({ onDone }: { onDone: () => void }) {
+export function Login({ onDone, notice }: { onDone: () => void; notice?: string | null }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -76,6 +76,11 @@ export function Login({ onDone }: { onDone: () => void }) {
       <div className="pernexium-card w-full max-w-sm p-8">
         <h1 className="text-2xl font-bold text-primary">ana</h1>
         <p className="mt-1 text-sm text-text-light">Acceso de operador</p>
+        {notice && (
+          <div role="status" className="mt-4 rounded-xl bg-error-10 px-4 py-2 text-sm text-error-70">
+            {notice}
+          </div>
+        )}
 
         {phase === 'creds' ? (
           <form onSubmit={submitCreds} aria-label="Inicio de sesión">

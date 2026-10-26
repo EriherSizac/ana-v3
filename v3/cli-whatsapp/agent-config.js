@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import { parseAssignmentCsv } from './assignment-csv.js';
+import { phone } from './phone-utils.js';
 
 const resolveBaseDir = () => {
   if (process.env.ANA_DATA_DIR) return process.env.ANA_DATA_DIR;
@@ -20,21 +22,12 @@ try {
   // ignore
 }
 
+/**
+ * Teléfono para búsqueda en el CRM (/client-info): +52 + 10 dígitos; no MX: + dígitos.
+ * Alias de phone.toCrmSearchPhone (phone-utils.js).
+ */
 export function normalizePhoneForBackend(rawPhone) {
-  const digits = String(rawPhone || '').replace(/\D/g, '');
-  if (!digits) return '';
-
-  // Teléfono de 10 dígitos (México sin código de país): +52 + 10 dígitos
-  if (digits.length === 10) return `+52${digits}`;
-  
-  // Si empieza con 521 y tiene 13 dígitos, remover el 1: +52 + 10 dígitos
-  if (digits.startsWith('521') && digits.length === 13) return `+52${digits.slice(3)}`;
-  
-  // Si empieza con 52 y tiene 12 dígitos, ya está correcto
-  if (digits.startsWith('52') && digits.length === 12) return `+${digits}`;
-  
-  // Otros casos: agregar + si no lo tiene
-  return digits.startsWith('+') ? digits : `+${digits}`;
+  return phone.toCrmSearchPhone(rawPhone);
 }
 
 export async function searchClientInfoByPhone(campaignName, phoneE164) {
@@ -291,135 +284,9 @@ export async function sendBackup(data) {
 }
 
 /**
- * Parsea CSV a array de objetos (maneja campos con comillas dobles y comas)
- * @param {string} csvText - Texto CSV
- * @returns {Array} Array de objetos con los datos del CSV
- */
-function parseCSV(csvText) {
-  // Separar el CSV en filas lógicas respetando campos con comillas que contienen saltos de línea
-  const splitCSVRows = (text) => {
-    const rows = [];
-    let current = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-
-      if (char === '"') {
-        inQuotes = !inQuotes;
-        current += char;
-      } else if ((char === '\n' || char === '\r') && !inQuotes) {
-        // Fin de fila lógica (fuera de comillas)
-        if (char === '\r' && text[i + 1] === '\n') i++; // Saltar \r\n
-        if (current.trim()) rows.push(current);
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    if (current.trim()) rows.push(current);
-    return rows;
-  };
-
-  const lines = splitCSVRows(csvText.trim());
-  if (lines.length < 2) return [];
-  
-  // Función para parsear una línea CSV respetando comillas dobles
-  const parseCSVLine = (line) => {
-    const values = [];
-    let current = '';
-    let inQuotes = false;
-    
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      const nextChar = line[i + 1];
-      
-      if (char === '"') {
-        if (inQuotes && nextChar === '"') {
-          // Comilla doble escapada ""
-          current += '"';
-          i++; // Saltar la siguiente comilla
-        } else {
-          // Toggle estado de comillas
-          inQuotes = !inQuotes;
-        }
-      } else if (char === ',' && !inQuotes) {
-        // Coma fuera de comillas = separador de campo
-        values.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    
-    // Agregar el último campo
-    values.push(current.trim());
-    
-    return values;
-  };
-  
-  const headers = parseCSVLine(lines[0]);
-  const contacts = [];
-  
-  // Mapeo de nombres de columnas del servidor a nombres esperados por el cliente
-  const fieldMapping = {
-    'phone_number': 'phone',
-    'contact_phone': 'phone',
-    'contact_pho': 'phone',
-    'phone': 'phone',
-    'contact_name': 'name',
-    'first_name': 'first_name',
-    'last_name': 'last_name',
-    'name': 'name',
-    'message': 'message',
-    'credit': 'credit',
-    'credito': 'credit',
-    'credit_id': 'credit',
-    'id_credito': 'credit',
-    'discount': 'discount',
-    'total_balance': 'total_balance',
-    'product': 'product',
-  };
-  
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseCSVLine(lines[i]);
-    if (values.length >= headers.length) {
-      const contact = {};
-      // Guardar todos los valores por nombre original de columna CSV
-      const rawValues = {};
-      headers.forEach((header, idx) => {
-        const value = values[idx] || '';
-        rawValues[header] = value;
-        // Usar el nombre mapeado si existe, sino usar el original
-        const fieldName = fieldMapping[header] || header;
-        contact[fieldName] = value;
-      });
-
-      // Interpolar variables {variable} en el mensaje con los valores del CSV
-      if (contact.message) {
-        contact.message = contact.message.replace(/\{(\w+)\}/g, (match, varName) => {
-          // Buscar por nombre mapeado (contact fields)
-          if (contact[varName] !== undefined && varName !== 'message') return contact[varName];
-          // Buscar por nombre original de columna CSV
-          if (rawValues[varName] !== undefined) return rawValues[varName];
-          // Buscar por nombre parcial (ej: {credit} -> id_credito, {name} -> nombre_cliente)
-          const partialKey = Object.keys(rawValues).find(k => k.includes(varName));
-          if (partialKey) return rawValues[partialKey];
-          // No encontrado, dejar el placeholder original
-          return match;
-        });
-      }
-
-      contacts.push(contact);
-    }
-  }
-  
-  return contacts;
-}
-
-/**
  * Obtiene chats asignados desde el servidor
- * @returns {Promise<Array|null>} Array de contactos o null si falla
+ * @returns {Promise<{ csvText: string, contacts: Array }|null>} CSV crudo recibido y
+ *   contactos parseados, o null si no hay asignación o falla
  */
 export async function fetchAssignedChats() {
   const config = loadAgentConfig();
@@ -440,9 +307,9 @@ export async function fetchAssignedChats() {
       const csvText = await response.text();
       console.log(`📥 CSV recibido (${csvText.length} caracteres)`);
       console.log(csvText);
-      const contacts = parseCSV(csvText);
+      const contacts = parseAssignmentCsv(csvText);
       console.log(`✅ ${contacts.length} contactos parseados del servidor`);
-      return contacts;
+      return { csvText, contacts };
     } else if (response.status === 404) {
       console.log('ℹ️  No hay contactos asignados aún para este agente/campaña');
       return null;
@@ -461,10 +328,12 @@ export async function fetchAssignedChats() {
 
 /**
  * Actualiza los contactos pendientes en el servidor
- * @param {Array} contacts - Array de contactos restantes
+ * @param {Array} contacts - Filas originales de los contactos restantes
+ * @param {{ assignment_id: string, contacts: Array }} [review] - Contactos por revisar
+ *   de la asignación (solo se envía si viene)
  * @returns {Promise<boolean>} true si la actualización fue exitosa
  */
-export async function updatePendingContacts(contacts) {
+export async function updatePendingContacts(contacts, review) {
   const config = loadAgentConfig();
   if (!config) {
     console.error('❌ No hay configuración de agente para actualizar contactos');
@@ -484,6 +353,7 @@ export async function updatePendingContacts(contacts) {
         campaign: config.campaign,
         agent_id: config.agent_id,
         contacts: contacts,
+        ...(review ? { review } : {}),
       }),
     });
 

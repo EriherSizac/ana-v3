@@ -1156,3 +1156,76 @@ export const getAgentContacts = async (
     };
   }
 };
+
+/**
+ * Contactos por revisar (envío interrumpido por cierre del CLI) de una campaña.
+ * Lista review/{campaign}/{agent}/{assignment_id}.csv, del más reciente al más antiguo.
+ */
+export const listReviewContacts = async (
+  event: APIGatewayProxyEvent
+): Promise<APIGatewayProxyResult> => {
+  const denied = requireAdmin(event);
+  if (denied) return denied;
+  try {
+    const campaign = normalizePathSegment(event.pathParameters?.campaign);
+    if (!campaign) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ success: false, message: 'Campaña requerida' }),
+      };
+    }
+
+    const prefix = `review/${campaign}/`;
+    const objects: { key: string; lastModified: Date | undefined }[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const listRes = await s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: BUCKET_NAME,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        })
+      );
+      for (const o of listRes.Contents || []) {
+        if (o.Key) objects.push({ key: String(o.Key), lastModified: o.LastModified });
+      }
+      continuationToken = listRes.IsTruncated ? listRes.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    const items = [];
+    for (const o of objects) {
+      const rest = o.key.slice(prefix.length).split('/');
+      if (rest.length !== 2 || !rest[0] || !rest[1].endsWith('.csv')) continue;
+      const response = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: o.key }));
+      const csv = (await response.Body?.transformToString()) || '';
+      const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      items.push({
+        agent: rest[0],
+        assignmentId: rest[1].slice(0, -'.csv'.length),
+        updatedAt: o.lastModified ? new Date(o.lastModified).toISOString() : null,
+        count: Math.max(lines.length - 1, 0),
+        csv,
+      });
+    }
+
+    items.sort((a, b) => {
+      const ta = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+      const tb = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+      return tb - ta;
+    });
+
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: true, items }),
+    };
+  } catch (error) {
+    console.error('Error listando contactos por revisar:', error);
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, message: 'Error interno del servidor' }),
+    };
+  }
+};

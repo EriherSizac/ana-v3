@@ -1,6 +1,6 @@
 # File: serverless
 # Created: 2026-06-09
-# Updated: 2026-06-10
+# Updated: 2026-10-26
 # Author: Erick Hernández Silva
 
 service: ana-backend
@@ -66,8 +66,11 @@ provider:
     INTERACTIONS_API_KEY: ${env:INTERACTIONS_API_KEY, ''}
     # user_id del CRM con el que se registran las interacciones.
     INTERACTIONS_USER_ID: ${env:INTERACTIONS_USER_ID, ''}
-    # Key del endpoint sistema-a-sistema POST /send (backend/.env).
-    SEND_API_KEY: ${env:SEND_API_KEY, ''}
+    # Keys del endpoint sistema-a-sistema POST /send: SecureString en SSM
+    # (us-east-2), resueltas al desplegar. NUNCA en el repo ni en .env.
+    # send-api-key es obligatoria; send-api-key-next solo durante una rotación.
+    SEND_API_KEY: ${ssm:/ana/v4/${sls:stage}/send-api-key}
+    SEND_API_KEY_NEXT: ${ssm:/ana/v4/${sls:stage}/send-api-key-next, ''}
     # Lista derivada de agentes (add-agent-roster-management): bucket de v3.
     V3_BUCKET: ${self:custom.v3Bucket}
     V3_BUCKET_REGION: ${param:v3BucketRegion, 'us-east-1'}
@@ -99,6 +102,7 @@ provider:
             - dynamodb:BatchWriteItem
           Resource:
             - !GetAtt ConversationsTable.Arn
+            - !Sub '${ConversationsTable.Arn}/index/*'
             - !GetAtt MessagesTable.Arn
             - !GetAtt JobsTable.Arn
             - !Sub '${JobsTable.Arn}/index/*'
@@ -153,6 +157,10 @@ functions:
       - httpApi:
           path: /conversations/meta
           method: put
+          authorizer: { name: cognitoJwt }
+      - httpApi:
+          path: /conversations/{chatId}/read
+          method: post
           authorizer: { name: cognitoJwt }
       - httpApi:
           path: /uploads/presign
@@ -304,6 +312,18 @@ functions:
             - suffix: .csv
 
 resources:
+  # Límite de tasa de POST /send en API Gateway (429 sin invocar la Lambda).
+  # HttpApiStage es el stage que genera Serverless para httpApi.
+  extensions:
+    HttpApiStage:
+      DependsOn:
+        - HttpApiRoutePostSend
+      Properties:
+        RouteSettings:
+          'POST /send':
+            ThrottlingRateLimit: 5
+            ThrottlingBurstLimit: 10
+
   Resources:
     # Rol exclusivo de syncCampaignAgents (design D12): ListUsers del pool,
     # lectura del almacén rol→permisos y escritura SOLO en campaign-agents/*.
@@ -369,9 +389,19 @@ resources:
         AttributeDefinitions:
           - { AttributeName: operatorId, AttributeType: S }
           - { AttributeName: chatId, AttributeType: S }
+          - { AttributeName: lastMessageTime, AttributeType: N }
         KeySchema:
           - { AttributeName: operatorId, KeyType: HASH }
           - { AttributeName: chatId, KeyType: RANGE }
+        # Listado paginado por recientes (GET /conversations). Sparse: solo
+        # conversaciones con lastMessageTime (putConversationMeta fija 0).
+        GlobalSecondaryIndexes:
+          - IndexName: operator-recent-index
+            KeySchema:
+              - { AttributeName: operatorId, KeyType: HASH }
+              - { AttributeName: lastMessageTime, KeyType: RANGE }
+            Projection:
+              ProjectionType: ALL
 
     MessagesTable:
       Type: AWS::DynamoDB::Table

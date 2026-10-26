@@ -8,6 +8,22 @@ import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
 import { loadAgentConfig, saveAgentConfig, API_BASE_URL, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
+import { phone, phoneUtilsInitScript } from './phone-utils.js';
+import { domSafetyInitScript } from './dom-safety.js';
+import { manualKeyPolicyInitScript } from './manual-key-policy.js';
+import {
+  parseNoWhatsappPhones,
+  registryKey,
+  loadRegistry,
+  saveRegistry,
+  pendingPhones,
+  markRegistered,
+  readRegistrationSetting,
+  buildConsultaInteractions,
+  MAX_INTERACTIONS_PER_BATCH,
+  REGISTRY_FILE_NAME,
+} from './no-whatsapp-registry.js';
+import { interactionDateTime } from './interaction-time.js';
 
 let manualBrowser = null;
 let manualPage = null;
@@ -26,6 +42,8 @@ async function showManualLoginOverlay(requireAll = true) {
     
     await manualPage.evaluate((args) => {
       const { requireAll, savedUser, savedCampaign } = args;
+      // Escape inline (este overlay no tiene el helper de dom-safety.js)
+      const escapeLocal = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       
       const existing = document.getElementById('manual-login-overlay');
       if (existing) existing.remove();
@@ -50,7 +68,7 @@ async function showManualLoginOverlay(requireAll = true) {
       const userField = requireAll ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-          <input type="text" id="manual-login-user" value="${savedUser || ''}" placeholder="ej: erick" style="
+          <input type="text" id="manual-login-user" value="${escapeLocal(savedUser || '')}" placeholder="ej: erick" style="
             width: 100%;
             padding: 12px 15px;
             border: 2px solid #333;
@@ -68,7 +86,7 @@ async function showManualLoginOverlay(requireAll = true) {
       const campaignField = requireAll ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-          <input type="text" id="manual-login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" style="
+          <input type="text" id="manual-login-campaign" value="${escapeLocal(savedCampaign || '')}" placeholder="ej: prueba" style="
             width: 100%;
             padding: 12px 15px;
             border: 2px solid #333;
@@ -83,8 +101,8 @@ async function showManualLoginOverlay(requireAll = true) {
         </div>
       ` : `
         <div style="margin-bottom: 20px; text-align: left;">
-          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
-          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${escapeLocal(savedUser)}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${escapeLocal(savedCampaign)}</strong></p>
         </div>
       `;
       
@@ -266,6 +284,17 @@ async function showManualLoginOverlay(requireAll = true) {
   });
 }
 
+/**
+ * Ajuste remoto `noWhatsappConsultRegistration` (capacidad v3/cli-remote-settings).
+ * Solo `true` estricto habilita el registro; ausencia, error o cualquier otro valor ⇒ false.
+ */
+function isNoWhatsappConsultRegistrationEnabled() {
+  // TODO(add-cli-remote-settings): leer el valor vigente de `noWhatsappConsultRegistration`
+  // que exponga la implementación de v3/cli-remote-settings. Hasta que ese cambio exista,
+  // el ajuste no está disponible y el registro queda desactivado (false fijo).
+  return readRegistrationSetting(() => undefined);
+}
+
 async function injectNoWhatsappInfoButton(page) {
   const config = loadAgentConfig();
   if (!config) {
@@ -277,86 +306,83 @@ async function injectNoWhatsappInfoButton(page) {
   const campaignName = rawCampaign.includes('-') ? rawCampaign.split('-').slice(1).join('-') : rawCampaign;
   const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
 
-  const readNoWhatsappPhonesFromResultsCsv = () => {
+  const registryPath = path.join(path.dirname(CONFIG.outputCsv), REGISTRY_FILE_NAME);
+
+  // resultados.csv leído como CSV estándar (no-whatsapp-registry.js / csv-parser)
+  const readNoWhatsappPhones = async () => {
     try {
       const filePath = CONFIG.outputCsv;
       if (!filePath || !fs.existsSync(filePath)) return [];
-
-      const text = fs.readFileSync(filePath, 'utf-8');
-      const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim().length > 0);
-      if (lines.length < 2) return [];
-
-      const headers = lines[0].split(',').map((h) => String(h || '').trim().toLowerCase());
-      const idxPhone = headers.indexOf('phone');
-      const idxStatus = headers.indexOf('status');
-      if (idxPhone === -1 || idxStatus === -1) return [];
-
-      const phones = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',');
-        const status = String(cols[idxStatus] || '').trim();
-        if (status !== 'no_whatsapp') continue;
-        const phoneRaw = String(cols[idxPhone] || '').trim();
-        const digits = phoneRaw.replace(/\D/g, '');
-        if (!digits) continue;
-        const last10 = digits.length > 10 ? digits.slice(-10) : digits;
-        phones.push(last10);
-      }
-
-      return Array.from(new Set(phones));
+      return await parseNoWhatsappPhones(fs.readFileSync(filePath, 'utf-8'));
     } catch (e) {
       console.error('⚠️  Error leyendo resultados.csv para no_whatsapp:', e?.message || e);
       return [];
     }
   };
 
+  // Solo lectura: abrir el modal no envía interacciones
   await page.exposeFunction('getNoWhatsappPhonesFromNode', async () => {
-    const phones10 = readNoWhatsappPhonesFromResultsCsv();
+    const phones10 = await readNoWhatsappPhones();
     const masked = phones10.map((p) => String(p).slice(-4)).filter(Boolean);
-    return {
-      count: masked.length,
-      phones10,
-      masked,
-    };
+    const registrationEnabled = isNoWhatsappConsultRegistrationEnabled();
+    let pending = 0;
+    if (registrationEnabled && phones10.length > 0) {
+      const key = registryKey(config.agent_id, campaignName, new Date());
+      pending = pendingPhones(loadRegistry(registryPath), key, phones10).length;
+    }
+    return { count: masked.length, masked, registrationEnabled, pending };
   });
 
-  await page.exposeFunction('submitNoWhatsappInfoInteraction', async (phones10) => {
-    try {
-      const list = Array.isArray(phones10) ? phones10 : [];
-      const now = new Date();
-      const contact_date = now.toISOString().slice(0, 10);
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
-      const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
-
-      const interactions = list.slice(0, 200).map((phone10) => ({
-        credit_id: '',
-        campaign_name: String(campaignName || ''),
-        user_id: INTERACTIONS_USER_ID,
-        subdictamen: 'Consulta No Whatsapp',
-        contact_date,
-        contact_time: `${hh}:${mm}`,
-        range_time: `${hh}:00 - ${nextH}:00`,
-        action_channel: 'whatsapp',
-        action: 'whatsapp',
-        contactable: false,
-        phone_number: String(phone10 || ''),
-        email_address: null,
-        template_used: null,
-        comments: 'opened_no_whatsapp_info_modal',
-        promise_date: null,
-        promise_amount: null,
-        promise_payment_plan: null,
-        inoutbound: 'inbound',
-        payment_made_date: null,
-      }));
-
-      if (interactions.length === 0) return { ok: true, status: 204, body: { message: 'no phones' } };
-      return await insertInteractions(interactions);
-    } catch (e) {
-      console.error('❌ Error al insertar interacción (no_whatsapp info):', e?.message || e);
-      return { ok: false, status: 0, body: null, error: e?.message || String(e) };
+  const registerConsulta = async () => {
+    // Se vuelve a comprobar el ajuste: un cambio a false con el modal abierto no permite registrar
+    if (!isNoWhatsappConsultRegistrationEnabled()) {
+      return { ok: false, status: 0, registered: 0, pending: 0, error: 'disabled' };
     }
+    const now = new Date();
+    const phones10 = await readNoWhatsappPhones();
+    const key = registryKey(config.agent_id, campaignName, now);
+    const registry = loadRegistry(registryPath);
+    const pendingList = pendingPhones(registry, key, phones10);
+    if (pendingList.length === 0) return { ok: true, status: 204, registered: 0, pending: 0 };
+
+    const batch = pendingList.slice(0, MAX_INTERACTIONS_PER_BATCH);
+    const interactions = buildConsultaInteractions({
+      phones10: batch,
+      campaignName,
+      userId: INTERACTIONS_USER_ID,
+      now,
+    });
+    const res = await insertInteractions(interactions);
+    if (!res || !res.ok) {
+      return {
+        ok: false,
+        status: res?.status || 0,
+        registered: 0,
+        pending: pendingList.length,
+        error: res?.error || 'request_failed',
+      };
+    }
+    try {
+      saveRegistry(registryPath, markRegistered(registry, key, batch), now);
+    } catch (e) {
+      console.error('⚠️  No se pudo guardar el registro de consultas no_whatsapp:', e?.message || e);
+    }
+    return { ok: true, status: res.status, registered: batch.length, pending: pendingList.length - batch.length };
+  };
+
+  // Registro explícito (solo con el ajuste activo); un lote a la vez
+  let registerInFlight = null;
+  await page.exposeFunction('registerNoWhatsappConsulta', async () => {
+    if (registerInFlight) return registerInFlight;
+    registerInFlight = registerConsulta()
+      .catch((e) => {
+        console.error('❌ Error al registrar consulta no_whatsapp:', e?.message || e);
+        return { ok: false, status: 0, registered: 0, pending: 0, error: e?.message || String(e) };
+      })
+      .finally(() => {
+        registerInFlight = null;
+      });
+    return registerInFlight;
   });
 
   await page.addInitScript(() => {
@@ -373,6 +399,8 @@ async function injectNoWhatsappInfoButton(page) {
         #no-whatsapp-info-body { padding: 12px 14px; overflow:auto; max-height: calc(75vh - 52px); }
         .no-wa-pill { display:inline-block; padding: 6px 10px; background:#f3f4f6; border: 1px solid #e5e7eb; border-radius: 999px; margin: 6px 6px 0 0; font-size: 12px; color: #111827; }
         .no-wa-muted { font-size: 12px; color: #6b7280; }
+        .no-wa-register-btn { background: #25D366; color: #fff; border: none; border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: bold; cursor: pointer; }
+        .no-wa-register-btn[disabled] { opacity: .6; cursor: default; }
       `;
       document.head.appendChild(style);
     };
@@ -382,6 +410,81 @@ async function injectNoWhatsappInfoButton(page) {
       const modal = document.getElementById('no-whatsapp-info-modal');
       if (overlay) overlay.remove();
       if (modal) modal.remove();
+    };
+
+    const el = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+
+    const renderRegisterControl = (actions, status, pending) => {
+      actions.textContent = '';
+      if (pending <= 0) {
+        actions.appendChild(el('div', 'no-wa-muted', 'Consulta ya registrada hoy'));
+        return;
+      }
+      const btn = el('button', 'no-wa-register-btn', `Registrar consulta (${pending})`);
+      btn.onclick = async () => {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        btn.textContent = '⏳ Registrando...';
+        status.textContent = '';
+        let res = null;
+        try {
+          res = await window.registerNoWhatsappConsulta();
+        } catch (e) {
+          res = { ok: false, status: 0, error: String(e?.message || e) };
+        }
+        if (res && res.ok) {
+          status.textContent = `✅ Registrada (${Number(res.registered || 0)})`;
+          renderRegisterControl(actions, status, Number(res.pending || 0));
+        } else if (res && res.error === 'disabled') {
+          actions.textContent = '';
+          status.textContent = '';
+        } else {
+          status.textContent = `❌ No se pudo registrar (${Number(res?.status || 0)})`;
+          btn.disabled = false;
+          btn.textContent = `Registrar consulta (${pending})`;
+        }
+      };
+      actions.appendChild(btn);
+    };
+
+    const renderBody = (body, data) => {
+      body.textContent = '';
+      const count = Number(data?.count || 0);
+      const masked = Array.isArray(data?.masked) ? data.masked : [];
+
+      if (count === 0) {
+        const msg = el('div', 'no-wa-muted');
+        msg.appendChild(document.createTextNode('No hay números marcados como '));
+        msg.appendChild(el('strong', '', 'no_whatsapp'));
+        msg.appendChild(document.createTextNode(' en resultados.csv.'));
+        body.appendChild(msg);
+        return;
+      }
+
+      const total = el('div', 'no-wa-muted');
+      total.appendChild(document.createTextNode('Total: '));
+      total.appendChild(el('strong', '', String(count)));
+      body.appendChild(total);
+
+      const pills = el('div');
+      pills.style.marginTop = '8px';
+      masked.forEach((d) => pills.appendChild(el('span', 'no-wa-pill', '**** ' + String(d))));
+      body.appendChild(pills);
+
+      // Botón de registro solo con el ajuste remoto activo
+      if (data?.registrationEnabled !== true) return;
+      const actions = el('div');
+      actions.style.marginTop = '12px';
+      const status = el('div', 'no-wa-muted');
+      status.style.marginTop = '6px';
+      body.appendChild(actions);
+      body.appendChild(status);
+      renderRegisterControl(actions, status, Number(data?.pending || 0));
     };
 
     const openModal = async () => {
@@ -416,24 +519,13 @@ async function injectNoWhatsappInfoButton(page) {
         const body = document.getElementById('no-whatsapp-info-body');
         if (!body) return;
 
-        const count = Number(data?.count || 0);
-        const masked = Array.isArray(data?.masked) ? data.masked : [];
-        const phones10 = Array.isArray(data?.phones10) ? data.phones10 : [];
-
-        if (count === 0) {
-          body.innerHTML = `<div class="no-wa-muted">No hay números marcados como <strong>no_whatsapp</strong> en resultados.csv.</div>`;
-        } else {
-          const header = `<div class="no-wa-muted">Total: <strong>${count}</strong></div>`;
-          const pills = masked.map((d) => `<span class="no-wa-pill">**** ${String(d)}</span>`).join('');
-          body.innerHTML = header + `<div style="margin-top: 8px;">${pills}</div>`;
-        }
-
-        if (typeof window.submitNoWhatsappInfoInteraction === 'function') {
-          window.submitNoWhatsappInfoInteraction(phones10).catch(() => null);
-        }
+        renderBody(body, data);
       } catch (e) {
         const body = document.getElementById('no-whatsapp-info-body');
-        if (body) body.innerHTML = `<div class="no-wa-muted">Error cargando lista.</div>`;
+        if (body) {
+          body.textContent = '';
+          body.appendChild(el('div', 'no-wa-muted', 'Error cargando lista.'));
+        }
       }
     };
 
@@ -534,35 +626,19 @@ export async function initManualWhatsApp(allowedContacts = []) {
     // ignore
   }
   
-  // Inyectar protecciones ANTES de cargar WhatsApp (EXACTO como en whatsapp.js)
-  await manualPage.addInitScript(() => {
-    // Bloquear atajos de teclado para DevTools
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'F5') return;
+  // Renderizado seguro (dom-safety.js) -> window.__anaDomSafety
+  await manualPage.addInitScript({ content: domSafetyInitScript() });
 
-      // Permitir pegar
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) return;
-      if (e.metaKey && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) return;
+  // Normalización de teléfonos compartida con Node (phone-utils.js) -> window.__anaPhone
+  await manualPage.addInitScript({ content: phoneUtilsInitScript() });
 
-      const k = String(e.key || '');
-      const isFunctionKey = /^F\d{1,2}$/.test(k);
-      const hasModifier = Boolean(e.ctrlKey || e.metaKey || e.altKey);
+  // Política de teclado (manual-key-policy.js), instalada antes de cargar WhatsApp y en
+  // cada documento nuevo (incluido F5): denegación por defecto de F1–F12 (salvo F5) y de
+  // combinaciones con Ctrl/Cmd/Alt; excepciones para escritura con AltGr, códigos Alt y
+  // atajos de edición dentro de campos editables; DevTools, ver código, guardar,
+  // imprimir, abrir y atrás/adelante siempre bloqueados. También bloquea el menú contextual.
+  await manualPage.addInitScript({ content: manualKeyPolicyInitScript() });
 
-      if (isFunctionKey || hasModifier) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    }, true);
-    
-    // Bloquear menú contextual (clic derecho)
-    document.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }, true);
-  });
-  
   // Inyectar restricciones ANTES de cargar WhatsApp
   await applyUIRestrictions(allowedContacts);
   
@@ -684,67 +760,9 @@ export async function initManualWhatsApp(allowedContacts = []) {
   
   console.log('✅ WhatsApp Web (Manual) conectado - Ventana lista!');
   
-  // Aplicar bloqueos INMEDIATAMENTE en la primera carga
+  // Aplicar restricciones de UI INMEDIATAMENTE en la primera carga
+  // (la política de teclado y el bloqueo del menú contextual ya vienen del init script)
   await manualPage.evaluate(() => {
-    // Bloquear atajos de teclado para DevTools
-    document.addEventListener('keydown', (e) => {
-      // F12
-      if (e.key === 'F12') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+I (Windows/Linux)
-      if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+J (Console)
-      if (e.ctrlKey && e.shiftKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Ctrl+Shift+C (Inspect)
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+I (Mac)
-      if (e.metaKey && e.altKey && e.key === 'I') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+J (Mac Console)
-      if (e.metaKey && e.altKey && e.key === 'J') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-      
-      // Cmd+Option+C (Mac Inspect)
-      if (e.metaKey && e.altKey && e.key === 'C') {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    }, true);
-    
-    // Bloquear menú contextual (clic derecho)
-    document.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    }, true);
-    
     // Aplicar restricciones de UI
     if (window.applyManualUIRestrictions) {
       window.applyManualUIRestrictions();
@@ -759,54 +777,8 @@ export async function initManualWhatsApp(allowedContacts = []) {
   manualPage.on('load', async () => {
     console.log('🔄 Página recargada, re-aplicando protecciones...');
     
-    // Re-aplicar bloqueos de teclado y menú contextual
+    // Re-aplicar restricciones de UI (la política de teclado se reinstala sola como init script)
     await manualPage.evaluate(() => {
-      // Bloquear atajos de teclado para DevTools
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'F12') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'I') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'J') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'I') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'J') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-        if (e.metaKey && e.altKey && e.key === 'C') {
-          e.preventDefault();
-          e.stopPropagation();
-          return false;
-        }
-      }, true);
-      
-      // Bloquear menú contextual
-      document.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }, true);
-      
       // Re-aplicar restricciones de UI
       if (window.applyManualUIRestrictions) {
         window.applyManualUIRestrictions();
@@ -1482,30 +1454,8 @@ async function initChatBackupSystem(page, agentConfig) {
     let nullPhoneStreak = 0;
     let lastChatSwitchAt = 0;
     
-    // Función para normalizar números de teléfono
-    const normalizePhoneForBackend = (rawPhone) => {
-      const digits = String(rawPhone || '').replace(/\D/g, '');
-      if (!digits) return '';
-
-      let normalized = digits;
-
-      // Si viene sin lada (10 dígitos), asumir México móvil
-      if (normalized.length === 10) {
-        normalized = '521' + normalized; // México móvil: 521 + 10 dígitos
-      }
-
-      // Si ya tiene 521 y 13 dígitos, está correcto
-      if (normalized.startsWith('521') && normalized.length === 13) {
-        return normalized;
-      }
-
-      // Si tiene 52 sin el 1 y 12 dígitos, agregar el 1
-      if (normalized.startsWith('52') && !normalized.startsWith('521') && normalized.length === 12) {
-        normalized = '521' + normalized.slice(2);
-      }
-
-      return normalized;
-    };
+    // Llave de respaldo: 521 + 10 dígitos (window.__anaPhone, inyectado desde phone-utils.js)
+    const normalizePhoneForBackend = (rawPhone) => window.__anaPhone.toBackupKeyPhone(rawPhone);
 
     // Función para calcular hash simple de mensajes
     const calculateMessagesHash = (messages) => {
@@ -1848,12 +1798,13 @@ async function initChatBackupSystem(page, agentConfig) {
         <div style="display: flex; align-items: center; gap: 8px;">
           <div style="font-size: 16px;">${type === 'success' ? '✅' : type === 'info' ? 'ℹ️' : '⚠️'}</div>
           <div style="flex: 1;">
-            <div>${message}</div>
+            <div data-ana-message></div>
             <div style="font-size: 10px; opacity: 0.8; margin-top: 2px;">${timeStr}</div>
           </div>
         </div>
       `;
       
+      toast.querySelector('[data-ana-message]').textContent = String(message ?? '');
       document.body.appendChild(toast);
       
       setTimeout(() => {
@@ -1899,11 +1850,12 @@ async function initChatBackupSystem(page, agentConfig) {
         <div style="display: flex; align-items: center; gap: 10px;">
           <div style="font-size: 24px;">${type === 'success' ? '✅' : type === 'info' ? '📋' : 'ℹ️'}</div>
           <div style="flex: 1;">
-            <div style="margin-bottom: 5px;">${message}</div>
+            <div style="margin-bottom: 5px;" data-ana-message></div>
             <div style="font-size: 11px; opacity: 0.9;">${timestamp}</div>
           </div>
         </div>
       `;
+      notification.querySelector('[data-ana-message]').textContent = String(message ?? '');
       
       document.body.appendChild(notification);
       
@@ -1924,7 +1876,7 @@ async function initChatBackupSystem(page, agentConfig) {
       // Pausar el countdown mientras se ejecuta el respaldo
       stopCountdown();
       
-      // Normalizar el número de teléfono (521 -> 52)
+      // Normalizar el número de teléfono a la llave de respaldo (521 + 10 dígitos)
       const normalizedPhone = normalizePhoneForBackend(phoneNumber);
       log('[ChatBackup] Número original:', phoneNumber, '-> Normalizado:', normalizedPhone);
       
@@ -2167,28 +2119,6 @@ async function initChatBackupSystem(page, agentConfig) {
   console.log('[ChatBackup] Script de respaldo inyectado correctamente');
 }
 
-function normalizePhoneForBackend(rawPhone) {
-  const digits = String(rawPhone || '').replace(/\D/g, '');
-  if (!digits) return '';
-
-  let normalized = digits;
-
-  // México: WhatsApp a veces usa 521 + 10 dígitos. Backend requiere 52 + 10 dígitos.
-  if (normalized.startsWith('521') && normalized.length >= 13) {
-    normalized = `52${normalized.slice(3)}`;
-  }
-
-  // Si viene sin lada (10 dígitos), asumir México
-  if (!normalized.startsWith('52') && normalized.length === 10) {
-    normalized = `52${normalized}`;
-  }
-
-  if (!normalized.startsWith('52')) return '';
-  if (normalized.length < 12) return '';
-
-  return `+${normalized}`;
-}
-
 async function fetchResultCodesFromBackend(campaignName) {
   if (cachedResultCodesByCampaign.has(campaignName)) {
     return cachedResultCodesByCampaign.get(campaignName);
@@ -2272,7 +2202,7 @@ async function injectGestionButton(page) {
   const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
 
   await page.exposeFunction('getGestionDataFromBackend', async (phoneDigits) => {
-    const phoneE164 = normalizePhoneForBackend(phoneDigits);
+    const phoneE164 = phone.toGestionCrmPhone(phoneDigits);
     console.log('[Gestion] getGestionDataFromBackend campaign=', campaignName, 'phoneDigits=', phoneDigits, 'phoneE164=', phoneE164);
     const [resultCodes, clientInfo] = await Promise.all([
       fetchResultCodesFromBackend(campaignName),
@@ -2283,11 +2213,8 @@ async function injectGestionButton(page) {
   });
 
   await page.exposeFunction('submitGestionInteraction', async (payload) => {
-    const now = new Date();
-    const contact_date = now.toISOString().slice(0, 10);
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
+    // Fecha/hora en America/Mexico_City (interaction-time.js)
+    const { contact_date, contact_time, range_time } = interactionDateTime();
 
     const interaction = {
       credit_id: String(payload.credit_id || ''),
@@ -2295,8 +2222,8 @@ async function injectGestionButton(page) {
       user_id: INTERACTIONS_USER_ID,
       subdictamen: String(payload.subdictamen || ''),
       contact_date,
-      contact_time: `${hh}:${mm}`,
-      range_time: `${hh}:00 - ${nextH}:00`,
+      contact_time,
+      range_time,
       action_channel: 'whatsapp',
       action: 'whatsapp',
       contactable: payload.contactable === true,
@@ -2519,21 +2446,24 @@ async function injectGestionButton(page) {
           return;
         }
 
+        // Datos del CRM: escapar texto y atributos (falla cerrada si el helper no cargó)
+        const esc = (window.__anaDomSafety && window.__anaDomSafety.escapeHtml) || ((s) => String(s ?? '').replace(/[&<>"']/g, ''));
+
         const creditOptions = clientInfo.map((item, idx) => {
           const clientName = item?.client_info?.full_name || 'Sin nombre';
           const creditId = item?.credit_info?.credit_id || '';
           const productName = item?.credit_info?.product_name || item?.credit_info?.product || '';
           return `
             <label style="display:block; padding:10px; border:1px solid #eee; border-radius:10px; margin-bottom:8px; cursor:pointer;">
-              <input type="radio" name="gestion-credit" value="${creditId}" ${idx === 0 ? 'checked' : ''} />
-              <strong style="margin-left:8px;">${clientName}</strong>
-              <div class="gestion-small" style="margin-left:26px;">Crédito: ${creditId} | ${productName}</div>
+              <input type="radio" name="gestion-credit" value="${esc(creditId)}" ${idx === 0 ? 'checked' : ''} />
+              <strong style="margin-left:8px;">${esc(clientName)}</strong>
+              <div class="gestion-small" style="margin-left:26px;">Crédito: ${esc(creditId)} | ${esc(productName)}</div>
             </label>
           `;
         }).join('');
 
         const subdictamenOptions = visibleCodes
-          .map(rc => `<option value="${String(rc.subdictamen || '')}">${String(rc.dictamen || '').toUpperCase()} - ${String(rc.subdictamen || '')}</option>`)
+          .map(rc => `<option value="${esc(String(rc.subdictamen || ''))}">${esc(String(rc.dictamen || '').toUpperCase())} - ${esc(String(rc.subdictamen || ''))}</option>`)
           .join('');
 
         body.innerHTML = `
@@ -2593,7 +2523,8 @@ async function injectGestionButton(page) {
           }
         };
       } catch (e) {
-        body.innerHTML = `<div class="gestion-card"><div class="gestion-error">${String(e?.message || e)}</div></div>`;
+        body.innerHTML = `<div class="gestion-card"><div class="gestion-error"></div></div>`;
+        body.querySelector('.gestion-error').textContent = String(e?.message || e);
       }
     };
 
@@ -2728,22 +2659,8 @@ async function injectHistoryButton(page) {
         btn.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
       };
 
-      // Función para normalizar el número de teléfono
-      const normalizePhone = (rawPhone) => {
-        const digits = String(rawPhone || '').replace(/\D/g, '');
-        if (!digits) return '';
-        let normalized = digits;
-        if (normalized.length === 10) {
-          normalized = '521' + normalized;
-        }
-        if (normalized.startsWith('521') && normalized.length === 13) {
-          return normalized;
-        }
-        if (normalized.startsWith('52') && !normalized.startsWith('521') && normalized.length === 12) {
-          normalized = '521' + normalized.slice(2);
-        }
-        return normalized;
-      };
+      // Llave de respaldo: 521 + 10 dígitos (window.__anaPhone, inyectado desde phone-utils.js)
+      const normalizePhone = (rawPhone) => window.__anaPhone.toBackupKeyPhone(rawPhone);
 
       // Función para cargar y mostrar historial dado un número
       const loadAndShowHistory = async (phoneNumber) => {
@@ -2889,27 +2806,34 @@ async function injectHistoryButton(page) {
             row.onmouseover = () => { row.style.background = '#f0f2ff'; row.style.borderColor = '#667eea'; };
             row.onmouseout = () => { row.style.background = 'white'; row.style.borderColor = '#eee'; };
 
+            // Solo marcado estático en la plantilla; los datos del backend van por textContent/dataset
             row.innerHTML = `
               <div style="width: 45px; height: 45px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; flex-shrink: 0;">📱</div>
               <div style="flex: 1; min-width: 0;">
-                <div style="font-weight: bold; font-size: 14px; color: #333;">${phone10}</div>
-                <div style="font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${preview}</div>
+                <div data-field="phone10" style="font-weight: bold; font-size: 14px; color: #333;"></div>
+                <div data-field="preview" style="font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></div>
               </div>
               <div style="text-align: right; flex-shrink: 0;">
-                <div style="font-size: 11px; color: #999;">${lastUpdated}</div>
-                <div style="font-size: 11px; color: #667eea; font-weight: bold;">${totalMsgs} msgs</div>
+                <div data-field="lastUpdated" style="font-size: 11px; color: #999;"></div>
+                <div data-field="totalMsgs" style="font-size: 11px; color: #667eea; font-weight: bold;"></div>
               </div>
               <div style="display: flex; flex-direction: column; gap: 4px; flex-shrink: 0;">
-                <button class="hist-view-btn" data-phone="${phone}" title="Ver historial" style="
+                <button class="hist-view-btn" title="Ver historial" style="
                   background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none;
                   border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; white-space: nowrap;
                 ">📜 Ver</button>
-                <button class="hist-open-btn" data-phone10="${phone10}" title="Abrir chat" style="
+                <button class="hist-open-btn" title="Abrir chat" style="
                   background: #25D366; color: white; border: none;
                   border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; white-space: nowrap;
                 ">💬 Abrir</button>
               </div>
             `;
+            row.querySelector('[data-field="phone10"]').textContent = String(phone10);
+            row.querySelector('[data-field="preview"]').textContent = String(preview);
+            row.querySelector('[data-field="lastUpdated"]').textContent = String(lastUpdated);
+            row.querySelector('[data-field="totalMsgs"]').textContent = `${totalMsgs} msgs`;
+            row.querySelector('.hist-view-btn').dataset.phone = String(phone);
+            row.querySelector('.hist-open-btn').dataset.phone = String(phone);
 
             listContainer.appendChild(row);
           });
@@ -2918,7 +2842,7 @@ async function injectHistoryButton(page) {
           listContainer.querySelectorAll('.hist-view-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
               e.stopPropagation();
-              const phone = btn.getAttribute('data-phone');
+              const phone = btn.dataset.phone || '';
               overlay.remove(); modal.remove();
               await loadAndShowHistory(phone);
             });
@@ -2927,7 +2851,12 @@ async function injectHistoryButton(page) {
           listContainer.querySelectorAll('.hist-open-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
               e.stopPropagation();
-              const p10 = btn.getAttribute('data-phone10');
+              const toP10 = (window.__anaDomSafety && window.__anaDomSafety.phone10ForWhatsappUrl) || (() => '');
+              const p10 = toP10(btn.dataset.phone || '');
+              if (!p10) {
+                showNotification('❌ Teléfono inválido', 'error');
+                return;
+              }
               const chatUrl = 'https://web.whatsapp.com/send?phone=52' + p10;
               console.log('[Historial] Abriendo chat:', chatUrl);
               overlay.remove(); modal.remove();
@@ -3182,7 +3111,7 @@ async function injectHistoryButton(page) {
       header.innerHTML = `
         <div style="flex: 1;">
           <h2 style="margin: 0; font-size: 20px;">📜 Historial de Mensajes</h2>
-          <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">📱 ${phoneDisplay} | Fecha: ${date} | ${messages.length} mensaje(s)</p>
+          <p data-field="summary" style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;"></p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center;">
           <button id="open-chat-from-history" title="Abrir este chat en WhatsApp" style="
@@ -3213,6 +3142,8 @@ async function injectHistoryButton(page) {
         </div>
       `;
 
+      header.querySelector('[data-field="summary"]').textContent = `📱 ${phoneDisplay} | Fecha: ${date} | ${messages.length} mensaje(s)`;
+
       const content = document.createElement('div');
       content.style.cssText = `
         padding: 20px;
@@ -3237,18 +3168,19 @@ async function injectHistoryButton(page) {
           border-radius: 8px;
         `;
         
+        // Solo marcado estático en la plantilla; el contenido del mensaje va por textContent
         msgDiv.innerHTML = `
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-            <strong style="color: #333;">${isOutgoing ? '📤 Yo' : '📥 ' + (msg.name || msg.contact_name || phoneNumber)}</strong>
-            <span style="color: #666; font-size: 12px;">${msg.timestamp || msg.sent_at || msg.sentAt || 'Sin fecha'}</span>
+            <strong data-field="label" style="color: #333;"></strong>
+            <span data-field="timestamp" style="color: #666; font-size: 12px;"></span>
           </div>
-          <div style="color: #333; white-space: pre-wrap; margin-bottom: 8px; font-size: 14px;">
-            ${msg.body || msg.message_sent || msg.message || msg.text || 'Sin mensaje'}
-          </div>
-          <div style="margin-top: 8px; font-size: 11px; color: #999;">
-            Tipo: ${msg.type || 'text'}
-          </div>
+          <div data-field="body" style="color: #333; white-space: pre-wrap; margin-bottom: 8px; font-size: 14px;"></div>
+          <div data-field="type" style="margin-top: 8px; font-size: 11px; color: #999;"></div>
         `;
+        msgDiv.querySelector('[data-field="label"]').textContent = isOutgoing ? '📤 Yo' : '📥 ' + String(msg.name || msg.contact_name || phoneNumber || '');
+        msgDiv.querySelector('[data-field="timestamp"]').textContent = String(msg.timestamp || msg.sent_at || msg.sentAt || 'Sin fecha');
+        msgDiv.querySelector('[data-field="body"]').textContent = String(msg.body || msg.message_sent || msg.message || msg.text || 'Sin mensaje');
+        msgDiv.querySelector('[data-field="type"]').textContent = 'Tipo: ' + String(msg.type || 'text');
 
         content.appendChild(msgDiv);
       });
@@ -3269,7 +3201,12 @@ async function injectHistoryButton(page) {
       const openChatBtn = document.getElementById('open-chat-from-history');
       if (openChatBtn) {
         openChatBtn.onclick = () => {
-          const p10 = phoneDisplay;
+          const toP10 = (window.__anaDomSafety && window.__anaDomSafety.phone10ForWhatsappUrl) || (() => '');
+          const p10 = toP10(phoneNumber);
+          if (!p10) {
+            showNotification('❌ Teléfono inválido', 'error');
+            return;
+          }
           const chatUrl = 'https://web.whatsapp.com/send?phone=52' + p10;
           console.log('[Historial] Abriendo chat desde historial:', chatUrl);
           bubble.remove();

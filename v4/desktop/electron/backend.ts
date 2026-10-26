@@ -1,33 +1,41 @@
 // File: Cliente fino del backend. Persiste mensajes en DynamoDB vía API Gateway.
 // Created: 2026-06-09
-// Updated: 2026-06-10
+// Updated: 2026-10-26
 // Author: Erick Hernández Silva
 
 import type { NormalizedMessage } from './whatsapp/client';
+import type { AuthFetch } from './auth/tokenBroker';
 
-/** Cliente fino del backend. Persiste mensajes en DynamoDB vía API Gateway. */
+/**
+ * Cliente fino del backend. Persiste mensajes en DynamoDB vía API Gateway.
+ * Todas las llamadas usan `authFetch`: token fresco del broker y un reintento
+ * ante 401 (ver auth/tokenBroker.ts).
+ */
+/** Esperas entre reintentos del reporte al CRM (máximo 3 reintentos). */
+export const REPORT_RETRY_DELAYS_MS = [30_000, 2 * 60_000, 10 * 60_000];
+
 export class Backend {
   constructor(
     private apiBase: string,
-    private getToken: () => string | null,
+    private hasSession: () => boolean,
+    private authFetch: AuthFetch,
+    // Inyectable en pruebas; los reintentos corren fuera del ritmo de envío.
+    private schedule: (fn: () => void, ms: number) => void = (fn, ms) => void setTimeout(fn, ms),
   ) {}
 
-  private headers() {
-    const token = this.getToken();
+  private json(method: string, body: unknown): RequestInit {
     return {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
     };
   }
 
   async putMessage(msg: NormalizedMessage): Promise<void> {
-    if (!this.getToken()) return; // sin sesión aún, no persistir
+    if (!this.hasSession()) return; // sin sesión aún, no persistir
     try {
-      await fetch(`${this.apiBase}/messages`, {
-        method: 'PUT',
-        headers: this.headers(),
-        body: JSON.stringify(msg),
-      });
+      const res = await this.authFetch(`${this.apiBase}/messages`, this.json('PUT', msg));
+      if (!res.ok) console.error('[backend] putMessage respondió', res.status);
     } catch (e) {
       console.error('[backend] putMessage falló:', e);
     }
@@ -39,13 +47,12 @@ export class Backend {
     mimetype: string,
     bytes: Uint8Array,
   ): Promise<{ key: string } | null> {
-    if (!this.getToken()) return null;
+    if (!this.hasSession()) return null;
     try {
-      const res = await fetch(`${this.apiBase}/media/presign`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({ filename, mimetype }),
-      });
+      const res = await this.authFetch(
+        `${this.apiBase}/media/presign`,
+        this.json('POST', { filename, mimetype }),
+      );
       if (!res.ok) return null;
       const { url, key } = (await res.json()) as { url: string; key: string };
       const put = await fetch(url, {
@@ -62,8 +69,11 @@ export class Backend {
 
   /**
    * Reporta al backend el resultado de un envío de campaña; el Lambda lo
-   * registra en el CRM (interacción + teléfono sin WhatsApp). Fire-and-forget:
-   * un fallo del CRM no frena el ritmo de envío (igual que en v3).
+   * registra en el CRM (interacción + teléfono sin WhatsApp). No bloquea el
+   * ritmo de envío: el primer intento se hace ya y, si el CRM falló
+   * (`retryable: true`), hubo 5xx o falló la red, se reintenta en segundo plano
+   * hasta 3 veces (30 s, 2 min, 10 min). Solo en memoria: si la app se cierra,
+   * los reintentos pendientes se pierden. Resuelve tras el PRIMER intento.
    */
   async reportInteraction(r: {
     jobId: string;
@@ -72,15 +82,31 @@ export class Backend {
     status: 'sent' | 'no_whatsapp' | 'error';
     row: Record<string, string>;
   }): Promise<void> {
-    if (!this.getToken()) return;
+    if (!this.hasSession()) return;
+    const attempt = async (n: number): Promise<void> => {
+      const retry = await this.reportOnce(r);
+      if (!retry) return;
+      const wait = REPORT_RETRY_DELAYS_MS[n];
+      if (wait === undefined) {
+        console.error('[backend] reportInteraction agotó reintentos', r.jobId);
+        return;
+      }
+      this.schedule(() => void attempt(n + 1), wait);
+    };
+    await attempt(0);
+  }
+
+  /** Un intento de reporte. true = reintentable (retryable, 5xx o red). */
+  private async reportOnce(r: unknown): Promise<boolean> {
     try {
-      await fetch(`${this.apiBase}/interactions/report`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify(r),
-      });
+      const res = await this.authFetch(`${this.apiBase}/interactions/report`, this.json('POST', r));
+      if (res.status >= 500) return true;
+      if (!res.ok) return false; // 4xx: no se arregla reintentando
+      const body = (await res.json().catch(() => ({}))) as { retryable?: boolean };
+      return body.retryable === true;
     } catch (e) {
       console.error('[backend] reportInteraction falló:', e);
+      return true; // red caída o sin sesión momentánea
     }
   }
 
@@ -93,13 +119,12 @@ export class Backend {
     campaign: string | undefined,
     contact: Record<string, string>,
   ): Promise<void> {
-    if (!this.getToken() || !campaign) return;
+    if (!this.hasSession() || !campaign) return;
     try {
-      await fetch(`${this.apiBase}/conversations/meta`, {
-        method: 'PUT',
-        headers: this.headers(),
-        body: JSON.stringify({ chatId, campaign, contact }),
-      });
+      await this.authFetch(
+        `${this.apiBase}/conversations/meta`,
+        this.json('PUT', { chatId, campaign, contact }),
+      );
     } catch (e) {
       console.error('[backend] putConversationMeta falló:', e);
     }
@@ -107,13 +132,9 @@ export class Backend {
 
   /** Registra este agente como activo en su campaña (para reparto del líder). */
   async heartbeat(campaign: string): Promise<void> {
-    if (!this.getToken() || !campaign) return;
+    if (!this.hasSession() || !campaign) return;
     try {
-      await fetch(`${this.apiBase}/agents/heartbeat`, {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({ campaign }),
-      });
+      await this.authFetch(`${this.apiBase}/agents/heartbeat`, this.json('POST', { campaign }));
     } catch (e) {
       console.error('[backend] heartbeat falló:', e);
     }

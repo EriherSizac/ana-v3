@@ -5,6 +5,23 @@ import { normalizeCampaign, normalizeAgent } from '../lib/campaign';
 const s3Client = new S3Client({});
 const BUCKET_NAME = process.env.BUCKET_NAME || '';
 
+const ASSIGNMENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+type ReviewInput = { assignment_id: string; contacts: Record<string, unknown>[] };
+
+/**
+ * Valida el campo opcional `review` ({assignment_id, contacts}).
+ * Devuelve null si no viene, 'invalid' si no cumple el contrato.
+ */
+const parseReview = (review: unknown): ReviewInput | null | 'invalid' => {
+  if (review === undefined || review === null) return null;
+  if (typeof review !== 'object' || Array.isArray(review)) return 'invalid';
+  const { assignment_id, contacts } = review as Record<string, unknown>;
+  if (typeof assignment_id !== 'string' || !ASSIGNMENT_ID_RE.test(assignment_id)) return 'invalid';
+  if (!Array.isArray(contacts)) return 'invalid';
+  return { assignment_id, contacts: contacts as Record<string, unknown>[] };
+};
+
 /**
  * Actualiza el archivo CSV de contactos pendientes
  * Reemplaza el archivo existente con los contactos restantes
@@ -14,7 +31,7 @@ export const updatePendingContacts = async (
 ): Promise<APIGatewayProxyResult> => {
   try {
     const body = JSON.parse(event.body || '{}');
-    const { campaign, agent_id, contacts } = body;
+    const { campaign, agent_id, contacts, review: rawReview } = body;
 
     const campaignKey = normalizeCampaign(campaign);
     const agentKey = normalizeAgent(agent_id);
@@ -29,6 +46,15 @@ export const updatePendingContacts = async (
       return {
         statusCode: 400,
         body: JSON.stringify({ error: 'contacts debe ser un array' }),
+      };
+    }
+
+    // Campo opcional `review`: se valida antes de escribir nada en S3
+    const review = parseReview(rawReview);
+    if (review === 'invalid') {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'review inválido' }),
       };
     }
 
@@ -67,12 +93,35 @@ export const updatePendingContacts = async (
 
     await s3Client.send(command);
 
+    // Contactos por revisar de la asignación: review/{campaign}/{agent_id}/{assignment_id}.csv
+    if (review && review.contacts.length > 0) {
+      const reviewHeaders = Object.keys(review.contacts[0] || {});
+      const reviewLines = [reviewHeaders.join(',')];
+      review.contacts.forEach((contact) => {
+        const values = reviewHeaders.map((header) => {
+          const value = (contact as Record<string, unknown>)?.[header] || '';
+          // Mismo formato que chats/
+          return value.toString().includes(',') ? `"${value}"` : value;
+        });
+        reviewLines.push(values.join(','));
+      });
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: `review/${campaignKey}/${agentKey}/${review.assignment_id}.csv`,
+          Body: reviewLines.join('\n'),
+          ContentType: 'text/csv',
+        })
+      );
+    }
+
     return {
       statusCode: 200,
       body: JSON.stringify({
         message: 'Contactos pendientes actualizados',
         path: key,
         remainingContacts: contacts.length,
+        ...(review ? { reviewContacts: review.contacts.length } : {}),
       }),
     };
   } catch (error) {

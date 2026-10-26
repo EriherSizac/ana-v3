@@ -58,3 +58,15 @@ Ver proposal.md (Why). Estado actual de la ventana manual (`whatsapp-manual.js`)
 1. Implementar módulo + pruebas, integrar, verificar en sesión real con ambas distribuciones de teclado.
 2. `npm run build` (bump patch + upload) y confirmar `versions/latest.json`.
 3. Rollback: revertir y publicar otra versión patch (el autoupdate no baja de versión).
+
+## Decisiones de implementación
+
+- **Script `test`:** se reutiliza `node --test` (ver `fix-cli-double-brace-templates`; `node --test test/` falla en Node 22).
+- **Denylist por letra:** las reglas de DevTools y Ctrl+U/S/P/O comparan la letra por `code` (`KeyI`…) o, si `code` está vacío, por `key` de un carácter en minúsculas; así Ctrl+Shift+`i` minúscula también se bloquea.
+- **Ctrl+V fuera de campos editables pasa a bloquearse.** La política anterior lo permitía en toda la página; el requisito nuevo solo lo permite dentro de editables (regla 6) y la tarea 1.2 lo fija con prueba. No hay campo en el que se pueda pegar fuera de un editable, así que no hay pérdida funcional.
+- **Fallo cerrado:** si `classify` lanza, `installKeyPolicy` bloquea el evento.
+- **Editable:** `isContentEditable`, `TEXTAREA` o `INPUT` de tipo `text/search/email/url/tel/password/number`, evaluado sobre `composedPath()[0]` (o `event.target`).
+- **Init scripts:** el de teclado se registra después de `domSafetyInitScript()` y `phoneUtilsInitScript()`; todos los init scripts corren antes que los scripts de WhatsApp, así que el listener en `window` (captura) sigue siendo el primero en ver los `keydown`.
+- **Verificación del bundle:** se comprobó que el bundle de `esbuild` contiene `function classifyKeyEvent(ev, ctx)` intacta y que el init script generado desde el módulo empaquetado instala la política y aísla AltGr+Q (sin `preventDefault`, con `stopImmediatePropagation`). El bundle se generó fuera de `dist/` para no dejar artefactos.
+- **`README-USUARIO.md`** estaba vacío; se creó con la sección "Teclado en la ventana manual".
+- **`build-portable.ps1`:** se agregó `manual-key-policy.js` a `$filesToCopy`.

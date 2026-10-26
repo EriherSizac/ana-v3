@@ -8,7 +8,8 @@ on:
       # Pruebas de equivalencia importan estos consumidores reales del CSV.
       - 'v4/backend/src/lib/contacts.ts'
       - 'v3/ana-backend/src/lib/contactsCsv.ts'
-      - 'v3/cli-whatsapp/agent-config.js'
+      - 'v3/cli-whatsapp/assignment-csv.js'
+      - 'v3/cli-whatsapp/template-utils.js'
   push:
     branches: [main]
     paths:
@@ -17,7 +18,8 @@ on:
       # Pruebas de equivalencia importan estos consumidores reales del CSV.
       - 'v4/backend/src/lib/contacts.ts'
       - 'v3/ana-backend/src/lib/contactsCsv.ts'
-      - 'v3/cli-whatsapp/agent-config.js'
+      - 'v3/cli-whatsapp/assignment-csv.js'
+      - 'v3/cli-whatsapp/template-utils.js'
 
 permissions:
   contents: read

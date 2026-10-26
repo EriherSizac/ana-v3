@@ -175,7 +175,43 @@ Implementación: `backend/src/handlers/csvTrigger.ts`, `backend/src/lib/dashboar
 
 > Todas son secretos de **backend** (`backend/.env`), nunca del cliente. El desktop solo manda el JWT; el backend resuelve identidad, catálogo y roster.
 
-## 7. Agentes derivados de roles
+## 7. Interacciones en el CRM (fecha, hora e idempotencia)
+
+- **Zona horaria**: `contact_date`, `contact_time` y `range_time` se calculan en `America/Mexico_City` (`mxDateParts` en `backend/src/lib/interactions.ts`), sin depender de la zona de la Lambda (UTC). Ejemplo: un envío a las 01:30 UTC del 2026-11-06 se registra como `contact_date: "2026-11-05"`, `contact_time: "19:30"`, `range_time: "19:00 - 20:00"`; en la última hora del día `range_time` es `"23:00 - 00:00"`. El día del marcador de apertura de chat también es el día de México.
+- **Idempotencia con estados** (`backend/src/lib/idempotency.ts`): los marcadores `REPORT#<usuario>/<jobId>` (7 días), `OPEN#<usuario>/<chatId>#<YYYY-MM-DD>` (2 días) y `MANUAL#<usuario>/<requestId>` (2 días) en la tabla de jobs se reservan como `pending`, pasan a `done` solo si el CRM insertó y se borran si falló (respuesta `retryable: true`). Una reserva `pending` de más de 2 minutos se considera abandonada. Respuestas: `"ya reportado"` / `"ya registrado hoy"` (ya `done`) y `"en curso"` (otra invocación lo está procesando). Los marcadores anteriores sin `status` cuentan como `done`.
+- **Reintento del desktop**: ante `retryable: true`, 5xx o red caída, el desktop reintenta el reporte del job a los 30 s, 2 min y 10 min, sin frenar el envío (solo en memoria).
+- **Gestión manual**: el desktop manda un `requestId` (UUID) por apertura del modal "Registrar gestión"; el mismo `requestId` registra una sola interacción.
+- **Interacciones anteriores al despliegue** (fecha/hora UTC): las de v4 con `contact_time` entre `00:00` y `05:59` registradas antes del despliegue corresponden a las 18:00–23:59 del **día anterior** en Ciudad de México (y en general toda hora previa está 6 h adelantada). No se corrigen automáticamente.
+
+## 8. Formatos de teléfono aceptados (lada 52)
+
+Reglas únicas en desktop (`desktop/electron/whatsapp/phone.ts`) y backend (`backend/src/lib/phone.ts`), probadas con los vectores compartidos `v4/shared/phone-mx-vectors.json`. Se decide por **longitud**, no por prefijo de texto; espacios, guiones y paréntesis se ignoran:
+
+| Escrito en el CSV | Se consulta como |
+|---|---|
+| `5512345678` / `55 1234 5678` (10 dígitos) | `525512345678` |
+| `525512345678` / `+52 55 1234 5678` / `0052 55 1234 5678` | `525512345678` |
+| `5215512345678` / `+52 1 55 1234 5678` | `525512345678` |
+| `044 55 1234 5678` / `045 55 1234 5678` | `525512345678` |
+| `01 55 1234 5678` | `525512345678` |
+| `1 55 1234 5678` | `525512345678` |
+| `+1 305 555 1234` / `001 305 555 1234` (extranjero: **siempre con `+` o `00`**) | `13055551234` |
+| `12345`, `05512345678`, vacío… | inválido |
+
+- Un teléfono **inválido** deja el job en `error` con "Teléfono inválido": no se consulta WhatsApp, se reporta al CRM como `error` (no contactable) y **no** se marca el teléfono sin WhatsApp.
+- Un número extranjero escrito sin `+`/`00` (p. ej. `13055551234`) se interpreta como `1` + 10 dígitos de México.
+- La búsqueda del `credit_id` en el CRM usa `+` + el número normalizado (`0445512345678` → `+525512345678`, reintentando sin `+52` ante 404).
+
+**Teléfonos marcados sin WhatsApp por error antes de este cambio**: revisar en el historial de jobs (TTL 7 días, tabla `ana-backend-jobs-<stage>`) los jobs con `status = no_whatsapp` cuyo `phone` crudo empieza con `044`, `045` o `01` (o tiene 11 dígitos y empieza con `1`), y pedir a operación que revise esos teléfonos en el CRM (`PATCH /phone` los dejó con `has_whatsapp: false`).
+
+## 9. "Mi asignación": plantilla por archivo y montos
+
+- Al seleccionar contactos de varias cargas, la vista muestra **un editor de mensaje por archivo** (precargado con la plantilla de esa carga). Cada contacto se envía con la plantilla de **su** archivo; editar una no cambia las demás. "Enviar" se deshabilita si alguna queda vacía o usa variables que ese archivo no tiene (columnas + alias, p. ej. `{saldo}` vale con `total_balance`).
+- "Envío iniciado." aparece en cuanto el envío arranca; el avance sigue en la tarjeta flotante ("Último: ***NNNN").
+- La selección descarta automáticamente los contactos que ya se procesaron.
+- **Montos** (`{saldo}`, `{monto}`, `{x:dinero}` y expresiones) aceptan coma o punto decimal: `1234,56` y `1.234,56` → `$1,234.56`; `1,234.56` → `$1,234.56`; `12,345` → `$12,345.00`; `1234.5` → `$1,234.50`. Un valor como `1.234` sin decimales se lee como 1.234 (ambiguo): escribe los montos con decimales o con punto decimal.
+
+## 10. Agentes derivados de roles
 
 (`add-agent-roster-management`.) Los agentes de una campaña ya no se dan de alta a mano: se **derivan** de los roles del pool.
 
@@ -240,7 +276,7 @@ Flag de transición (default `false`, `--param="agentRosterFilter=true"`):
 
 Variables nuevas: `V3_BUCKET` (`ana-backend-storage-<stage>`, override `--param="v3Bucket=…"`), `V3_BUCKET_REGION` (`us-east-1`), `COGNITO_USER_POOL_ID`, `AGENT_ROSTER_FILTER`.
 
-## 8. Historial de cargas CSV
+## 11. Historial de cargas CSV
 
 Cada CSV con campaña en su metadata que procesa `csvTrigger` queda registrado
 en la tabla `ana-backend-uploads-{stage}` (PK `campaign`, SK `srcKey`, TTL de
