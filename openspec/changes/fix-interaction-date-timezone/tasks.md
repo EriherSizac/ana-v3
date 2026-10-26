@@ -2,15 +2,15 @@
 
 ## 1. Helper de fecha/hora y pruebas
 
-- [ ] 1.1 Si no existe por otro cambio, agregar a `v3/cli-whatsapp/package.json` el script `"test": "node --test test/"`; verificar que `npm test` corre en `v3/cli-whatsapp`
-- [ ] 1.2 Crear `v3/cli-whatsapp/interaction-time.js` con `INTERACTIONS_TIME_ZONE` e `interactionDateTime(date, timeZone)` según design D2 (un solo `formatToParts`, `hourCycle: 'h23'`, formateador cacheado, fallback a hora local con advertencia si `Intl` rechaza la zona); verificar con `npm test`
-- [ ] 1.3 Escribir `test/interaction-time.test.js` con los instantes de design D3 (19:40 del día anterior en UTC, 23:59 → `23:00 - 00:00`, 00:05 → `00:00 - 01:00`, abril en UTC-6) y la comparación en procesos hijos con `TZ=UTC` y `TZ=Asia/Tokyo`; verificar que `npm test` pasa en la máquina de desarrollo
+- [x] 1.1 Si no existe por otro cambio, agregar a `v3/cli-whatsapp/package.json` el script `"test": "node --test test/"`; verificar que `npm test` corre en `v3/cli-whatsapp`
+- [x] 1.2 Crear `v3/cli-whatsapp/interaction-time.js` con `INTERACTIONS_TIME_ZONE` e `interactionDateTime(date, timeZone)` según design D2 (un solo `formatToParts`, `hourCycle: 'h23'`, formateador cacheado, fallback a hora local con advertencia si `Intl` rechaza la zona); verificar con `npm test`
+- [x] 1.3 Escribir `test/interaction-time.test.js` con los instantes de design D3 (19:40 del día anterior en UTC, 23:59 → `23:00 - 00:00`, 00:05 → `00:00 - 01:00`, abril en UTC-6) y la comparación en procesos hijos con `TZ=UTC` y `TZ=Asia/Tokyo`; verificar que `npm test` pasa en la máquina de desarrollo
 
 ## 2. Uso en todos los sitios que registran interacciones
 
 - [ ] 2.1 Reemplazar el bloque `now/contact_date/hh/mm/nextH` de `index.js:491-495` por `interactionDateTime()` y expandir sus tres campos en la interacción automática; verificar con `grep -n "toISOString().slice(0, 10)" v3/cli-whatsapp/index.js` sin resultados y con el log `📤 [insertInteractions] Payload enviado` de un envío de prueba
-- [ ] 2.2 Hacer lo mismo en `submitGestionInteraction` (`whatsapp-manual.js:2286`) y `submitNoWhatsappInfoInteraction` (`whatsapp-manual.js:326`); si `fix-no-whatsapp-modal-duplicates` ya se aplicó, usar también `interactionDateTime().contact_date` para su agrupación "por fecha local"; verificar con el mismo `grep` sobre `whatsapp-manual.js`
-- [ ] 2.3 Hacer lo mismo en `whatsapp-monitor.js:533`; verificar con `grep` sobre `whatsapp-monitor.js` (el `getHours` del log "Poll tick" puede quedar, no es dato del CRM)
+- [x] 2.2 Hacer lo mismo en `submitGestionInteraction` (`whatsapp-manual.js:2286`) y `submitNoWhatsappInfoInteraction` (`whatsapp-manual.js:326`); si `fix-no-whatsapp-modal-duplicates` ya se aplicó, usar también `interactionDateTime().contact_date` para su agrupación "por fecha local"; verificar con el mismo `grep` sobre `whatsapp-manual.js`
+- [x] 2.3 Hacer lo mismo en `whatsapp-monitor.js:533`; verificar con `grep` sobre `whatsapp-monitor.js` (el `getHours` del log "Poll tick" puede quedar, no es dato del CRM)
 - [ ] 2.4 Verificación manual después de las 18:00 hora de México, con el equipo de prueba en zona UTC: un envío automático, una gestión manual y una respuesta detectada por el monitor; verificar en los payloads registrados en consola que `contact_date` es la fecha de México y `contact_time`/`range_time` la hora de México
 
 ## 3. Empaquetado y release

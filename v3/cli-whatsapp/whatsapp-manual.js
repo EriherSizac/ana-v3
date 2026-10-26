@@ -9,6 +9,7 @@ import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
 import { loadAgentConfig, saveAgentConfig, API_BASE_URL, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
 import { phone, phoneUtilsInitScript } from './phone-utils.js';
+import { interactionDateTime } from './interaction-time.js';
 
 let manualBrowser = null;
 let manualPage = null;
@@ -323,11 +324,8 @@ async function injectNoWhatsappInfoButton(page) {
   await page.exposeFunction('submitNoWhatsappInfoInteraction', async (phones10) => {
     try {
       const list = Array.isArray(phones10) ? phones10 : [];
-      const now = new Date();
-      const contact_date = now.toISOString().slice(0, 10);
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
-      const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
+      // Fecha/hora en America/Mexico_City (interaction-time.js)
+      const { contact_date, contact_time, range_time } = interactionDateTime();
 
       const interactions = list.slice(0, 200).map((phone10) => ({
         credit_id: '',
@@ -335,8 +333,8 @@ async function injectNoWhatsappInfoButton(page) {
         user_id: INTERACTIONS_USER_ID,
         subdictamen: 'Consulta No Whatsapp',
         contact_date,
-        contact_time: `${hh}:${mm}`,
-        range_time: `${hh}:00 - ${nextH}:00`,
+        contact_time,
+        range_time,
         action_channel: 'whatsapp',
         action: 'whatsapp',
         contactable: false,
@@ -2242,11 +2240,8 @@ async function injectGestionButton(page) {
   });
 
   await page.exposeFunction('submitGestionInteraction', async (payload) => {
-    const now = new Date();
-    const contact_date = now.toISOString().slice(0, 10);
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
+    // Fecha/hora en America/Mexico_City (interaction-time.js)
+    const { contact_date, contact_time, range_time } = interactionDateTime();
 
     const interaction = {
       credit_id: String(payload.credit_id || ''),
@@ -2254,8 +2249,8 @@ async function injectGestionButton(page) {
       user_id: INTERACTIONS_USER_ID,
       subdictamen: String(payload.subdictamen || ''),
       contact_date,
-      contact_time: `${hh}:${mm}`,
-      range_time: `${hh}:00 - ${nextH}:00`,
+      contact_time,
+      range_time,
       action_channel: 'whatsapp',
       action: 'whatsapp',
       contactable: payload.contactable === true,

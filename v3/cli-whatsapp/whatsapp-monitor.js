@@ -12,6 +12,7 @@ import {
   INTERACTIONS_API_BASE_URL,
 } from './agent-config.js';
 import { phone } from './phone-utils.js';
+import { interactionDateTime } from './interaction-time.js';
 
 let cachedResultCodesByCampaign = new Map();
 
@@ -531,11 +532,8 @@ async function monitorUnreadLoop() {
     console.log('✅ [Monitor] creditId válido, preparando interacción...');
 
     const INTERACTIONS_USER_ID = '6898b89b-ab72-4196-92b1-70d51781f68f';
-    const now = new Date();
-    const contact_date = now.toISOString().slice(0, 10);
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const nextH = String((now.getHours() + 1) % 24).padStart(2, '0');
+    // Fecha/hora en America/Mexico_City (interaction-time.js)
+    const { contact_date, contact_time, range_time } = interactionDateTime();
 
     const subdictamen = 'CLIENTE NO DEFINE';
 
@@ -553,8 +551,8 @@ async function monitorUnreadLoop() {
         user_id: INTERACTIONS_USER_ID,
         subdictamen,
         contact_date,
-        contact_time: `${hh}:${mm}`,
-        range_time: `${hh}:00 - ${nextH}:00`,
+        contact_time,
+        range_time,
         action_channel: 'whatsapp',
         action: 'whatsapp',
         contactable: true,

@@ -260,6 +260,7 @@ import {
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
 import { phone } from "./phone-utils.js";
+import { interactionDateTime } from "./interaction-time.js";
 
 // Función principal
 async function main() {
@@ -489,11 +490,8 @@ async function main() {
             console.log("📋 [DEBUG] Objeto contact completo:");
             console.log(JSON.stringify(contact, null, 2));
 
-            const now = new Date();
-            const contact_date = now.toISOString().slice(0, 10);
-            const hh = String(now.getHours()).padStart(2, "0");
-            const mm = String(now.getMinutes()).padStart(2, "0");
-            const nextH = String((now.getHours() + 1) % 24).padStart(2, "0");
+            // Fecha/hora en America/Mexico_City (interaction-time.js)
+            const { contact_date, contact_time, range_time } = interactionDateTime();
             const phone10 = phone.toLast10(contact.phone);
             const subdictamen =
               result?.status === "no_whatsapp"
@@ -530,8 +528,8 @@ async function main() {
                 user_id: INTERACTIONS_USER_ID,
                 subdictamen,
                 contact_date,
-                contact_time: `${hh}:${mm}`,
-                range_time: `${hh}:00 - ${nextH}:00`,
+                contact_time,
+                range_time,
                 action_channel: "whatsapp",
                 action: "whatsapp",
                 contactable: result?.status === "sent",
