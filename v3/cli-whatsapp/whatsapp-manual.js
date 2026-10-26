@@ -9,6 +9,7 @@ import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
 import { loadAgentConfig, saveAgentConfig, API_BASE_URL, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
 import { phone, phoneUtilsInitScript } from './phone-utils.js';
+import { domSafetyInitScript } from './dom-safety.js';
 import { interactionDateTime } from './interaction-time.js';
 
 let manualBrowser = null;
@@ -28,6 +29,8 @@ async function showManualLoginOverlay(requireAll = true) {
     
     await manualPage.evaluate((args) => {
       const { requireAll, savedUser, savedCampaign } = args;
+      // Escape inline (este overlay no tiene el helper de dom-safety.js)
+      const escapeLocal = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       
       const existing = document.getElementById('manual-login-overlay');
       if (existing) existing.remove();
@@ -52,7 +55,7 @@ async function showManualLoginOverlay(requireAll = true) {
       const userField = requireAll ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-          <input type="text" id="manual-login-user" value="${savedUser || ''}" placeholder="ej: erick" style="
+          <input type="text" id="manual-login-user" value="${escapeLocal(savedUser || '')}" placeholder="ej: erick" style="
             width: 100%;
             padding: 12px 15px;
             border: 2px solid #333;
@@ -70,7 +73,7 @@ async function showManualLoginOverlay(requireAll = true) {
       const campaignField = requireAll ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-          <input type="text" id="manual-login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" style="
+          <input type="text" id="manual-login-campaign" value="${escapeLocal(savedCampaign || '')}" placeholder="ej: prueba" style="
             width: 100%;
             padding: 12px 15px;
             border: 2px solid #333;
@@ -85,8 +88,8 @@ async function showManualLoginOverlay(requireAll = true) {
         </div>
       ` : `
         <div style="margin-bottom: 20px; text-align: left;">
-          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
-          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${escapeLocal(savedUser)}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${escapeLocal(savedCampaign)}</strong></p>
         </div>
       `;
       
@@ -532,6 +535,9 @@ export async function initManualWhatsApp(allowedContacts = []) {
     // ignore
   }
   
+  // Renderizado seguro (dom-safety.js) -> window.__anaDomSafety
+  await manualPage.addInitScript({ content: domSafetyInitScript() });
+
   // Normalización de teléfonos compartida con Node (phone-utils.js) -> window.__anaPhone
   await manualPage.addInitScript({ content: phoneUtilsInitScript() });
 
@@ -1827,12 +1833,13 @@ async function initChatBackupSystem(page, agentConfig) {
         <div style="display: flex; align-items: center; gap: 8px;">
           <div style="font-size: 16px;">${type === 'success' ? '✅' : type === 'info' ? 'ℹ️' : '⚠️'}</div>
           <div style="flex: 1;">
-            <div>${message}</div>
+            <div data-ana-message></div>
             <div style="font-size: 10px; opacity: 0.8; margin-top: 2px;">${timeStr}</div>
           </div>
         </div>
       `;
       
+      toast.querySelector('[data-ana-message]').textContent = String(message ?? '');
       document.body.appendChild(toast);
       
       setTimeout(() => {
@@ -1878,11 +1885,12 @@ async function initChatBackupSystem(page, agentConfig) {
         <div style="display: flex; align-items: center; gap: 10px;">
           <div style="font-size: 24px;">${type === 'success' ? '✅' : type === 'info' ? '📋' : 'ℹ️'}</div>
           <div style="flex: 1;">
-            <div style="margin-bottom: 5px;">${message}</div>
+            <div style="margin-bottom: 5px;" data-ana-message></div>
             <div style="font-size: 11px; opacity: 0.9;">${timestamp}</div>
           </div>
         </div>
       `;
+      notification.querySelector('[data-ana-message]').textContent = String(message ?? '');
       
       document.body.appendChild(notification);
       
@@ -2473,21 +2481,24 @@ async function injectGestionButton(page) {
           return;
         }
 
+        // Datos del CRM: escapar texto y atributos (falla cerrada si el helper no cargó)
+        const esc = (window.__anaDomSafety && window.__anaDomSafety.escapeHtml) || ((s) => String(s ?? '').replace(/[&<>"']/g, ''));
+
         const creditOptions = clientInfo.map((item, idx) => {
           const clientName = item?.client_info?.full_name || 'Sin nombre';
           const creditId = item?.credit_info?.credit_id || '';
           const productName = item?.credit_info?.product_name || item?.credit_info?.product || '';
           return `
             <label style="display:block; padding:10px; border:1px solid #eee; border-radius:10px; margin-bottom:8px; cursor:pointer;">
-              <input type="radio" name="gestion-credit" value="${creditId}" ${idx === 0 ? 'checked' : ''} />
-              <strong style="margin-left:8px;">${clientName}</strong>
-              <div class="gestion-small" style="margin-left:26px;">Crédito: ${creditId} | ${productName}</div>
+              <input type="radio" name="gestion-credit" value="${esc(creditId)}" ${idx === 0 ? 'checked' : ''} />
+              <strong style="margin-left:8px;">${esc(clientName)}</strong>
+              <div class="gestion-small" style="margin-left:26px;">Crédito: ${esc(creditId)} | ${esc(productName)}</div>
             </label>
           `;
         }).join('');
 
         const subdictamenOptions = visibleCodes
-          .map(rc => `<option value="${String(rc.subdictamen || '')}">${String(rc.dictamen || '').toUpperCase()} - ${String(rc.subdictamen || '')}</option>`)
+          .map(rc => `<option value="${esc(String(rc.subdictamen || ''))}">${esc(String(rc.dictamen || '').toUpperCase())} - ${esc(String(rc.subdictamen || ''))}</option>`)
           .join('');
 
         body.innerHTML = `
@@ -2547,7 +2558,8 @@ async function injectGestionButton(page) {
           }
         };
       } catch (e) {
-        body.innerHTML = `<div class="gestion-card"><div class="gestion-error">${String(e?.message || e)}</div></div>`;
+        body.innerHTML = `<div class="gestion-card"><div class="gestion-error"></div></div>`;
+        body.querySelector('.gestion-error').textContent = String(e?.message || e);
       }
     };
 
@@ -2829,27 +2841,34 @@ async function injectHistoryButton(page) {
             row.onmouseover = () => { row.style.background = '#f0f2ff'; row.style.borderColor = '#667eea'; };
             row.onmouseout = () => { row.style.background = 'white'; row.style.borderColor = '#eee'; };
 
+            // Solo marcado estático en la plantilla; los datos del backend van por textContent/dataset
             row.innerHTML = `
               <div style="width: 45px; height: 45px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; flex-shrink: 0;">📱</div>
               <div style="flex: 1; min-width: 0;">
-                <div style="font-weight: bold; font-size: 14px; color: #333;">${phone10}</div>
-                <div style="font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${preview}</div>
+                <div data-field="phone10" style="font-weight: bold; font-size: 14px; color: #333;"></div>
+                <div data-field="preview" style="font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></div>
               </div>
               <div style="text-align: right; flex-shrink: 0;">
-                <div style="font-size: 11px; color: #999;">${lastUpdated}</div>
-                <div style="font-size: 11px; color: #667eea; font-weight: bold;">${totalMsgs} msgs</div>
+                <div data-field="lastUpdated" style="font-size: 11px; color: #999;"></div>
+                <div data-field="totalMsgs" style="font-size: 11px; color: #667eea; font-weight: bold;"></div>
               </div>
               <div style="display: flex; flex-direction: column; gap: 4px; flex-shrink: 0;">
-                <button class="hist-view-btn" data-phone="${phone}" title="Ver historial" style="
+                <button class="hist-view-btn" title="Ver historial" style="
                   background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none;
                   border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; white-space: nowrap;
                 ">📜 Ver</button>
-                <button class="hist-open-btn" data-phone10="${phone10}" title="Abrir chat" style="
+                <button class="hist-open-btn" title="Abrir chat" style="
                   background: #25D366; color: white; border: none;
                   border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; white-space: nowrap;
                 ">💬 Abrir</button>
               </div>
             `;
+            row.querySelector('[data-field="phone10"]').textContent = String(phone10);
+            row.querySelector('[data-field="preview"]').textContent = String(preview);
+            row.querySelector('[data-field="lastUpdated"]').textContent = String(lastUpdated);
+            row.querySelector('[data-field="totalMsgs"]').textContent = `${totalMsgs} msgs`;
+            row.querySelector('.hist-view-btn').dataset.phone = String(phone);
+            row.querySelector('.hist-open-btn').dataset.phone = String(phone);
 
             listContainer.appendChild(row);
           });
@@ -2858,7 +2877,7 @@ async function injectHistoryButton(page) {
           listContainer.querySelectorAll('.hist-view-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
               e.stopPropagation();
-              const phone = btn.getAttribute('data-phone');
+              const phone = btn.dataset.phone || '';
               overlay.remove(); modal.remove();
               await loadAndShowHistory(phone);
             });
@@ -2867,7 +2886,12 @@ async function injectHistoryButton(page) {
           listContainer.querySelectorAll('.hist-open-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
               e.stopPropagation();
-              const p10 = btn.getAttribute('data-phone10');
+              const toP10 = (window.__anaDomSafety && window.__anaDomSafety.phone10ForWhatsappUrl) || (() => '');
+              const p10 = toP10(btn.dataset.phone || '');
+              if (!p10) {
+                showNotification('❌ Teléfono inválido', 'error');
+                return;
+              }
               const chatUrl = 'https://web.whatsapp.com/send?phone=52' + p10;
               console.log('[Historial] Abriendo chat:', chatUrl);
               overlay.remove(); modal.remove();
@@ -3122,7 +3146,7 @@ async function injectHistoryButton(page) {
       header.innerHTML = `
         <div style="flex: 1;">
           <h2 style="margin: 0; font-size: 20px;">📜 Historial de Mensajes</h2>
-          <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">📱 ${phoneDisplay} | Fecha: ${date} | ${messages.length} mensaje(s)</p>
+          <p data-field="summary" style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;"></p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center;">
           <button id="open-chat-from-history" title="Abrir este chat en WhatsApp" style="
@@ -3153,6 +3177,8 @@ async function injectHistoryButton(page) {
         </div>
       `;
 
+      header.querySelector('[data-field="summary"]').textContent = `📱 ${phoneDisplay} | Fecha: ${date} | ${messages.length} mensaje(s)`;
+
       const content = document.createElement('div');
       content.style.cssText = `
         padding: 20px;
@@ -3177,18 +3203,19 @@ async function injectHistoryButton(page) {
           border-radius: 8px;
         `;
         
+        // Solo marcado estático en la plantilla; el contenido del mensaje va por textContent
         msgDiv.innerHTML = `
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-            <strong style="color: #333;">${isOutgoing ? '📤 Yo' : '📥 ' + (msg.name || msg.contact_name || phoneNumber)}</strong>
-            <span style="color: #666; font-size: 12px;">${msg.timestamp || msg.sent_at || msg.sentAt || 'Sin fecha'}</span>
+            <strong data-field="label" style="color: #333;"></strong>
+            <span data-field="timestamp" style="color: #666; font-size: 12px;"></span>
           </div>
-          <div style="color: #333; white-space: pre-wrap; margin-bottom: 8px; font-size: 14px;">
-            ${msg.body || msg.message_sent || msg.message || msg.text || 'Sin mensaje'}
-          </div>
-          <div style="margin-top: 8px; font-size: 11px; color: #999;">
-            Tipo: ${msg.type || 'text'}
-          </div>
+          <div data-field="body" style="color: #333; white-space: pre-wrap; margin-bottom: 8px; font-size: 14px;"></div>
+          <div data-field="type" style="margin-top: 8px; font-size: 11px; color: #999;"></div>
         `;
+        msgDiv.querySelector('[data-field="label"]').textContent = isOutgoing ? '📤 Yo' : '📥 ' + String(msg.name || msg.contact_name || phoneNumber || '');
+        msgDiv.querySelector('[data-field="timestamp"]').textContent = String(msg.timestamp || msg.sent_at || msg.sentAt || 'Sin fecha');
+        msgDiv.querySelector('[data-field="body"]').textContent = String(msg.body || msg.message_sent || msg.message || msg.text || 'Sin mensaje');
+        msgDiv.querySelector('[data-field="type"]').textContent = 'Tipo: ' + String(msg.type || 'text');
 
         content.appendChild(msgDiv);
       });
@@ -3209,7 +3236,12 @@ async function injectHistoryButton(page) {
       const openChatBtn = document.getElementById('open-chat-from-history');
       if (openChatBtn) {
         openChatBtn.onclick = () => {
-          const p10 = phoneDisplay;
+          const toP10 = (window.__anaDomSafety && window.__anaDomSafety.phone10ForWhatsappUrl) || (() => '');
+          const p10 = toP10(phoneNumber);
+          if (!p10) {
+            showNotification('❌ Teléfono inválido', 'error');
+            return;
+          }
           const chatUrl = 'https://web.whatsapp.com/send?phone=52' + p10;
           console.log('[Historial] Abriendo chat desde historial:', chatUrl);
           bubble.remove();

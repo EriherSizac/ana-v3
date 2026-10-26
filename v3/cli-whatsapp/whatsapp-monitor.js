@@ -35,6 +35,8 @@ async function showMonitorLoginOverlay(requireAll = true) {
 
     await monitorPage.evaluate((args) => {
       const { requireAll, savedUser, savedCampaign } = args;
+      // Escape inline (este overlay no tiene el helper de dom-safety.js)
+      const escapeLocal = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
       const existing = document.getElementById('monitor-login-overlay');
       if (existing) existing.remove();
@@ -60,7 +62,7 @@ async function showMonitorLoginOverlay(requireAll = true) {
         ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Usuario</label>
-          <input type="text" id="monitor-login-user" value="${savedUser || ''}" placeholder="ej: erick" style="
+          <input type="text" id="monitor-login-user" value="${escapeLocal(savedUser || '')}" placeholder="ej: erick" style="
             width: 100%;
             padding: 12px 15px;
             border: 2px solid #333;
@@ -80,7 +82,7 @@ async function showMonitorLoginOverlay(requireAll = true) {
         ? `
         <div style="margin-bottom: 20px; text-align: left;">
           <label style="display: block; margin-bottom: 8px; font-size: 14px; color: #25D366;">Campaña</label>
-          <input type="text" id="monitor-login-campaign" value="${savedCampaign || ''}" placeholder="ej: prueba" style="
+          <input type="text" id="monitor-login-campaign" value="${escapeLocal(savedCampaign || '')}" placeholder="ej: prueba" style="
             width: 100%;
             padding: 12px 15px;
             border: 2px solid #333;
@@ -96,8 +98,8 @@ async function showMonitorLoginOverlay(requireAll = true) {
       `
         : `
         <div style="margin-bottom: 20px; text-align: left;">
-          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${savedUser}</strong></p>
-          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${savedCampaign}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Usuario: <strong style="color: #25D366;">${escapeLocal(savedUser)}</strong></p>
+          <p style="font-size: 14px; opacity: 0.7;">Campaña: <strong style="color: #25D366;">${escapeLocal(savedCampaign)}</strong></p>
         </div>
       `;
 

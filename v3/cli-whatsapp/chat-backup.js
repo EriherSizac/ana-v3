@@ -796,7 +796,7 @@ export async function updateBackupProgress(page, progress) {
       <div style="text-align: center; padding: 40px; background: rgba(30, 30, 30, 0.95); border-radius: 20px; border: 2px solid ${statusColor}; min-width: 400px;">
         <div style="font-size: 60px; margin-bottom: 20px;">${statusIcon}</div>
         <h1 style="margin: 0 0 10px 0; font-size: 24px; color: ${statusColor};">Respaldando Chats</h1>
-        <p style="margin: 0 0 20px 0; font-size: 16px; opacity: 0.9;">${prog.message}</p>
+        <p id="backup-progress-message" style="margin: 0 0 20px 0; font-size: 16px; opacity: 0.9;"></p>
         ${prog.total ? `
           <div style="background: #333; border-radius: 10px; height: 20px; margin: 20px 0; overflow: hidden;">
             <div style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: ${percentage}%; transition: width 0.3s;"></div>
@@ -818,6 +818,10 @@ export async function updateBackupProgress(page, progress) {
       </div>
     `;
     
+    // Mensaje de estado como texto (incluye títulos de chat de WhatsApp y errores)
+    const progressMessageEl = overlay.querySelector('#backup-progress-message');
+    if (progressMessageEl) progressMessageEl.textContent = String(prog.message ?? '');
+
     // Agregar listener al botón de cerrar
     const closeBtn = document.getElementById('close-backup-overlay');
     if (closeBtn) {
