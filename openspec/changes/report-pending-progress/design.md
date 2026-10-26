@@ -71,7 +71,7 @@ Un contacto interrumpido en pleno envío no se pierde en silencio: el journal lo
 - Compatibilidad: los CLIs viejos no envían `review` (sin cambio). Un CLI nuevo contra un backend sin desplegar: el campo se ignora (el handler solo lee `campaign`, `agent_id`, `contacts`) y el dato sigue en `resultados.csv`. Por eso el backend se despliega antes del release del CLI.
 - Visibilidad: `GET /supervisors/review/{campaign}` con `X-Admin-Key` (mismo patrón que las demás consultas de supervisor). La autenticación de agente de `migrate-cli-to-cognito-login` cubre `review` sin cambios porque viaja en la misma ruta.
 - Alternativa: columna `ana_status` en las filas de `contacts`. Descartada por la sobrescritura descrita arriba.
-- Fuera de alcance: marcar registros como resueltos o borrarlos desde una ruta, y mostrarlos en ANA Admin (seguimiento anotado en `add-contact-upload-console`).
+- Fuera de alcance: marcar registros como resueltos o borrarlos desde una ruta, y mostrarlos en ANA Admin. Los cubre `link-review-contacts-to-uploads` (vínculo con la carga por la columna `ana_upload_id` de las filas originales, estados en `review-state/`, reasignación), sin cambiar este contrato; `GET /supervisors/review/{campaign}` se conserva como respaldo.
 
 ## Risks / Trade-offs
 

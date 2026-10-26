@@ -4,6 +4,7 @@
 
 - `migrate-cli-to-cognito-login` (design.md D12) mueve, tras el modo estricto, los respaldos de `agent_id` legados de `backups/{campaign}/{agent}/{phone}/chat_backup.json` y `media/{campaign}/{agent}/...` a `legacy/backups/...` y `legacy/media/...`, conservando el resto de la llave. Los nombres de campaña ya son los del catálogo de v4, porque el renombrado de `add-agent-roster-management` (D11) corre antes.
 - Formato de `chat_backup.json` (`v3/chat-backups`): `{"campaign","agent_id","contact_phone","last_updated","total_messages","messages":[{id,timestamp,from,body,...}]}`. La multimedia la sube `POST /media` y se referencia con URLs S3 sin firmar `https://{bucket}.s3.amazonaws.com/media/{campaign}/{agent}/{filename}`.
+- La misma purga (D12) extrae, antes de archivar y borrar cada `credentials.csv`, solo los usernames legados a `legacy/agents/{campaign}.json` (`{schemaVersion, campaign, agents, extractedAt}`); las frases quedan únicamente en el bucket de archivo restringido, nunca en `legacy/`.
 - Copiar con `CopyObject` cambia `LastModified`, así que la fecha del objeto no sirve para filtrar por fecha.
 - Base: `add-admin-web-foundation` (BFF, `withAccess`, gate de entrada: los líderes ya entran porque v4 les da `ana:contacts:list:upload` y `ana:admin:agents:manage`) y `add-agent-roster-management` (authorizer `cognitoAdminJwt` con el client compartido `1r6niimhkl2fmias6kk85n4ou4`, `requireAdminAccess` vía v4 `GET /me`).
 - `fix-historial-xss` ya fijó que los datos de chats se renderizan como texto en el CLI; aquí aplica lo mismo en la web.
@@ -40,9 +41,14 @@ La vista usa solo nodos de texto de React (sin `dangerouslySetInnerHTML`) y cons
 ### D5. Registro de acceso
 Línea JSON `evt:"legacy_chat_access"` por consulta (usuario del token, campaña, agente, teléfono, ruta, estado HTTP). Sirve de auditoría de acceso a datos de deudores; nunca se registran cuerpos ni URLs firmadas.
 
-### D6. BFF
+### D6. Agentes legados: solo referencia
+`GET /admin/campaigns/{campaign}/legacy-agents` devuelve la lista de `legacy/agents/{campaign}.json` para el selector de agente del filtro. La UI los etiqueta "Legacy" (no activos) y no ofrece habilitarlos: la pertenencia de agentes sale solo de roles (`add-agent-roster-management` D10/D11), aun si un nombre coincide con un username del pool. Un agente con conversaciones en el índice pero ausente de la lista (si la extracción no lo encontró) sigue apareciendo en resultados; el selector une ambos.
+- Alternativa: derivar el selector del índice. Descartada como única fuente: el índice solo tiene agentes con conversaciones y la lista documenta a todos los agentes de la campaña previos al cutover.
+
+### D7. BFF
 - `GET /api/campaigns/[campaign]/legacy-chats?agent=&phone=&from=&to=&page=` → proxy a v3 con el token del usuario.
 - `GET /api/campaigns/[campaign]/legacy-chats/[agent]/[phone]` → proxy; no cachea respuestas (contienen URLs firmadas).
+- `GET /api/campaigns/[campaign]/legacy-agents` → proxy.
 
 ## Risks / Trade-offs
 
@@ -53,7 +59,7 @@ Línea JSON `evt:"legacy_chat_access"` por consulta (usuario del token, campaña
 
 ## Migration Plan
 
-1. Requiere desplegados `add-agent-roster-management` (authorizer, `requireAdminAccess`) y ejecutado el movimiento a `legacy/` de `migrate-cli-to-cognito-login` (D12).
+1. Requiere desplegados `add-agent-roster-management` (authorizer, `requireAdminAccess`) y ejecutados el movimiento a `legacy/` y la extracción de `legacy/agents/` de `migrate-cli-to-cognito-login` (D12).
 2. Desplegar las rutas v3 (aditivas).
 3. Ejecutar el índice en dry-run y luego `--apply` contra prod.
 4. Habilitar la sección en ANA Admin; probar con un admin y un líder.

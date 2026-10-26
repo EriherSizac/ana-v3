@@ -32,4 +32,4 @@
 ## Workflow follow-up
 
 - Archivar el cambio tras el release y confirmar que `openspec/specs/v3/automated-sending/spec.md` ya no afirma que los contactos "se reciben en el siguiente arranque".
-- Seguimiento fuera de este cambio: escape correcto de comillas/saltos de línea en `contacts.ts` (también afecta a `review/`), autenticación de `/contacts/pending` (la cubre `migrate-cli-to-cognito-login`), estado "resuelto" de los registros de `review/` y su vista en ANA Admin (`add-contact-upload-console`).
+- Seguimiento fuera de este cambio: escape correcto de comillas/saltos de línea en `contacts.ts` (también afecta a `review/`), autenticación de `/contacts/pending` (la cubre `migrate-cli-to-cognito-login`), estado "resuelto" de los registros de `review/` y su vista en ANA Admin (`link-review-contacts-to-uploads`).

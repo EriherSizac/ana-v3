@@ -43,7 +43,7 @@ El sistema SHALL exponer `GET /backups/latest/{agentId}/{campaign}`, protegido c
 - **THEN** el sistema responde 500 con `{"error":"Error al obtener backup","details":<detalle>}`
 
 ### Requirement: Respaldo incremental de chat por contacto
-El sistema SHALL exponer `POST /backups/chat`, protegido con autenticación de agente (`v3/agent-auth`: el usuario del token es `agent_id` y está habilitado en el roster de `campaign`, sujeto al modo de transición), que recibe `{campaign, agent_id, contact_phone, messages:[...]}` y fusiona los mensajes con los ya guardados en `backups/{campaign}/{agent_id}/{contact_phone}/chat_backup.json`, descartando duplicados (misma combinación `id`, `timestamp`, `from`, `body`) y ordenando por `timestamp` ascendente.
+El sistema SHALL exponer `POST /backups/chat`, protegido con autenticación de agente (`v3/agent-auth`: el usuario del token es `agent_id` y está habilitado en `campaign`, sujeto al modo de transición), que recibe `{campaign, agent_id, contact_phone, messages:[...]}` y fusiona los mensajes con los ya guardados en `backups/{campaign}/{agent_id}/{contact_phone}/chat_backup.json`, descartando duplicados (misma combinación `id`, `timestamp`, `from`, `body`) y ordenando por `timestamp` ascendente.
 
 #### Scenario: Fusión con mensajes existentes
 - **WHEN** el archivo tiene 10 mensajes y el agente dueño envía con su token 5, de los cuales 2 ya existían

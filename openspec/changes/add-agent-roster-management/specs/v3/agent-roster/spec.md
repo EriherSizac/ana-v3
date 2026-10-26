@@ -2,12 +2,12 @@
 
 ## Purpose
 
-Definir el roster de agentes habilitados por campaña del backend v3 (almacenamiento en S3, forma del JSON y regla de habilitación) que reemplaza al `credentials.csv` como fuente de pertenencia, y las rutas con las que ANA Admin lo administra.
+Definir quién es agente ANA de una campaña en v3: la lista se deriva automáticamente de los usuarios del pool de Cognito con un rol de la campaña que otorga `ana:campaign:message:send`, y el roster por campaña solo guarda las excepciones (deshabilitaciones) que decide un administrador. Reemplaza al `credentials.csv` como fuente de pertenencia y fija el contrato que leen la autenticación del CLI y la carga de contactos.
 
 ## ADDED Requirements
 
 ### Requirement: Normalización de campaña y agente
-El sistema SHALL normalizar campaña y username quitando espacios laterales y convirtiendo a minúsculas antes de leer o escribir el roster. La campaña normalizada MUST cumplir `^[a-z0-9][a-z0-9._-]{0,63}$` y el username `^[a-z0-9][a-z0-9._@+-]{0,127}$`; un valor que no cumpla se rechaza con 400 sin acceder a S3.
+El sistema SHALL normalizar campaña y username quitando espacios laterales y convirtiendo a minúsculas antes de derivar, leer o escribir. La campaña normalizada MUST cumplir `^[a-z0-9][a-z0-9._-]{0,63}$` y el username `^[a-z0-9][a-z0-9._@+-]{0,127}$`; un valor que no cumpla se rechaza con 400 sin acceder a S3.
 
 #### Scenario: Valores con mayúsculas y espacios
 - **WHEN** se administra el agente ` Erick.Silva ` en la campaña `DIDI_VIP `
@@ -17,62 +17,115 @@ El sistema SHALL normalizar campaña y username quitando espacios laterales y co
 - **WHEN** la campaña es `ventas/norte`
 - **THEN** el sistema responde 400 con `{"success":false,"message":"Campaña inválida"}`
 
-### Requirement: Ubicación del roster
-El sistema SHALL guardar un objeto por campaña en el bucket `ana-backend-storage-{stage}` con llave `rosters/{campaign}.json` (campaña normalizada) y `Content-Type: application/json`. El prefijo `rosters/` MUST NOT usarse para otros objetos y el roster MUST NOT guardarse bajo `agents/`.
+### Requirement: Definición de agente de una campaña
+Un usuario SHALL ser agente de la campaña X si existe en el pool `us-east-2_UepfOyKpd` con `Enabled` verdadero y estado `CONFIRMED` o `FORCE_CHANGE_PASSWORD`, y tiene en la API de Roles al menos un rol cuyo `campaign_name` normalizado es X y que otorga `ana:campaign:message:send`. Un rol con `campaign_name` `*` MUST NOT hacer agente a nadie; ser líder o admin no basta.
 
-#### Scenario: Llave del roster
-- **WHEN** se habilita un agente en la campaña `prueba`
-- **THEN** el roster queda en `rosters/prueba.json`
+#### Scenario: Agente con rol de envío
+- **WHEN** `ana.lopez` está habilitada y `CONFIRMED` en el pool y tiene el rol `Agente DIDI VIP` (`campaign_name` `DIDI_VIP`) que otorga `ana:campaign:message:send`
+- **THEN** `ana.lopez` es agente de `didi_vip`
 
-### Requirement: Forma del documento de roster
-El roster SHALL ser JSON `{"schemaVersion":1,"campaign","updatedAt","updatedBy","agents":{"<username>":{"enabled","updatedAt","updatedBy"}}}`: `campaign` y las llaves de `agents` normalizadas, `enabled` booleano, fechas ISO 8601 UTC y `updatedBy` el username normalizado de quien hizo el cambio. Los agentes deshabilitados MUST conservarse con `enabled:false`.
+#### Scenario: Líder sin envío
+- **WHEN** `luis` solo tiene `Líder DIDI VIP` y ese rol no otorga `ana:campaign:message:send`
+- **THEN** `luis` no es agente de `didi_vip`
 
-#### Scenario: Documento tras dos cambios
-- **WHEN** `erick.silva` habilita a `ana.lopez` y luego la deshabilita en `prueba`
-- **THEN** `rosters/prueba.json` contiene `"agents":{"ana.lopez":{"enabled":false,"updatedAt":"<fecha del segundo cambio>","updatedBy":"erick.silva"}}`
+#### Scenario: Rol global
+- **WHEN** `erick.silva` solo tiene `Developer` con `campaign_name` `*`
+- **THEN** no es agente de ninguna campaña
 
-### Requirement: Regla de habilitación del roster
-Un agente SHALL considerarse habilitado en una campaña solo si `rosters/{campaign}.json` existe, es JSON válido con `schemaVersion` igual a 1 y `agents[<username normalizado>].enabled` es exactamente `true`. Si el objeto no existe, la campaña no tiene agentes habilitados; si es ilegible o de otra versión, todo lector MUST tratarlo como error y no habilitar a nadie.
+#### Scenario: Usuario deshabilitado en Cognito
+- **WHEN** un usuario con rol de envío en `prueba` tiene `Enabled:false` o estado `RESET_REQUIRED` en el pool
+- **THEN** no es agente de `prueba`
 
-#### Scenario: Campaña sin roster
-- **WHEN** no existe `rosters/ventas.json`
-- **THEN** ningún agente está habilitado en `ventas`
+#### Scenario: Usuario nuevo con contraseña temporal
+- **WHEN** el usuario está en `FORCE_CHANGE_PASSWORD` y tiene rol de envío en `prueba`
+- **THEN** es agente de `prueba`
 
-#### Scenario: Roster de versión desconocida
-- **WHEN** `rosters/prueba.json` tiene `"schemaVersion":2`
-- **THEN** el lector reporta error de roster y no considera habilitado a ningún agente
+### Requirement: Permiso de envío de un rol
+Un rol SHALL otorgar `ana:campaign:message:send` si el permiso figura exacto en el catálogo local de v4 de ese rol (almacén rol→permisos por `role_id`) o en sus permisos inline (`permissions[].permission_name`) de `GET /users/{username}`. Una entrada `-ana:campaign:message:send` MUST NOT otorgarlo y los permisos implícitos de admin o líder MUST NOT contar.
+
+#### Scenario: Permiso en el catálogo local
+- **WHEN** el almacén local de v4 del rol `c288ee3e-…` incluye `ana:campaign:message:send`
+- **THEN** el rol otorga envío aunque la API de Roles no lo traiga inline
+
+#### Scenario: Admin sin envío explícito
+- **WHEN** un rol de `prueba` solo otorga `ana:admin:console:manage`
+- **THEN** ese rol no hace agente de `prueba` a sus usuarios
+
+### Requirement: Lectura de roles desde la API de Roles
+La derivación SHALL leer roles con `X-Api-Key`: `GET /users` para enumerar usuarios y `GET /users/{username}` como fuente de cada usuario candidato, normalizando cada rol a `role_id` (`role_id` o `id`), `role_name` (`role_name` o `name`) y `campaign_name` (`campaign_name` o `campaign`). MUST NOT llamar `/roles/{id}/permissions` ni leer `.id`/`.name` de un permiso.
+
+#### Scenario: Forma del listado
+- **WHEN** `GET /users` devuelve roles `{"id","name","campaign"}`
+- **THEN** la derivación los normaliza a `role_id`, `role_name` y `campaign_name` y usa `GET /users/{username}` para sus permisos inline
+
+### Requirement: Lista derivada de agentes por campaña
+La lista derivada SHALL guardarse en `campaign-agents/{campaign}.json` del bucket `ana-backend-storage-{stage}` como `{"schemaVersion":1,"campaign","generatedAt","agents":[{"username","cognitoUsername","roleIds"}]}` por cada campaña del catálogo de v4, con `agents` vacío si no tiene agentes, `username` normalizado (orden) y `cognitoUsername` tal como lo emite el pool. Solo la sincronización de `v4/agent-roster` MUST escribirla.
+
+#### Scenario: Campaña sin agentes
+- **WHEN** ningún usuario cumple la definición para `ventas`, que existe en el catálogo
+- **THEN** `campaign-agents/ventas.json` existe con `agents` vacío
+
+### Requirement: Excepciones del roster por campaña
+El roster SHALL guardarse en `rosters/{campaign}.json` como `{"schemaVersion":2,"campaign","updatedAt","updatedBy","overrides":{"<username>":{"enabled","updatedAt","updatedBy"}}}`, con `enabled` booleano y `updatedBy` el username normalizado de quien cambió. Solo guarda excepciones: un agente sin entrada está habilitado. El prefijo `rosters/` MUST NOT usarse para otros objetos ni guardarse bajo `agents/`.
+
+#### Scenario: Deshabilitación registrada
+- **WHEN** `erick.silva` deshabilita a `ana.lopez` en `prueba`
+- **THEN** `rosters/prueba.json` contiene `"overrides":{"ana.lopez":{"enabled":false,"updatedAt":"<fecha>","updatedBy":"erick.silva"}}`
+
+### Requirement: Regla de habilitación efectiva
+Un agente SHALL estar habilitado en X solo si figura en `campaign-agents/{X}.json` (JSON válido, `schemaVersion` 1, `generatedAt` de hace 24 h o menos) y en `rosters/{X}.json` no tiene `enabled:false`. Lista inexistente = sin agentes. Lista ilegible, de otra versión o vencida, o roster ilegible o de versión distinta de 2, MUST ser error y no habilitar a nadie.
+
+#### Scenario: Agente derivado sin excepción
+- **WHEN** `ana.lopez` está en la lista derivada de `prueba` y no hay roster
+- **THEN** está habilitada en `prueba`
+
+#### Scenario: Agente deshabilitado por un administrador
+- **WHEN** `ana.lopez` está en la lista derivada y el roster la tiene con `enabled:false`
+- **THEN** no está habilitada
+
+#### Scenario: Pierde el rol con excepción guardada
+- **WHEN** `luis` tiene `enabled:true` en el roster pero ya no figura en la lista derivada
+- **THEN** no está habilitado; si recupera el rol, vuelve a estar habilitado salvo que su entrada diga `enabled:false`
+
+#### Scenario: Lista vencida
+- **WHEN** `generatedAt` de `campaign-agents/prueba.json` tiene más de 24 h
+- **THEN** el lector reporta error de roster y no habilita a nadie
 
 #### Scenario: Valor no booleano
-- **WHEN** un agente tiene `"enabled":"true"` (texto)
-- **THEN** el agente no está habilitado
+- **WHEN** una excepción tiene `"enabled":"false"` (texto)
+- **THEN** el roster es ilegible y el lector reporta error
 
 ### Requirement: Consulta del roster
-El sistema SHALL exponer `GET /admin/campaigns/{campaign}/roster` que responde 200 con `{"success":true,"data":{"campaign","updatedAt","updatedBy","agents":[{"username","enabled","updatedAt","updatedBy"}]}}`, con `agents` ordenado por username y vacío (y `updatedAt`/`updatedBy` nulos) si la campaña no tiene roster.
+El sistema SHALL exponer `GET /admin/campaigns/{campaign}/roster` que responde 200 con `{"success":true,"data":{"campaign","generatedAt","agents":[{"username","enabled","override"}],"inactiveOverrides":[...]}}`: `agents` = lista derivada ordenada con su estado efectivo y excepción (o `null`); `inactiveOverrides` = excepciones de usuarios que ya no están en la lista.
 
-#### Scenario: Campaña con roster
-- **WHEN** un usuario autorizado consulta el roster de `prueba` con dos agentes
-- **THEN** el sistema responde 200 con ambos agentes, habilitados y deshabilitados
+#### Scenario: Campaña con una excepción
+- **WHEN** la lista derivada de `prueba` tiene `ana.lopez` y `luis` y el roster deshabilita a `luis`
+- **THEN** la respuesta muestra `ana.lopez` habilitada con `override:null` y `luis` deshabilitado con autor y fecha
 
-#### Scenario: Roster ilegible
-- **WHEN** el objeto existe pero no es JSON válido o su versión no es 1
-- **THEN** el sistema responde 500 con `{"success":false,"message":"Roster ilegible"}` sin modificarlo
+#### Scenario: Lista ilegible
+- **WHEN** la lista derivada o el roster son ilegibles o están vencidos
+- **THEN** el sistema responde 500 con `{"success":false,"message":"Roster ilegible"}` sin modificarlos
 
 ### Requirement: Actualización del roster
-El sistema SHALL exponer `POST /admin/campaigns/{campaign}/roster/agents` con body `{"agents":[{"username","enabled"}]}` (1 a 200 entradas, sin usernames repetidos tras normalizar) que inserta o actualiza cada entrada, conserva las demás y responde 200 con el roster completo en el mismo formato que la consulta.
+El sistema SHALL exponer `POST /admin/campaigns/{campaign}/roster/agents` con `{"agents":[{"username","enabled"}]}` (1 a 200, sin repetidos tras normalizar) que guarda cada excepción, conserva las demás y responde como la consulta. `enabled:false` se acepta para cualquier username válido; `enabled:true` para uno fuera de la lista derivada MUST responder 409 sin escribir.
 
-#### Scenario: Alta de dos agentes
-- **WHEN** se envía `{"agents":[{"username":"Ana.Lopez","enabled":true},{"username":"luis","enabled":true}]}` para `prueba`
-- **THEN** `rosters/prueba.json` incluye a `ana.lopez` y `luis` habilitados con `updatedBy` igual al usuario del token, y la respuesta es 200
+#### Scenario: Deshabilitar y rehabilitar
+- **WHEN** se envía `enabled:false` y luego `enabled:true` para `ana.lopez`, que está en la lista derivada
+- **THEN** queda habilitada con la excepción `enabled:true` y `updatedBy` del último cambio
+
+#### Scenario: Habilitar a quien no es agente
+- **WHEN** se envía `enabled:true` para `luis`, que no tiene rol de envío en `prueba`
+- **THEN** el sistema responde 409 con `{"success":false,"message":"No es agente de la campaña","data":{"agents":["luis"]}}`
 
 #### Scenario: Body inválido
 - **WHEN** el body no es JSON, `agents` está vacío, tiene más de 200 entradas, repite un username o algún `enabled` no es booleano
 - **THEN** el sistema responde 400 con `{"success":false,"message":<causa>}` sin escribir en S3
 
 ### Requirement: Escritura concurrente del roster
-Cada actualización SHALL hacerse como lectura-modificación-escritura condicional sobre el objeto (solo si no cambió desde la lectura, o solo si no existe al crearlo), reintentando hasta 3 veces ante conflicto; si los reintentos se agotan MUST responder 409 sin perder cambios de otros escritores.
+Cada actualización SHALL hacerse como lectura-modificación-escritura condicional sobre `rosters/{campaign}.json` (solo si no cambió desde la lectura, o solo si no existe al crearlo), reintentando hasta 3 veces ante conflicto; si los reintentos se agotan MUST responder 409 sin perder cambios de otros escritores.
 
 #### Scenario: Dos supervisores a la vez
-- **WHEN** dos solicitudes actualizan agentes distintos del mismo roster al mismo tiempo
+- **WHEN** dos solicitudes cambian excepciones distintas del mismo roster al mismo tiempo
 - **THEN** el roster final contiene los cambios de ambas
 
 #### Scenario: Conflicto persistente
@@ -87,7 +140,7 @@ Las rutas del roster SHALL exigir que el usuario del token sea admin o tenga `an
 - **THEN** el sistema responde 403 con `{"success":false,"message":"Sin permiso para esta campaña"}`
 
 ### Requirement: Roster fuera de rutas públicas
-El contenido del roster MUST NOT ser legible ni modificable por rutas sin autenticación ni por rutas protegidas solo con `X-Admin-Key`; solo las rutas `/admin/*` lo exponen y los lectores internos (autenticación de agente) lo leen directamente de S3.
+`rosters/` y `campaign-agents/` MUST NOT ser legibles ni modificables por rutas sin autenticación ni por rutas protegidas solo con `X-Admin-Key`; solo las rutas `/admin/*` los exponen y los lectores internos (autenticación de agente, carga de contactos) los leen directamente de S3.
 
 #### Scenario: Lectura con llave de administración
 - **WHEN** se llama a `GET /admin/campaigns/prueba/roster` con solo `X-Admin-Key`

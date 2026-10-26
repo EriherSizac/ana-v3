@@ -215,4 +215,4 @@ El CLI MUST NOT escribir en consola, `ana-crash.log` ni ningún archivo la contr
 
 ### Requirement: Verificación de credenciales contra el backend
 **Reason**: El CLI ya no verifica usuario + campaña + palabra del día con `POST /auth/verify`; se autentica contra Cognito y elige campaña del roster.
-**Migration**: Ver "Autenticación con Cognito", "Selección de campaña habilitada" y los desafíos MFA/contraseña nueva. Los agentes necesitan usuario en el User Pool y alta en el roster antes de recibir esta versión.
+**Migration**: Ver "Autenticación con Cognito", "Selección de campaña habilitada" y los desafíos MFA/contraseña nueva. Los agentes necesitan usuario en el User Pool y un rol de su campaña con `ana:campaign:message:send` (agentes derivados de `v3/agent-roster`) antes de recibir esta versión.

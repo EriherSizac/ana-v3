@@ -18,7 +18,7 @@ ANA Admin SHALL mostrar la sección "Historial legacy" (`/historial-legacy`) en 
 - **THEN** la navegación incluye "Historial legacy"
 
 ### Requirement: Búsqueda de conversaciones legadas en la consola
-La página SHALL ofrecer un selector de campaña con búsqueda (campañas de `GET /api/campaigns`, catálogo ∩ campañas del usuario), filtros en pills por agente legado, teléfono y rango de fechas, y una tabla paginada con agente, teléfono, número de mensajes y fecha del último mensaje, con Skeleton mientras carga y estado vacío "Sin conversaciones".
+La página SHALL ofrecer un selector de campaña con búsqueda (campañas de `GET /api/campaigns`, catálogo ∩ campañas del usuario), filtros en pills por agente legado (selector con búsqueda), teléfono y rango de fechas, y una tabla paginada con agente, teléfono, número de mensajes y fecha del último mensaje, con Skeleton mientras carga y estado vacío "Sin conversaciones".
 
 #### Scenario: Filtrar por teléfono
 - **WHEN** el líder elige `prueba` y filtra por `5512345678`
@@ -27,6 +27,17 @@ La página SHALL ofrecer un selector de campaña con búsqueda (campañas de `GE
 #### Scenario: Campaña sin historial
 - **WHEN** la campaña no tiene conversaciones legadas
 - **THEN** la página muestra "Sin conversaciones"
+
+### Requirement: Agentes legados como referencia
+El filtro de agente SHALL ofrecer los nombres de `GET .../legacy-agents` de la campaña, cada uno con la etiqueta "Legacy" y la nota "Agente anterior al login Cognito; no activo". La sección MUST NOT ofrecer habilitar, deshabilitar ni enlazar a "Agentes" para esos nombres, aunque coincidan con un username del pool.
+
+#### Scenario: Filtro por agente legado
+- **WHEN** el líder abre el filtro de agente en `prueba`
+- **THEN** ve `erick` y `luis` con la etiqueta "Legacy" y, al elegir `erick`, la tabla muestra solo sus conversaciones
+
+#### Scenario: Nombre que coincide con un usuario del pool
+- **WHEN** el agente legado `luis` coincide con un username del pool
+- **THEN** sigue mostrándose como "Legacy" sin acciones de habilitación
 
 ### Requirement: Vista segura de la conversación
 Al abrir una conversación, la página SHALL mostrar los mensajes en orden con remitente y fecha/hora en `America/Mexico_City`, y MUST renderizar `body` solo como texto: un contenido con etiquetas HTML o scripts se muestra literal y nunca se interpreta.

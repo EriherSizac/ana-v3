@@ -7,7 +7,7 @@ Conservar en v3, en solo lectura, el historial de chats de cobranza guardado baj
 ## ADDED Requirements
 
 ### Requirement: Disposición del archivo legado
-El historial legado SHALL vivir en el bucket `ana-backend-storage-{stage}` bajo `legacy/backups/{campaign}/{agent}/{phone}/chat_backup.json` y `legacy/media/{campaign}/{agent}/{filename}`, con el mismo contenido que tenían en `backups/` y `media/`. Ninguna ruta del backend MUST escribir, sobrescribir ni borrar bajo `legacy/`, salvo el índice `legacy/index/{campaign}.json` que escribe el proceso de indexación.
+El historial legado SHALL vivir en el bucket `ana-backend-storage-{stage}` bajo `legacy/backups/{campaign}/{agent}/{phone}/chat_backup.json` y `legacy/media/{campaign}/{agent}/{filename}`, con el mismo contenido que tenían en `backups/` y `media/`. Ninguna ruta del backend MUST escribir, sobrescribir ni borrar bajo `legacy/`; solo escriben el proceso de indexación (`legacy/index/`) y la purga de `migrate-cli-to-cognito-login` (`legacy/backups/`, `legacy/media/`, `legacy/agents/`).
 
 #### Scenario: Conversación movida
 - **WHEN** existía `backups/prueba/erick/5215512345678/chat_backup.json` de un `agent_id` legado
@@ -16,6 +16,21 @@ El historial legado SHALL vivir en el bucket `ana-backend-storage-{stage}` bajo 
 #### Scenario: Sin rutas de escritura
 - **WHEN** se revisan las rutas `/admin/campaigns/{campaign}/legacy-chats*`
 - **THEN** solo existen operaciones `GET`
+
+### Requirement: Lista de agentes legados
+`legacy/agents/{campaign}.json` SHALL contener `{"schemaVersion":1,"campaign","agents":[<agent_id>...],"extractedAt"}` con los `agent_id` legados de la campaña (usernames normalizados, ordenados) y MUST NOT contener frases del día ni otro dato de `credentials.csv`. El sistema SHALL exponerla en `GET /admin/campaigns/{campaign}/legacy-agents` (200 `{"campaign","agents","extractedAt"}`, `agents` vacío si no existe) con la autorización de esta capacidad.
+
+#### Scenario: Campaña con agentes legados
+- **WHEN** existe `legacy/agents/prueba.json` con `["erick","luis"]`
+- **THEN** la ruta responde `{"campaign":"prueba","agents":["erick","luis"],"extractedAt":...}`
+
+#### Scenario: Sin lista
+- **WHEN** no existe `legacy/agents/ventas.json`
+- **THEN** la ruta responde 200 con `agents` vacío y `extractedAt` nulo
+
+#### Scenario: Solo nombres
+- **WHEN** se revisa el contenido de cualquier `legacy/agents/*.json`
+- **THEN** solo tiene los campos del contrato y ningún valor de la columna de frase de `credentials.csv`
 
 ### Requirement: Índice de búsqueda por campaña
 El índice `legacy/index/{campaign}.json` SHALL contener `{"schemaVersion":1,"generatedAt","conversations":[{"agent","phone","totalMessages","firstMessageAt","lastMessageAt"}]}`, con una entrada por `chat_backup.json` de la campaña, fechas ISO 8601 UTC tomadas de los mensajes (no de la fecha del objeto) y teléfonos tal como aparecen en la llave.

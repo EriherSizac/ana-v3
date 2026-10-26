@@ -2,7 +2,7 @@
 
 ## Context
 
-- Base: `add-admin-web-foundation` (BFF, acceso) y `add-agent-roster-management` (roster v3 `rosters/{campaign}.json`, roster v4 con `enabled`, authorizer `cognitoAdminJwt`, helper `requireAdminAccess`).
+- Base: `add-admin-web-foundation` (BFF, acceso) y `add-agent-roster-management` (agentes derivados de roles en `campaign-agents/{campaign}.json` + excepciones en `rosters/{campaign}.json` y en la tabla v4; regla efectiva de habilitación; authorizer `cognitoAdminJwt`, helper `requireAdminAccess`). "Agentes habilitados" en este cambio = regla efectiva de cada flota.
 - v3 hoy (`openspec/specs/v3/agent-assignments`): el CLI consume con `GET /get/chats/{agent}/{campaign}` el archivo más antiguo `agents/{campaign}/{agent}-contacts*.csv` y lo borra. La carga de supervisor escribe por defecto en `assignments/agents/...`, que nada promueve, así que solo `direct=true` llega al CLI. El parser del CLI (`agent-config.js`) separa por `\n`, no admite saltos de línea dentro de campos y descarta filas con menos columnas que el encabezado; mapea `phone_number|contact_phone|contact_pho|phone` a teléfono e interpola `{var}` en `message`.
 - v4 hoy: `POST /uploads/presign` firma metadata (`operatorid`, `campaign`, `distribute`, `assignments` ≤ 1500 chars, `template`, `countrycode`, `phonecolumn`); `csvTrigger` parsea con `csv-parse` (`columns`, `trim`, `skip_empty_lines`), normaliza alias, filtra filas con teléfono y asigna `targets[i % n]` con la lista expandida de pesos en el orden de `Object.entries`. No hay historial.
 
@@ -15,7 +15,7 @@
 **Non-Goals:**
 - Subidas de más de 4 MB a v3 (requeriría presign a S3 en v3; se deja para cuando haga falta).
 - Reemplazar o retirar la ruta de supervisor con `X-Admin-Key`.
-- Contactos "por revisar" en el detalle de una carga (seguimiento). `report-pending-progress` guarda los contactos interrumpidos en `review/{campaign}/{agent}/{assignment_id}.csv`, pero no encaja limpio aquí: `GET /get/chats` entrega solo el CSV sin su llave, así que el CLI no conoce el `{ts}`/`uploadId` de la carga y `assignment_id` no se puede unir con el manifiesto. Un cambio posterior puede (a) agregar una vista "Por revisar" por campaña y agente sobre `review/`, con la acción "Reasignar" que precarga una carga nueva en modo "Asignar a un agente", o (b) incluir el `uploadId` en el CSV que escribe D3 para unirlo al detalle.
+- Contactos "por revisar" en el detalle de una carga: los cubre `link-review-contacts-to-uploads`, que agrega la columna `ana_upload_id` a los archivos que escribe D3, el campo opcional `source` del manifiesto (D5) y la reasignación; se archiva después de este cambio.
 
 ## Decisions
 
@@ -29,7 +29,7 @@ Filas válidas en orden del archivo; habilitados ordenados por username (compara
 - Alternativa: `distribute` sin `assignments` en v4 — descartada: el trigger resuelve los elegibles al procesar (API del Dashboard), así que la vista previa no podría garantizar el resultado.
 
 ### D3. v3: el BFF manda archivos por agente a una ruta nueva
-`POST /admin/campaigns/{campaign}/contacts` recibe los CSV ya repartidos (encabezado original + filas válidas del agente) y aplica el mismo procesamiento de `message` que la carga de supervisor (función extraída de `supervisors.ts` a `src/lib/contactsCsv.ts`, sin cambiar su comportamiento). Escribe directo en `agents/` (lo que consume el CLI) + `historic/`, con el mismo `{ts}` para toda la carga.
+`POST /admin/campaigns/{campaign}/contacts` recibe los CSV ya repartidos (encabezado original + filas válidas del agente) y aplica el mismo procesamiento de `message` que la carga de supervisor (función extraída de `supervisors.ts` a `src/lib/contactsCsv.ts`, sin cambiar su comportamiento). Escribe directo en `agents/` (lo que consume el CLI) + `historic/`, con el mismo `{ts}` para toda la carga. Las copias de `historic/` llevan el username de Cognito y fecha posterior al cutover, así que la purga de `agent_id` legados de `migrate-cli-to-cognito-login` (D12) no las toca.
 - Alternativa: llamar N veces a la ruta de supervisor con `direct=true` — descartada: exige `X-Admin-Key` en el BFF, no valida roster, no es atómica ni deja manifiesto.
 - Alternativa: escribir en `assignments/` y agregar promoción — descartada: nada del CLI lee `assignments/` y agregar un proceso de promoción no aporta.
 - Alternativa: enviar el maestro + plan y repartir en v3 — descartada: duplicaría el algoritmo en otro runtime; con archivos por agente v3 solo valida y escribe.

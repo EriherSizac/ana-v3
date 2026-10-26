@@ -37,14 +37,14 @@ El sistema SHALL tomar como identificador del agente el claim `cognito:username`
 - **THEN** se trata igual que una solicitud sin token (motivo `missing`)
 
 ### Requirement: Autorización por roster de campaña
-El sistema SHALL autorizar una solicitud autenticada solo si el agente está habilitado en el roster de la campaña de la ruta (capacidad `v3/agent-roster`), comparando la campaña sin espacios laterales y en minúsculas. Una campaña sin roster MUST tratarse como sin agentes habilitados. Los cambios del roster MUST aplicarse en 60 segundos o menos.
+El sistema SHALL autorizar una solicitud autenticada solo si el agente está habilitado en la campaña de la ruta según la regla efectiva de `v3/agent-roster` (agente derivado de sus roles y sin excepción `enabled:false`), comparando la campaña sin espacios laterales y en minúsculas. Una campaña sin lista derivada MUST tratarse como sin agentes. Las excepciones MUST aplicarse en 60 segundos o menos.
 
 #### Scenario: Agente habilitado
-- **WHEN** `erick` está habilitado en el roster de `prueba` y llama a una ruta de agente de `prueba`
+- **WHEN** `erick` figura en la lista derivada de `prueba` sin excepción y llama a una ruta de agente de `prueba`
 - **THEN** la solicitud queda autorizada y el handler continúa
 
 #### Scenario: Agente no habilitado o deshabilitado
-- **WHEN** `erick` no aparece en el roster de `ventas`, aparece deshabilitado, o `ventas` no tiene roster
+- **WHEN** `erick` no figura en la lista derivada de `ventas` (sin rol de envío), tiene excepción `enabled:false`, o `ventas` no tiene lista derivada
 - **THEN** la solicitud se considera no autorizada con motivo `not_in_roster`
 
 #### Scenario: Agente deshabilitado durante la jornada
@@ -52,7 +52,7 @@ El sistema SHALL autorizar una solicitud autenticada solo si el agente está hab
 - **THEN** a más tardar 60 segundos después sus solicitudes a rutas de `prueba` se consideran no autorizadas
 
 #### Scenario: Roster ilegible
-- **WHEN** la lectura del roster falla por un error distinto de objeto inexistente
+- **WHEN** la lectura de la lista derivada o del roster falla por un error distinto de objeto inexistente, o la lista está vencida
 - **THEN** la solicitud se considera no autorizada con motivo `roster_error`
 
 ### Requirement: Modo de transición de la autenticación de agente
@@ -90,14 +90,14 @@ El sistema SHALL registrar por cada solicitud a una ruta de agente una línea JS
 - **THEN** ninguna línea de log contiene el valor del token
 
 ### Requirement: Consulta de campañas habilitadas del agente
-El sistema SHALL exponer `GET /agent/campaigns`, que siempre exige un ID token válido (sin modo reporte) y responde 200 con `{"username":<agente>,"campaigns":[<campaña>...]}`: las campañas, en minúsculas y orden alfabético, cuyo roster (`v3/agent-roster`) tiene habilitado al agente del token.
+El sistema SHALL exponer `GET /agent/campaigns`, que siempre exige un ID token válido (sin modo reporte) y responde 200 con `{"username":<agente>,"campaigns":[<campaña>...]}`: las campañas, en minúsculas y orden alfabético, donde el agente del token está habilitado según la regla efectiva de `v3/agent-roster`.
 
 #### Scenario: Agente con dos campañas
-- **WHEN** `erick` está habilitado en `ventas` y `prueba` y deshabilitado en `cobranza`
+- **WHEN** `erick` está habilitado en `ventas` y `prueba` y deshabilitado por excepción en `cobranza`
 - **THEN** la respuesta es `{"username":"erick","campaigns":["prueba","ventas"]}`
 
 #### Scenario: Agente sin campañas
-- **WHEN** el agente del token no está habilitado en ningún roster
+- **WHEN** el agente del token no está habilitado en ninguna campaña
 - **THEN** el sistema responde 200 con `campaigns` vacío
 
 #### Scenario: Sin token válido
@@ -116,7 +116,7 @@ El sistema SHALL exponer `GET /agent/campaigns`, que siempre exige un ID token v
 
 ### Requirement: Fuente de credenciales por campaña
 **Reason**: `agents/{campaign}/credentials.csv` deja de ser fuente de identidad; la pertenencia a una campaña la define el roster (`v3/agent-roster`).
-**Migration**: Dar de alta a cada agente en el User Pool y en el roster de sus campañas antes del release del CLI; los `credentials.csv` se borran de S3 al retirar la ruta.
+**Migration**: Antes del release del CLI, cada agente necesita usuario en el User Pool y un rol de su campaña con `ana:campaign:message:send`; los agentes legados no se trasladan. Al retirar la ruta, los `credentials.csv` se archivan en el bucket de archivo (tras extraer solo los usernames a `legacy/agents/`) y se borran del bucket de datos.
 
 ### Requirement: Comparación de usuario y palabra del día
 **Reason**: La palabra del día se elimina.
