@@ -7,7 +7,7 @@ Mantener actualizadas las secciones de ANA Admin (cargas, contactos por revisar,
 ## ADDED Requirements
 
 ### Requirement: Conexión directa desde el navegador
-Con sesión iniciada y `NEXT_PUBLIC_REALTIME_ENABLED` distinto de `false`, la consola SHALL abrir una sola conexión por pestaña a `NEXT_PUBLIC_REALTIME_URL` con `client=admin`, la versión de la app y el ID token de la sesión como subprotocolo, sin pasar por el BFF, y MUST cerrarla al cerrar sesión. El token MUST NOT registrarse en la consola del navegador.
+Con sesión iniciada, `NEXT_PUBLIC_REALTIME_ENABLED` distinto de `false` y `NEXT_PUBLIC_REALTIME_URL` configurada (la URL execute-api del gateway), la consola SHALL abrir una sola conexión por pestaña a `NEXT_PUBLIC_REALTIME_URL` con `client=admin`, la versión de la app y el ID token de la sesión como subprotocolo, sin pasar por el BFF, y MUST cerrarla al cerrar sesión. El token MUST NOT registrarse en la consola del navegador.
 
 #### Scenario: Login
 - **WHEN** un supervisor inicia sesión y entra a la consola
@@ -88,3 +88,37 @@ Con `NEXT_PUBLIC_REALTIME_ENABLED=false`, la consola MUST NOT abrir conexiones y
 #### Scenario: Despliegue con realtime apagado
 - **WHEN** ANA Admin se despliega con `NEXT_PUBLIC_REALTIME_ENABLED=false`
 - **THEN** ninguna pestaña abre WebSocket y el encabezado muestra "Sin actualizaciones en vivo"
+
+#### Scenario: Despliegue sin URL del canal
+- **WHEN** ANA Admin se despliega sin `NEXT_PUBLIC_REALTIME_URL`
+- **THEN** ninguna pestaña abre WebSocket y la consola se comporta como con el canal inactivo
+
+### Requirement: Actualización de acceso forzada en la consola
+Al recibir `session.refresh`, la consola SHALL cerrar la conexión con código 4001, volver a leer `GET /api/me` sin recargar la página (actualizando navegación, permisos y el gate de la sección), recargar una vez la sección visible con la misma protección del trabajo sin guardar, y reconectar tras una espera aleatoria de 0 a 10 s que MUST NOT contar como fallo de conexión.
+
+#### Scenario: Permiso retirado con la consola abierta
+- **WHEN** a un supervisor le quitan `ana:contacts:list:upload` y su pestaña en Contactos recibe `session.refresh`
+- **THEN** la consola relee `/api/me`, deja de mostrar Contactos en la navegación y la sección muestra "Sin acceso"
+
+#### Scenario: Agente con trabajo sin guardar
+- **WHEN** el agente tiene filas seleccionadas en Mi asignación y llega `session.refresh`
+- **THEN** la consola relee `/api/me`, la selección no cambia y aparece "Hay cambios nuevos · Actualizar"
+
+### Requirement: Forzar actualización desde la consola
+La sección Agentes SHALL mostrar el botón "Forzar actualización" solo a usuarios con `ana:admin:console:manage` o superadmin; el botón abre un diálogo para elegir un usuario, una campaña o todos los usuarios y, tras confirmar, llama `POST /api/realtime/refresh`, que el BFF MUST autorizar con el mismo requisito antes de reenviarlo a v4 `POST /admin/realtime/refresh` con el token del usuario. La consola SHALL mostrar el resultado con un aviso de éxito o error.
+
+#### Scenario: Admin fuerza a un usuario
+- **WHEN** un admin elige "Un usuario", escribe `jperez` y confirma
+- **THEN** el BFF reenvía `{"scope":"user","username":"jperez"}` a v4 y la consola muestra "Se pidió la actualización de jperez"
+
+#### Scenario: Admin fuerza a todos
+- **WHEN** un admin elige "Todos los usuarios" y confirma
+- **THEN** el BFF reenvía `{"scope":"all"}` y la consola muestra el aviso de éxito
+
+#### Scenario: Supervisor sin permiso de consola
+- **WHEN** un supervisor con `ana:admin:agents:manage` pero sin `ana:admin:console:manage` abre Agentes
+- **THEN** no ve el botón y una llamada directa a `POST /api/realtime/refresh` responde 403 sin llegar a v4
+
+#### Scenario: Usuario vacío
+- **WHEN** el admin elige "Un usuario" sin escribir el username
+- **THEN** el botón de confirmar está deshabilitado y no se llama al BFF
