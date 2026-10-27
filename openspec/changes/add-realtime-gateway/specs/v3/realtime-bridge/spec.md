@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Convertir los cambios del almacenamiento S3 de v3 (asignaciones, publicaciones, contactos por revisar, roster, cargas y configuración del CLI) en eventos del canal realtime de v4, sin modificar los handlers de v3 ni su contrato REST.
+Convertir los cambios del almacenamiento S3 de v3 (asignaciones, publicaciones, contactos por revisar, roster, cargas y configuración del CLI) en eventos del canal realtime de v4 y en actualizaciones forzadas de acceso, sin modificar los handlers de v3 ni su contrato REST.
 
 ## ADDED Requirements
 
@@ -45,12 +45,19 @@ Un objeto creado o borrado bajo `review/{campaign}/` SHALL producir `review.chan
 - **WHEN** se reescribe `rosters/prueba.json`
 - **THEN** las conexiones de ANA Admin con acceso a `prueba` reciben `roster.changed` con `source: "v3"`
 
+### Requirement: Actualización forzada por roster de v3
+Un objeto creado o borrado `rosters/{campaign}.json` SHALL, además de `roster.changed`, forzar la actualización (`session.refresh` con `reason: "roster"`) de todas las conexiones cuyo acceso v4 incluye esa campaña, porque el evento de S3 no dice qué agentes cambiaron.
+
+#### Scenario: Excepción editada en v3
+- **WHEN** ANA Admin deshabilita a `jperez` en `prueba` con `POST /admin/campaigns/prueba/roster/agents` y se reescribe `rosters/prueba.json`
+- **THEN** las conexiones de los usuarios con `prueba` en su acceso reciben `session.refresh` y las de otras campañas no
+
 ### Requirement: Configuración del CLI cambiada
-Un objeto creado `config/cli-settings.json` SHALL producir `settings.changed` con `ref.scope: "cli"` a todos los CLIs y conexiones `admin`.
+Un objeto creado `config/cli-settings.json` SHALL producir `settings.changed` con `ref.scope: "cli"` a todos los CLIs y conexiones `admin` y forzar la actualización de todas las conexiones `cli` (`reason: "settings"`).
 
 #### Scenario: Developer cambia un flag
 - **WHEN** un Developer guarda la configuración del CLI en ANA Admin
-- **THEN** cada CLI conectado recibe `settings.changed` con `scope: "cli"`
+- **THEN** cada CLI conectado recibe `settings.changed` con `scope: "cli"` y luego `session.refresh` con `reason: "settings"`
 
 ### Requirement: Llaves no reconocidas
 Una llave que no siga el patrón de su prefijo (sin campaña, sin agente o sin el sufijo `-contacts-*.csv` donde aplica) MUST descartarse sin emitir evento y contarse como `BridgeSkipped`.

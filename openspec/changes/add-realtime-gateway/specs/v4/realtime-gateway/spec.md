@@ -7,7 +7,7 @@ Ofrecer a los clientes de ANA (desktop v4, CLI v3 y ANA Admin) un canal WebSocke
 ## ADDED Requirements
 
 ### Requirement: Endpoint WebSocket único
-El sistema SHALL exponer una sola API WebSocket por stage en us-east-2 (`wss://.../<stage>`), publicada como salida `RealtimeWsUrl` del stack v4, que sirve a los tres tipos de cliente. El cliente MUST declarar su tipo en el query string `client` (`desktop`, `cli` o `admin`) y su versión en `v`; un tipo ausente o desconocido se rechaza en `$connect`.
+El sistema SHALL exponer una sola API WebSocket por stage en us-east-2, con la URL por defecto de execute-api (sin dominio propio) publicada como salida `RealtimeWsUrl`, que sirve a los tres tipos de cliente. El cliente MUST declarar su tipo en el query string `client` (`desktop`, `cli` o `admin`) y su versión en `v`; un tipo ausente o desconocido se rechaza en `$connect`.
 
 #### Scenario: Tipo de cliente válido
 - **WHEN** el desktop abre `wss://<api>/prod?client=desktop&v=1.4.0` con un token válido
@@ -44,15 +44,26 @@ Si el handshake trae header `Origin`, `$connect` SHALL aceptarlo solo si está e
 - **THEN** el origen no impide la conexión
 
 ### Requirement: Suscripciones derivadas de la identidad
-Al aceptar, el sistema SHALL suscribir la conexión al tema del usuario (`cognito:username` canónico), al tema de su tipo de cliente y, solo si `client=admin`, a los temas de las campañas de su acceso v4 (`*` = todas). El cliente MUST NOT poder elegir ni ampliar sus suscripciones.
+Al aceptar, el sistema SHALL suscribir la conexión al tema del usuario (`cognito:username` canónico), al tema de su tipo de cliente y, solo si `client=admin`, a los temas de eventos de las campañas de su acceso v4 (`*` = todas). Toda conexión SHALL registrarse además con las campañas y los roles de su acceso v4 para la actualización forzada. El cliente MUST NOT poder elegir ni ampliar sus suscripciones.
 
 #### Scenario: Agente en el CLI
 - **WHEN** `jperez` conecta con `client=cli`
-- **THEN** recibe eventos dirigidos a `jperez` y a los CLIs, y ninguno de campaña
+- **THEN** recibe eventos dirigidos a `jperez` y a los CLIs, ninguno de campaña, y queda registrada con las campañas y roles de `jperez` para la actualización forzada
 
 #### Scenario: Supervisor en ANA Admin
 - **WHEN** un supervisor con campañas `prueba` y `zendere` conecta con `client=admin`
 - **THEN** recibe además los eventos de campaña de `prueba` y `zendere`, y no los de otras campañas
+
+### Requirement: Acceso no disponible al conectar
+Si el acceso v4 no se puede resolver en `$connect`, una conexión `admin` MUST rechazarse (razón `access_error`) y una `desktop` o `cli` SHALL aceptarse solo con sus temas de usuario y de tipo, marcada con acceso desconocido.
+
+#### Scenario: API de Roles no disponible al conectar el CLI
+- **WHEN** `jperez` conecta con `client=cli` y la resolución de su acceso falla
+- **THEN** la conexión se acepta con sus temas de usuario y de tipo, marcada con acceso desconocido
+
+#### Scenario: API de Roles no disponible al conectar ANA Admin
+- **WHEN** un supervisor conecta con `client=admin` y la resolución de su acceso falla
+- **THEN** el handshake falla y se cuenta `ConnectRejected` con razón `access_error`
 
 ### Requirement: Registro y limpieza de conexiones
 Cada conexión aceptada SHALL registrarse con usuario, tipo, versión, hora de conexión, `exp` del token y un TTL de 3 horas. `$disconnect` MUST borrar la conexión y sus suscripciones; un envío que reciba 410 (Gone) MUST borrarlas también.
@@ -98,7 +109,7 @@ Todo evento SHALL ser JSON `{"v":1,"type","id","at","campaign"?,"ref"?}` de máx
 - **THEN** `jperez` recibe `{"v":1,"type":"jobs.changed","id":"<uuid>","at":<ms>,"campaign":"prueba"}` sin datos de los contactos
 
 ### Requirement: Catálogo de eventos v1
-El sistema SHALL emitir solo `jobs.changed`, `assignment.pending`, `assignment.published` y `publications.changed` (al usuario), `uploads.changed`, `review.changed` y `roster.changed` (a la campaña) y `settings.changed` con `ref.scope` `cli` o `desktop` (a ese tipo de cliente y a `admin`). Los clientes MUST ignorar tipos que no conozcan.
+El sistema SHALL emitir solo `jobs.changed`, `assignment.pending`, `assignment.published` y `publications.changed` (al usuario), `uploads.changed`, `review.changed` y `roster.changed` (a la campaña) `settings.changed` con `ref.scope` `cli` o `desktop` (a ese tipo de cliente y a `admin`) y el mensaje de control `session.refresh` (a las conexiones de una actualización forzada). Los clientes MUST ignorar tipos que no conozcan.
 
 #### Scenario: Tipo futuro
 - **WHEN** un cliente recibe `{"v":1,"type":"chat.changed"}`
@@ -137,7 +148,7 @@ El sistema SHALL emitir `jobs.changed` al operador cuando `csvTrigger` le crea j
 - **THEN** `ana` y `beto` reciben `jobs.changed`
 
 ### Requirement: Eventos de campaña v4
-El sistema SHALL emitir a la campaña `uploads.changed` (con `ref.uploadId`) cuando `csvTrigger` registra una carga procesada o rechazada y cuando `jobs/ack` cambia el avance de una carga (máximo uno por carga cada 10 s), `review.changed` cuando cambian contactos por revisar por reasignación o resolución, y `roster.changed` tras `PUT /admin/agent-roster`.
+El sistema SHALL emitir a la campaña `uploads.changed` (con `ref.uploadId`) cuando `csvTrigger` registra una carga procesada o rechazada y cuando `jobs/ack` cambia el avance de una carga (máximo uno por carga cada 10 s), `review.changed` cuando cambian contactos por revisar por reasignación o resolución, y `roster.changed` tras `POST /admin/agent-roster`.
 
 #### Scenario: Avance de envío
 - **WHEN** el desktop acusa 3 jobs de la misma carga en 5 segundos
@@ -150,6 +161,59 @@ Un `PUT /admin/desktop-settings` exitoso SHALL emitir `settings.changed` con `re
 - **WHEN** un Developer guarda `sendMinGapSeconds: 180`
 - **THEN** cada desktop conectado recibe `settings.changed` con `scope: "desktop"`
 
+### Requirement: Señal de actualización de acceso
+En una actualización forzada, el sistema SHALL enviar a cada conexión afectada `{"v":1,"type":"session.refresh","id","at","ref":{"reason"}}` con `reason` `permissions`, `roster`, `settings` o `manual` y MUST cerrarla enseguida. Los clientes, al recibirlo, SHALL cerrar con código 4001, volver a leer su acceso (`/me` o su equivalente) y su estado por REST y reconectar tras una espera aleatoria de 0 a 10 s que no cuenta como fallo de conexión.
+
+#### Scenario: Conexión forzada
+- **WHEN** se fuerza la actualización de `jperez`
+- **THEN** cada conexión de `jperez` recibe `session.refresh` y queda cerrada por el servidor
+
+#### Scenario: Reconexión tras la señal
+- **WHEN** un cliente recibe `session.refresh` con `reason: "permissions"`
+- **THEN** vuelve a leer su acceso y su estado y reconecta en máximo 10 s sin aumentar su espera de backoff
+
+### Requirement: Actualización forzada automática
+Sin bloquear ni cambiar la respuesta de la operación que la origina, el sistema SHALL forzar la actualización de las conexiones con el rol (más las de acceso desconocido) tras un `PUT /admin/role-permissions/{roleId}` exitoso, de las de cada agente del cuerpo tras un `POST /admin/agent-roster` exitoso y de todas las `desktop` tras un `PUT /admin/desktop-settings` exitoso. Los cambios de roster y de configuración del CLI en v3 se fuerzan vía el puente (`v3/realtime-bridge`).
+
+#### Scenario: Permisos de un rol editados
+- **WHEN** un admin guarda permisos nuevos para el rol `r-123`
+- **THEN** las conexiones registradas con `r-123` y las de acceso desconocido reciben `session.refresh` con `reason: "permissions"`, y las demás siguen abiertas
+
+#### Scenario: Agente deshabilitado en el roster v4
+- **WHEN** un supervisor deshabilita a `jperez` en `prueba` con `POST /admin/agent-roster`
+- **THEN** las conexiones de `jperez` reciben `session.refresh` con `reason: "roster"` y la campaña recibe `roster.changed`
+
+#### Scenario: Configuración del desktop guardada
+- **WHEN** un Developer guarda la configuración del desktop
+- **THEN** los admins reciben `settings.changed` y cada desktop conectado recibe `session.refresh` con `reason: "settings"`
+
+#### Scenario: Fallo al pedir la actualización
+- **WHEN** `PUT /admin/role-permissions/{roleId}` guarda los permisos pero la publicación al bus falla
+- **THEN** la respuesta es la misma que sin realtime y se cuenta `EmitFailed`
+
+### Requirement: Actualización forzada manual
+`POST /admin/realtime/refresh` SHALL aceptar `{"scope":"user","username"}`, `{"scope":"campaign","campaign"}` o `{"scope":"all"}`, forzar la actualización de las conexiones de ese usuario, de los usuarios con esa campaña en su acceso o de todas, y responder 202. MUST exigir `ana:admin:console:manage` o superadmin sin depender de `PERMISSIONS_ENFORCED` (403 en otro caso), rechazar con 400 un alcance inválido o sin destino, y registrar quién la pidió, el alcance y el destino.
+
+#### Scenario: Admin fuerza a un usuario
+- **WHEN** un admin envía `{"scope":"user","username":"JPerez"}`
+- **THEN** responde 202 y las conexiones de `jperez` reciben `session.refresh` con `reason: "manual"`
+
+#### Scenario: Admin fuerza una campaña
+- **WHEN** un admin envía `{"scope":"campaign","campaign":"Prueba"}`
+- **THEN** se fuerzan las conexiones de los usuarios con `prueba` en su acceso, y no las de usuarios cuyo acceso es `*` ni las de otras campañas
+
+#### Scenario: Admin fuerza a todos
+- **WHEN** un admin envía `{"scope":"all"}`
+- **THEN** todas las conexiones `desktop`, `cli` y `admin` reciben `session.refresh` y se cierran
+
+#### Scenario: Supervisor sin permiso de consola
+- **WHEN** un supervisor sin `ana:admin:console:manage` llama la ruta
+- **THEN** responde 403 y no se fuerza ninguna conexión
+
+#### Scenario: Alcance inválido
+- **WHEN** un admin envía `{"scope":"user"}` sin `username`
+- **THEN** responde 400
+
 ### Requirement: Interruptor de realtime
 Con `realtimeEnabled=false` el sistema SHALL rechazar todo `$connect` con 403 (razón `disabled`), descartar los eventos y cerrar las conexiones abiertas en máximo 5 minutos, sin afectar ninguna ruta REST.
 
@@ -158,7 +222,7 @@ Con `realtimeEnabled=false` el sistema SHALL rechazar todo `$connect` con 403 (r
 - **THEN** en máximo 5 minutos no queda ninguna conexión abierta y los clientes siguen operando con su polling rápido
 
 ### Requirement: Métricas y alarmas
-El sistema SHALL publicar en `AnaRealtime` las métricas `ConnectAccepted` y `ActiveConnections` (por tipo de cliente, cada 5 min), `ConnectRejected` (por razón), `EventsEmitted` (por tipo), `PostOk`, `PostGone`, `PostFailed` y `EmitFailed`, y MUST alarmar si `PostFailed` supera 5 % de los envíos durante 15 minutos o si la Lambda de reparto falla.
+El sistema SHALL publicar en `AnaRealtime` las métricas `ConnectAccepted` y `ActiveConnections` (por tipo de cliente, cada 5 min), `ConnectRejected` (por razón), `EventsEmitted` (por tipo), `PostOk`, `PostGone`, `PostFailed`, `EmitFailed` y `ForcedClosed` (por razón), y MUST alarmar si `PostFailed` supera 5 % de los envíos durante 15 minutos o si la Lambda de reparto falla.
 
 #### Scenario: Fallo de envíos
 - **WHEN** más del 5 % de los `PostToConnection` fallan durante 15 minutos
