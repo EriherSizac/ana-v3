@@ -7,7 +7,7 @@ Mantener al desktop v4 conectado al canal realtime de ANA para que reaccione al 
 ## ADDED Requirements
 
 ### Requirement: Conexión del desktop al canal
-Con sesión iniciada y el canal habilitado, el main SHALL conectarse a `ANA_REALTIME_URL` (por defecto la URL de prod) con `client=desktop`, la versión de la app y el ID token vigente como subprotocolo, y MUST cerrar la conexión al cerrar sesión, cambiar de usuario o salir. El token MUST NOT escribirse en logs.
+Con sesión iniciada, el canal habilitado y una URL configurada (`ANA_REALTIME_URL` del entorno o la URL execute-api de prod embebida al compilar), el main SHALL conectarse a ella con `client=desktop`, la versión de la app y el ID token vigente como subprotocolo, y MUST cerrar la conexión al cerrar sesión, cambiar de usuario o salir. El token MUST NOT escribirse en logs.
 
 #### Scenario: Login
 - **WHEN** el agente inicia sesión en el desktop
@@ -91,3 +91,18 @@ Con la variable de entorno `ANA_REALTIME=off`, el main MUST NOT conectarse al ca
 #### Scenario: PC con realtime desactivado
 - **WHEN** el desktop arranca con `ANA_REALTIME=off`
 - **THEN** no abre ninguna conexión WebSocket y consulta jobs cada 5 segundos
+
+#### Scenario: Build sin URL del canal
+- **WHEN** el desktop arranca sin `ANA_REALTIME_URL` y sin URL embebida
+- **THEN** no abre ninguna conexión WebSocket y consulta jobs cada 5 segundos y configuración cada 5 minutos
+
+### Requirement: Actualización de acceso forzada en el desktop
+Al recibir `session.refresh`, el main SHALL cerrar la conexión con código 4001, volver a leer `GET /me` para el permiso de respuesta manual, avisar al renderer para que vuelva a leer `GET /me` y recalcule sus pestañas, consultar `GET /jobs/poll` y `GET /settings`, y reconectar tras una espera aleatoria de 0 a 10 s que MUST NOT contar como fallo de conexión.
+
+#### Scenario: Permisos del rol cambiados
+- **WHEN** un admin quita `ana:chats:message:reply` al rol del agente y el desktop recibe `session.refresh` con `reason: "permissions"`
+- **THEN** el desktop deja de permitir la respuesta manual y el renderer actualiza sus pestañas sin reiniciar la app
+
+#### Scenario: Reconexión tras la actualización forzada
+- **WHEN** el desktop procesó un `session.refresh`
+- **THEN** abre una conexión nueva en máximo 10 s con la espera de backoff sin cambios
