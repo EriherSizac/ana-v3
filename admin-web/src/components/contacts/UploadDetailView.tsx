@@ -29,6 +29,8 @@ import {
   type Plan,
   type ReviewItem,
 } from '@/lib/contacts';
+import { StaleNotice } from '@/components/system/Realtime';
+import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
 import type { UploadHistoryItem } from '@/lib/contacts/history';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
 
@@ -222,6 +224,14 @@ export function UploadDetailView({ uploadId, campaign }: { uploadId: string; cam
 
   const title = isNone ? 'Por revisar sin carga asociada' : `Carga ${upload?.fileName || uploadId}`;
 
+  // Recarga en vivo (add-realtime-admin-web); con selección, diálogo o reasignación en curso → aviso.
+  const live = useRealtimeRefresh({
+    types: ['uploads.changed', 'review.changed'],
+    campaign,
+    reload: load,
+    isDirty: () => selected.length > 0 || discardOpen || re !== null || busy,
+  });
+
   return (
     <PageContainer>
       <PageHeader
@@ -236,6 +246,7 @@ export function UploadDetailView({ uploadId, campaign }: { uploadId: string; cam
           </Link>
         }
       />
+      <StaleNotice stale={live.stale} onRefresh={live.refresh} />
       {error && <InlineMessage className="mb-3">{error}</InlineMessage>}
       {actionError && <InlineMessage className="mb-3">{actionError}</InlineMessage>}
       {!isNone && upload === null && <InlineMessage className="mb-3">Carga no encontrada en el historial v3.</InlineMessage>}

@@ -17,6 +17,8 @@ import {
   Toggle,
 } from '@/components/ui';
 import { useCampaigns } from '@/components/system/useCampaigns';
+import { StaleNotice } from '@/components/system/Realtime';
+import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
 import {
   assignmentsTooLong,
   buildPlan,
@@ -102,6 +104,8 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [delivery, setDelivery] = useState<Delivery | null>(null);
+  // Sube al recibir un aviso realtime: vuelve a leer los destinatarios habilitados.
+  const [rosterVersion, setRosterVersion] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Destinatarios habilitados de la campaña y flota (con supervisores si el toggle está encendido).
@@ -125,7 +129,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     return () => {
       cancelled = true;
     };
-  }, [campaign, fleet, includeSupervisors]);
+  }, [campaign, fleet, includeSupervisors, rosterVersion]);
 
   // Los límites dependen de la flota: al cambiarla se vuelve a elegir el archivo.
   useEffect(() => {
@@ -283,6 +287,15 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   const isSupervisor = (u: string) => supervisors.includes(u);
   const labelOf = (u: string) => (isSupervisor(u) ? `${u} (Supervisor)` : u);
 
+  // Recarga en vivo (add-realtime-admin-web): con una carga en curso en el
+  // asistente (archivo, agente elegido, envío o confirmación) → aviso en lugar de recargar.
+  const live = useRealtimeRefresh({
+    types: ['uploads.changed', 'review.changed', 'roster.changed'],
+    campaign,
+    reload: () => setRosterVersion((v) => v + 1),
+    isDirty: () => fileText !== null || agent !== null || sending || confirmOpen,
+  });
+
   return (
     <PageContainer>
       <PageHeader
@@ -297,6 +310,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           </Link>
         }
       />
+      <StaleNotice stale={live.stale} onRefresh={live.refresh} />
 
       <section className="pernexium-card p-6" aria-labelledby="destino-title">
         <h2 id="destino-title" className="text-base font-semibold">

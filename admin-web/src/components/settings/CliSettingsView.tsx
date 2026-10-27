@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Badge, Button, ConfirmDialog, InlineMessage, PageContainer, PageHeader, Skeleton, Toggle } from '@/components/ui';
 import { formatDate } from '@/lib/agents';
+import { StaleNotice } from '@/components/system/Realtime';
+import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
 
 interface CatalogEntry {
@@ -74,6 +76,9 @@ export function CliSettingsView({ children }: { children?: ReactNode } = {}) {
     }
   };
 
+  // Recarga en vivo (add-realtime-admin-web); con la confirmación abierta → aviso.
+  const live = useRealtimeRefresh({ types: ['settings.changed'], reload: load, isDirty: () => pending !== null || saving });
+
   const labelOf = (c: CatalogEntry) => LABELS[c.key] ?? c.label ?? c.key;
 
   return (
@@ -88,6 +93,7 @@ export function CliSettingsView({ children }: { children?: ReactNode } = {}) {
         </InlineMessage>
       )}
       {saveError && <InlineMessage className="mb-3">{saveError}</InlineMessage>}
+      <StaleNotice stale={live.stale} onRefresh={live.refresh} />
       <div className="pernexium-card divide-y divide-neutral-40">
         {!data && !loadError ? (
           <div className="flex flex-col gap-3 p-6" data-testid="settings-skeleton">

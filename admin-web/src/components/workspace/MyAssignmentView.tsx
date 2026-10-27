@@ -19,6 +19,8 @@ import {
   Textarea,
 } from '@/components/ui';
 import { formatDate } from '@/lib/agents';
+import { StaleNotice } from '@/components/system/Realtime';
+import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
 import {
   defaultPhoneColumn,
@@ -146,6 +148,21 @@ export function MyAssignmentView() {
   }, [campaign, loadPending, loadPublications]);
 
   const merged = useMemo(() => mergeFiles(files), [files]);
+
+  // Recarga en vivo (add-realtime-admin-web): pendientes con `assignment.pending`
+  // (con archivos cargados, filas seleccionadas o publicación en curso → aviso) e
+  // historial con `publications.changed`.
+  const livePending = useRealtimeRefresh({
+    types: ['assignment.pending'],
+    campaign,
+    reload: () => (campaign ? loadPending(campaign) : undefined),
+    isDirty: () => files.length > 0 || selected.size > 0 || confirmOpen || publishing,
+  });
+  useRealtimeRefresh({
+    types: ['publications.changed'],
+    campaign,
+    reload: () => (campaign ? loadPublications(campaign) : undefined),
+  });
 
   const loadSelected = async () => {
     if (!campaign || checkedKeys.length === 0) return;
@@ -276,6 +293,7 @@ export function MyAssignmentView() {
   return (
     <PageContainer>
       <PageHeader title="Mi asignación" description="Revisa tus contactos asignados en v3, escribe tu mensaje y publícalos para que tu CLI los envíe." />
+      <StaleNotice stale={livePending.stale} onRefresh={livePending.refresh} />
 
       <section className="pernexium-card p-6" aria-labelledby="campana-title">
         <h2 id="campana-title" className="text-base font-semibold">

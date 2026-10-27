@@ -15,6 +15,8 @@ import {
   TableContainer,
 } from '@/components/ui';
 import { AccessContext } from '@/components/system/AccessContext';
+import { StaleNotice } from '@/components/system/Realtime';
+import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
 import { formatDate } from '@/lib/agents';
 import { contactName } from '@/lib/contacts';
 import type { UploadHistoryItem } from '@/lib/contacts/history';
@@ -136,6 +138,14 @@ export function V4ReviewView({ campaign, srcKey }: { campaign: string; srcKey: s
 
   const title = srcKey ? `Carga ${upload?.fileName || srcKey.split('/').pop()}` : 'Por revisar (v4)';
 
+  // Recarga en vivo (add-realtime-admin-web); con selección o diálogo abierto → aviso.
+  const live = useRealtimeRefresh({
+    types: ['review.changed'],
+    campaign,
+    reload: load,
+    isDirty: () => selected.length > 0 || discardOpen || rq !== null || busy,
+  });
+
   return (
     <PageContainer>
       <PageHeader
@@ -154,6 +164,7 @@ export function V4ReviewView({ campaign, srcKey }: { campaign: string; srcKey: s
           </Link>
         }
       />
+      <StaleNotice stale={live.stale} onRefresh={live.refresh} />
       {error && <InlineMessage className="mb-3">{error}</InlineMessage>}
       {actionMsg && <InlineMessage className="mb-3">{actionMsg}</InlineMessage>}
       {srcKey && upload === null && <InlineMessage className="mb-3">Carga no encontrada en el historial v4.</InlineMessage>}

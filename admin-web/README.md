@@ -60,6 +60,8 @@ identificadores públicos); el resto solo existe en el servidor y
 | `NEXT_PUBLIC_COGNITO_USER_POOL_ID` | público | `us-east-2_UepfOyKpd` |
 | `NEXT_PUBLIC_COGNITO_CLIENT_ID` | público | App Client compartido `1r6niimhkl2fmias6kk85n4ou4` |
 | `NEXT_PUBLIC_COOKIE_DOMAIN` | público | `.pernexium.com.mx` en prod, `localhost` en dev |
+| `NEXT_PUBLIC_REALTIME_URL` | público | URL `wss://…execute-api…/<stage>` del canal realtime (`RealtimeWsUrl` de v4); vacía = sin canal |
+| `NEXT_PUBLIC_REALTIME_ENABLED` | público | `false` apaga el canal (por defecto encendido si hay URL) |
 | `COGNITO_ALLOWED_CLIENT_IDS` | servidor | allowlist de `aud` (separada por comas) |
 | `ANA_V4_API_BASE` | servidor | backend v4 (`GET /me`, `GET /agents/campaigns`) |
 | `ANA_V3_API_BASE` | servidor | backend v3 (rutas `/admin/*`) |
@@ -290,3 +292,36 @@ vuelve a pedir.
   `ConfirmDialog`; el reenvío advierte "Este contacto pudo haber recibido el
   mensaje. Reenviarlo puede duplicarlo." → `POST /api/v4/campaigns/{c}/review/resolve`
   (→ v4 `POST /jobs/review/resolve`, 1–100 contactos, resultado por contacto).
+
+## Actualización en vivo (add-realtime-admin-web)
+
+Tras el login, cada pestaña abre **una** conexión WebSocket directa al canal
+realtime de v4 (`client=admin`, ID token de Amplify como subprotocolo `ana.v1`;
+el BFF no interviene). El encabezado muestra **En vivo** o **Sin actualizaciones
+en vivo**. Los avisos no traen datos: cada sección vuelve a leer por el BFF.
+
+| Sección | Eventos que la recargan |
+|---|---|
+| Historial de cargas | `uploads.changed`, `review.changed` (de su campaña) |
+| Detalle de carga v3 | `uploads.changed`, `review.changed` |
+| Por revisar v4 | `review.changed` |
+| Contactos (asistente) | `uploads.changed`, `review.changed`, `roster.changed` (relee los destinatarios) |
+| Agentes | `roster.changed` |
+| Mi asignación | `assignment.pending` (pendientes), `publications.changed` (historial) |
+| Configuración (CLI y desktop) | `settings.changed` |
+
+- Recarga en ≤ 1 s, agrupando los eventos de ese segundo; los de otra campaña se
+  ignoran. También recarga al reconectar y tras una actualización forzada.
+- **Trabajo sin guardar** (archivos cargados o filas seleccionadas, un diálogo o
+  una confirmación abiertos, un valor editado, una carga en curso en el
+  asistente): no se recarga; aparece "Hay cambios nuevos · Actualizar".
+- Sin canal (sin URL, `NEXT_PUBLIC_REALTIME_ENABLED=false` o
+  `realtimeEnabled=false` en v4): se recarga la sección al volver a la pestaña
+  (máximo una vez por minuto), sin polling. Pestaña oculta > 10 min: se cierra la
+  conexión y al volver se reconecta y recarga una vez.
+- **Actualización forzada** (`session.refresh`): la consola relee `/api/me` (navegación
+  y permisos) sin recargar la página, recarga la sección visible y reconecta.
+- **Forzar actualización** (Agentes, solo `ana:admin:console:manage` o superadmin):
+  un usuario, una campaña o todos → `POST /api/realtime/refresh` → v4
+  `POST /admin/realtime/refresh`. Las sesiones afectadas (consola, desktop, CLI)
+  releen su acceso y se reconectan en segundos.

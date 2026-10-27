@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, ConfirmDialog, InlineMessage, Input, Label, Skeleton } from '@/components/ui';
 import { formatDate } from '@/lib/agents';
+import { StaleNotice } from '@/components/system/Realtime';
+import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
 import { Toggle } from './CliSettingsView';
 
@@ -99,6 +101,13 @@ export function DesktopSettingsSection() {
     }
   };
 
+  // Recarga en vivo (add-realtime-admin-web); con un valor editado o la confirmación abierta → aviso.
+  const live = useRealtimeRefresh({
+    types: ['settings.changed'],
+    reload: load,
+    isDirty: () => pending !== null || saving || Object.keys(drafts).length > 0,
+  });
+
   return (
     <section className="mt-10" aria-labelledby="desktop-settings-title">
       <h2 id="desktop-settings-title" className="text-xl font-bold">
@@ -116,6 +125,7 @@ export function DesktopSettingsSection() {
         </InlineMessage>
       )}
       {saveError && <InlineMessage className="mb-3">{saveError}</InlineMessage>}
+      <StaleNotice stale={live.stale} onRefresh={live.refresh} />
       <div className="pernexium-card divide-y divide-neutral-40">
         {!data && !loadError ? (
           <div className="flex flex-col gap-3 p-6" data-testid="desktop-settings-skeleton">

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import {
   Badge,
@@ -19,6 +19,10 @@ import {
   TableContainer,
 } from '@/components/ui';
 import { useCampaigns } from '@/components/system/useCampaigns';
+import { AccessContext } from '@/components/system/AccessContext';
+import { StaleNotice } from '@/components/system/Realtime';
+import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
+import { ForceRefreshDialog } from './ForceRefreshDialog';
 import {
   FILTER_OPTIONS,
   FLEETS,
@@ -102,6 +106,9 @@ export function AgentsView() {
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [outcome, setOutcome] = useState<FleetOutcome[] | null>(null);
   const [detail, setDetail] = useState<UserRow | null>(null);
+  const [forceOpen, setForceOpen] = useState(false);
+  // "Forzar actualización" solo con ana:admin:console:manage o superadmin (isAdmin de v4).
+  const isAdmin = useContext(AccessContext)?.isAdmin === true;
   const reqId = useRef(0);
 
   useEffect(() => {
@@ -203,18 +210,38 @@ export function AgentsView() {
     };
   };
 
+  // Recarga en vivo (add-realtime-admin-web): roster de la campaña; con una
+  // acción masiva, confirmación o detalle abiertos → aviso.
+  const live = useRealtimeRefresh({
+    types: ['roster.changed'],
+    campaign: campaign ?? undefined,
+    reload: () => load(),
+    isDirty: () => selected.length > 0 || pending !== null || busy || detail !== null,
+  });
+
   return (
     <PageContainer>
       <PageHeader
         title="Agentes"
         description="Usuarios del pool de Pernexium, sus roles y su estado de agente por campaña. Los agentes salen de los roles; aquí solo se deshabilitan o rehabilitan."
         actions={
-          <Button variant="outline" onClick={() => void load(true)} disabled={loading}>
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            Actualizar
-          </Button>
+          <>
+            {isAdmin && (
+              <Button variant="outline" onClick={() => setForceOpen(true)}>
+                Forzar actualización
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => void load(true)} disabled={loading}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Actualizar
+            </Button>
+          </>
         }
       />
+      <StaleNotice stale={live.stale} onRefresh={live.refresh} />
+      {isAdmin && (
+        <ForceRefreshDialog open={forceOpen} onClose={() => setForceOpen(false)} campaigns={campaigns} defaultCampaign={campaign} />
+      )}
 
       <div className="pernexium-card mb-4 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">

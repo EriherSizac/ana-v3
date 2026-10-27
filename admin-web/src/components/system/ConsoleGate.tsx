@@ -11,6 +11,7 @@ import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
 import { hasSession } from '@/lib/auth-client';
 import { loginUrl } from '@/lib/safe-next';
 import { allowedSections, sectionForPath, SECTIONS, type Section } from '@/lib/sections';
+import { RealtimeProvider, type RealtimeProviderProps } from '@/lib/realtime/RealtimeProvider';
 import { AccessContext } from './AccessContext';
 import { AppHeader } from './AppHeader';
 import { NoAccess } from './NoAccess';
@@ -42,7 +43,16 @@ function GateSkeleton() {
  * mientras tanto), redirige a `/login?next=` sin sesión y carga el acceso de
  * `GET /api/me`. Sin permisos de entrada o de la sección → "Sin acceso".
  */
-export function ConsoleGate({ children, sections = SECTIONS }: { children: ReactNode; sections?: readonly Section[] }) {
+export function ConsoleGate({
+  children,
+  sections = SECTIONS,
+  realtime,
+}: {
+  children: ReactNode;
+  sections?: readonly Section[];
+  /** Solo pruebas: configuración y socket del canal realtime. */
+  realtime?: Pick<RealtimeProviderProps, 'config' | 'createSocket' | 'getToken'>;
+}) {
   const router = useRouter();
   const pathname = usePathname() ?? '/';
   const [state, setState] = useState<State>({ phase: 'checking' });
@@ -73,6 +83,19 @@ export function ConsoleGate({ children, sections = SECTIONS }: { children: React
     void load();
   }, [load]);
 
+  /**
+   * Relee `GET /api/me` sin desmontar la vista (actualización forzada del canal
+   * realtime, add-realtime-admin-web D7). Si falla, conserva el acceso vigente.
+   */
+  const refreshAccess = useCallback(async () => {
+    try {
+      const access = await apiFetch<Access>('/api/me');
+      setState({ phase: 'ready', access });
+    } catch {
+      /* se conserva el acceso vigente; el BFF sigue autorizando cada llamada */
+    }
+  }, []);
+
   if (state.phase === 'checking') return <GateSkeleton />;
 
   if (state.phase === 'error') {
@@ -96,8 +119,11 @@ export function ConsoleGate({ children, sections = SECTIONS }: { children: React
 
   return (
     <AccessContext.Provider value={access}>
-      <AppHeader username={access.username} sections={visible} />
-      {blocked ? <NoAccess username={access.username} showHome={canEnter(access)} /> : children}
+      {/* Una conexión realtime por pestaña, también para el indicador del encabezado. */}
+      <RealtimeProvider refreshAccess={refreshAccess} {...realtime}>
+        <AppHeader username={access.username} sections={visible} />
+        {blocked ? <NoAccess username={access.username} showHome={canEnter(access)} /> : children}
+      </RealtimeProvider>
     </AccessContext.Provider>
   );
 }

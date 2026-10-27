@@ -7,6 +7,7 @@ import { ChevronDown, LogOut, Menu, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { Section } from '@/lib/sections';
 import { LogoutDialog } from './LogoutButton';
+import { RealtimeIndicator } from './Realtime';
 
 export interface AppHeaderProps {
   username: string;
@@ -84,6 +85,7 @@ export function AppHeader({ username, sections }: AppHeaderProps) {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
+          <RealtimeIndicator />
           <div ref={userRef} className="relative">
             <button
               type="button"

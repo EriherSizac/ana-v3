@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Badge, Button, InlineMessage, PageContainer, PageHeader, SearchableSelect, Skeleton, SkeletonRows, TableContainer } from '@/components/ui';
 import { useCampaigns } from '@/components/system/useCampaigns';
+import { StaleNotice } from '@/components/system/Realtime';
+import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
 import { formatDate } from '@/lib/agents';
 import { MODE_LABEL, REASON_LABEL, STATUS_LABEL, type UploadHistoryItem, type UploadStatus } from '@/lib/contacts/history';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
@@ -54,6 +56,9 @@ export function UploadHistoryView({ detailHref }: UploadHistoryViewProps = {}) {
     void load();
   }, [load]);
 
+  // Recarga en vivo (add-realtime-admin-web): cargas y contactos por revisar de la campaña.
+  const live = useRealtimeRefresh({ types: ['uploads.changed', 'review.changed'], campaign, reload: load });
+
   return (
     <PageContainer>
       <PageHeader
@@ -73,6 +78,7 @@ export function UploadHistoryView({ detailHref }: UploadHistoryViewProps = {}) {
           </>
         }
       />
+      <StaleNotice stale={live.stale} onRefresh={live.refresh} />
       <div className="pernexium-card mb-4 grid gap-4 p-4 md:grid-cols-3">
         {campaignsLoading ? (
           <Skeleton className="h-10 w-full" />

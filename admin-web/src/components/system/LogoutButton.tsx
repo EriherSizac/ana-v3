@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { InlineMessage } from '@/components/ui/Toast';
 import { logout } from '@/lib/auth-client';
+import { LOGOUT_EVENT } from '@/lib/realtime/RealtimeProvider';
 
 /** Diálogo de cierre de sesión con la advertencia de sesión compartida. */
 export function LogoutDialog({ open, onCancel }: { open: boolean; onCancel: () => void }) {
@@ -27,6 +28,8 @@ export function LogoutDialog({ open, onCancel }: { open: boolean; onCancel: () =
         setLoading(true);
         setError(null);
         try {
+          // Cierra el canal realtime antes de cerrar la sesión.
+          window.dispatchEvent(new Event(LOGOUT_EVENT));
           await logout();
           router.replace('/login');
         } catch {
