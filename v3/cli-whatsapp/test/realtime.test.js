@@ -255,7 +255,7 @@ test('parseMessage y configuración', () => {
   assert.deepEqual(realtimeConfigFrom({}, 'wss://default/prod'), { enabled: true, url: 'wss://default/prod' });
   assert.deepEqual(realtimeConfigFrom({ ANA_REALTIME: 'off', ANA_REALTIME_URL: 'wss://x/prod' }), { enabled: false, url: null, reason: 'flag' });
   // config.js: sin URL fijada en el repositorio → canal deshabilitado.
-  assert.deepEqual(realtimeConfig({}), { enabled: false, url: null, reason: 'no_url' });
+  assert.deepEqual(realtimeConfig({}), { enabled: true, url: 'wss://c1azskji9l.execute-api.us-east-2.amazonaws.com/prod' });
   assert.deepEqual(realtimeConfig({ ANA_REALTIME_URL: 'wss://dev/dev' }), { enabled: true, url: 'wss://dev/dev' });
 });
 

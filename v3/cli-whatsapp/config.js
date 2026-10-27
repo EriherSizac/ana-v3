@@ -38,7 +38,7 @@ export const CONFIG = {
   // Canal realtime (add-realtime-v3-cli): URL execute-api `RealtimeWsUrl` del stack
   // v4 (sin dominio propio). Vacío = sin canal (polls cada 30 s como antes); se
   // fija en el release. ANA_REALTIME_URL la reemplaza; ANA_REALTIME=off la apaga.
-  realtimeUrl: '',
+  realtimeUrl: 'wss://c1azskji9l.execute-api.us-east-2.amazonaws.com/prod',
 };
 
 /** `{ enabled, url, reason? }` del canal realtime para este proceso. */
