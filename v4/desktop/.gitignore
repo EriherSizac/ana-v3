@@ -1,3 +1,6 @@
 
 # Chromium bundleado para puppeteer (se copia de ~/.cache/puppeteer)
 build/chrome/
+
+# Contraseña maestra de emergencia y su hash (solo local)
+.bypass.local

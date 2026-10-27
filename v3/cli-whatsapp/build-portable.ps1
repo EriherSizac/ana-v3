@@ -154,7 +154,22 @@ Write-Host "[7/8] Copiando navegadores de Playwright..." -ForegroundColor Yellow
 $msPlaywright = Join-Path $env:LOCALAPPDATA "ms-playwright"
 if (Test-Path -Path $msPlaywright) {
     New-Item -ItemType Directory -Path $BROWSERS_DIR -Force | Out-Null
-    Copy-Item -Recurse -Force (Join-Path $msPlaywright "*") $BROWSERS_DIR
+    # Copiar SOLO las revisiones que usa el Playwright de la app. ms-playwright de la
+    # máquina de build puede traer otras versiones, Firefox/WebKit y perfiles de otras
+    # herramientas (p. ej. mcp-chrome-*), que inflan el instalador y pueden contener datos.
+    $browsersJson = Join-Path $APP_DIR "node_modules\playwright-core\browsers.json"
+    $wanted = (Get-Content $browsersJson -Raw | ConvertFrom-Json).browsers |
+        Where-Object { @('chromium', 'chromium-headless-shell', 'ffmpeg', 'winldd') -contains $_.name } |
+        ForEach-Object { ($_.name -replace '-', '_') + '-' + $_.revision }
+    foreach ($dir in $wanted) {
+        $src = Join-Path $msPlaywright $dir
+        if (-not (Test-Path -Path $src)) {
+            Write-Host "    [ERROR] Falta $dir en $msPlaywright" -ForegroundColor Red
+            exit 1
+        }
+        Copy-Item -Recurse -Force $src $BROWSERS_DIR
+        Write-Host "    [OK] $dir" -ForegroundColor Green
+    }
     Write-Host "    [OK] Navegadores copiados a $BROWSERS_DIR" -ForegroundColor Green
 } else {
     Write-Host "    [ERROR] No se encontro ms-playwright en $msPlaywright" -ForegroundColor Red
