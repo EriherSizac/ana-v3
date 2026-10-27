@@ -153,29 +153,38 @@ Sin esa política `/api/users` responde 503 ("No se pudo leer el directorio de u
 ## Sección Contactos (`/contactos`, `/contactos/historial`)
 
 Requiere `isAdmin` o **ambos** permisos `ana:contacts:list:upload` y
-`ana:contacts:list:distribute`. Para leer los agentes habilitados el BFF usa los
-rosters de `/admin/*` de cada flota (que exigen `ana:admin:agents:manage`; los
-líderes y admins lo tienen).
+`ana:contacts:list:distribute` (líderes y **supervisores**: v4 los da a todo rol
+cuyo nombre contiene "supervisor", sin `ana:admin:agents:manage`). Para leer los
+destinatarios habilitados el BFF usa los rosters de `/admin/*` de cada flota, que
+aceptan `ana:admin:agents:manage` **o** carga + reparto para leer (las
+escrituras siguen exigiendo `ana:admin:agents:manage`).
 
 ### Flujo
 
-1. **Destino**: campaña, flota (`v3` CLI / `v4` desktop) y modo
+1. **Destino**: campaña, flota (`v3` CLI, **preseleccionada** / `v4` desktop) y modo
    ("Repartir entre agentes habilitados" o "Asignar a un agente"). Sin
-   habilitados en esa flota no se puede cargar archivo.
+   habilitados en esa flota no se puede cargar archivo. El toggle
+   **"Incluir supervisores"** (apagado por defecto) suma a los supervisores
+   habilitados de la campaña (`kind:"supervisor"` en la lista derivada) al
+   reparto y al selector, etiquetados "Supervisor".
 2. **Archivo**: se lee y valida **en el navegador** (`src/lib/contacts/`, el
-   mismo código que usa el BFF); nada sale del navegador hasta confirmar.
-3. **Mensaje**: v3 exige un mensaje plantilla si el CSV no trae columna
-   `message` (variables `{columna}`; los saltos de línea viajan como `\n`
-   literal). v4 pide plantilla (default `{mensaje}`) y código de país (default `52`).
-4. **Vista previa**: fila válida *i* → agente `i mod n` de los habilitados
-   ordenados por username (código de punto); en "Asignar", todas al agente
-   elegido. Muestra conteo y primeras 5 filas por agente.
+   mismo código que usa el BFF); nada sale del navegador hasta confirmar. v4
+   pide además el código de país (default `52`).
+3. **Sin mensaje**: quien carga ya no escribe mensaje ni plantilla. En v3 cada
+   agente escribe el suyo en **Mi asignación** (`/mi-asignacion`); en v4, en
+   "Mi asignación" del desktop (la plantilla por defecto `{mensaje}` aparece
+   vacía si el CSV no trae columna `mensaje`).
+4. **Vista previa**: fila válida *i* → destinatario `i mod n` de los habilitados
+   ordenados por username (código de punto); en "Asignar", todas al elegido.
+   Muestra conteo y primeras 5 filas (teléfono y nombre) por destinatario.
 5. **Confirmar** (`ConfirmDialog`): el BFF vuelve a parsear, relee el roster y
    compara agentes, conteos y hash SHA-256 del plan; si difiere responde 409
    ("El roster cambió; revisa la nueva vista previa").
    - **v3**: un CSV por agente a `POST /admin/campaigns/{c}/contacts` con un
      `uploadId` (`{ts}-{8 hex}`); un reintento con el mismo `uploadId` ante error
-     de red. Los archivos quedan en `agents/` (los consume el CLI) + `historic/`.
+     de red. Los archivos quedan en los **pendientes del agente**
+     (`assignments/agents/`) + `historic/`; el agente los publica al CLI desde
+     Mi asignación.
    - **v4**: `POST /uploads/presign` con `distribute:true` y `assignments`
      (peso 1 por agente en el orden del plan, máx. 1500 caracteres) y `PUT` a la
      URL firmada con **solo las filas válidas**; la página consulta el historial
@@ -226,7 +235,8 @@ vuelve a pedir.
   que no tienen carga asociada (cargas por `curl` o anteriores).
 - **Descartar** (el mensaje sí salió): `ConfirmDialog` destructivo →
   `POST .../review-items/resolve` `discard`.
-- **Reasignar**: elige un agente habilitado v3 → la página arma un CSV con las
+- **Reasignar** (sin mensaje: el agente destino lo escribe en Mi asignación):
+  elige un agente habilitado v3 → la página arma un CSV con las
   filas originales **sin** `ana_upload_id`, calcula la vista previa con el mismo
   plan que la carga (modo "Asignar a un agente") y, tras el `ConfirmDialog` que
   pide confirmar en WhatsApp que el mensaje no salió, crea la carga nueva con

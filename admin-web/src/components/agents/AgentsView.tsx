@@ -71,7 +71,10 @@ function StateBadge({ s, onRetry }: { s: FleetState | undefined; onRetry: () => 
   const variant = s.state === 'agent' ? 'success' : s.state === 'disabled' ? 'error' : 'muted';
   return (
     <div className="flex flex-col gap-0.5">
-      <Badge variant={variant}>{STATE_LABEL[s.state]}</Badge>
+      <span className="flex flex-wrap items-center gap-1">
+        <Badge variant={variant}>{STATE_LABEL[s.state]}</Badge>
+        {s.kind === 'supervisor' && <Badge variant="secondary">Supervisor</Badge>}
+      </span>
       {s.state === 'disabled' && s.override && (
         <span className="text-2xs text-text-light">
           {s.override.updatedBy ?? '—'} · {formatDate(s.override.updatedAt)}
@@ -584,6 +587,7 @@ function UserDetail({ user, campaign, onClose }: { user: UserRow | null; campaig
               </dt>
               <dd>
                 {STATE_LABEL[user.fleets![f].state]}
+                {user.fleets![f].kind === 'supervisor' ? ' · Supervisor' : ''}
                 {user.fleets![f].state === 'not_agent' && user.fleets![f].reason ? ` · ${user.fleets![f].reason}` : ''}
               </dd>
             </div>

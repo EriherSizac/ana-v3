@@ -6,7 +6,7 @@
 import type { UserAccess } from './access';
 import { ANA_PERMISSIONS } from './permissions';
 import { listCampaignAgents } from './agents';
-import { normalizeId, readCampaignAgents, type CampaignAgentsList } from './campaignAgentsList';
+import { memberKind, normalizeId, readCampaignAgents, type CampaignAgentsList, type MemberKind } from './campaignAgentsList';
 
 export const MAX_ROSTER_ENTRIES = 100;
 
@@ -18,6 +18,19 @@ export const MAX_ROSTER_ENTRIES = 100;
 export function canManageAgents(access: UserAccess, campaign: string): boolean {
   if (access.isAdmin) return true;
   if (!access.permissions.includes(ANA_PERMISSIONS.AGENTS_MANAGE)) return false;
+  const own = access.campaigns.map(normalizeId);
+  return own.includes('*') || own.includes(normalizeId(campaign));
+}
+
+/**
+ * Lectura del roster (add-supervisor-contact-access D4): quien gestiona, o
+ * quien carga Y reparte contactos en la campaña (supervisores). Fail-closed,
+ * sin PERMISSIONS_ENFORCED. La escritura sigue con canManageAgents.
+ */
+export function canReadRoster(access: UserAccess, campaign: string): boolean {
+  if (canManageAgents(access, campaign)) return true;
+  const p = access.permissions;
+  if (!p.includes(ANA_PERMISSIONS.CONTACTS_UPLOAD) || !p.includes(ANA_PERMISSIONS.CONTACTS_DISTRIBUTE)) return false;
   const own = access.campaigns.map(normalizeId);
   return own.includes('*') || own.includes(normalizeId(campaign));
 }
@@ -37,6 +50,7 @@ export interface RosterView {
     override: OverrideView | null;
     lastSeen: number | null;
     active: boolean;
+    kind: MemberKind;
   }[];
   inactiveOverrides: ({ operatorId: string } & OverrideView)[];
 }
@@ -65,6 +79,7 @@ export async function buildRosterView(
       override,
       lastSeen: e && e.lastSeen ? e.lastSeen : null,
       active: e?.active ?? false,
+      kind: memberKind(a),
     };
   });
 

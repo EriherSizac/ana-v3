@@ -8,13 +8,11 @@ import {
   ConfirmDialog,
   Dialog,
   InlineMessage,
-  Label,
   PageContainer,
   PageHeader,
   SearchableSelect,
   SkeletonRows,
   TableContainer,
-  Textarea,
 } from '@/components/ui';
 import { formatDate } from '@/lib/agents';
 import {
@@ -59,7 +57,6 @@ function StateCell({ item, campaign }: { item: ReviewItem; campaign: string }) {
 interface ReassignState {
   items: ReviewItem[];
   agent: string | null;
-  message: string;
   preview: { plan: Plan; hash: string; parsed: ParsedCsv; csv: string; rows: number } | null;
   error: string | null;
   confirm: boolean;
@@ -136,7 +133,7 @@ export function UploadDetailView({ uploadId, campaign }: { uploadId: string; cam
 
   const openReassign = async () => {
     setActionError(null);
-    setRe({ items: selectedItems, agent: null, message: '', preview: null, error: null, confirm: false, sending: false, pendingMark: null });
+    setRe({ items: selectedItems, agent: null, preview: null, error: null, confirm: false, sending: false, pendingMark: null });
     try {
       const r = await apiFetch<{ agents: string[] }>(`/api/campaigns/${encodeURIComponent(campaign)}/enabled-agents?fleet=v3`);
       setEnabled(r.agents);
@@ -147,7 +144,6 @@ export function UploadDetailView({ uploadId, campaign }: { uploadId: string; cam
   };
 
   const reassignCsv = useMemo(() => (re ? reassignmentCsv(re.items) : ''), [re]);
-  const csvHasMessage = useMemo(() => reassignCsv.split('\n', 1)[0]?.split(',').includes('message') ?? false, [reassignCsv]);
 
   const makePreview = async () => {
     if (!re || !re.agent) return;
@@ -191,7 +187,6 @@ export function UploadDetailView({ uploadId, campaign }: { uploadId: string; cam
           agent: state.agent,
           fileName: `reasignacion-${uploadId}.csv`,
           csv: state.preview!.csv,
-          ...(csvHasMessage ? {} : { message: state.message }),
           plan: { agents: state.preview!.plan.agents, counts: state.preview!.plan.counts, hash: state.preview!.hash },
           source: { type: 'review', fromUploadId: uploadId, items: state.items.map(itemRef) },
         },
@@ -356,12 +351,7 @@ export function UploadDetailView({ uploadId, campaign }: { uploadId: string; cam
               onChange={(a) => setRe({ ...re, agent: a, preview: null })}
               disabled={!!re.pendingMark}
             />
-            {!csvHasMessage && (
-              <div>
-                <Label htmlFor="reassign-message">Mensaje plantilla</Label>
-                <Textarea id="reassign-message" value={re.message} onChange={(e) => setRe({ ...re, message: e.target.value, preview: null })} />
-              </div>
-            )}
+            <p className="text-xs text-text-light">El agente destino escribe el mensaje en Mi asignación antes de enviarlo.</p>
             {re.error && <InlineMessage>{re.error}</InlineMessage>}
             {re.preview && (
               <p className="text-sm text-text-muted" data-testid="reassign-preview">
@@ -379,7 +369,7 @@ export function UploadDetailView({ uploadId, campaign }: { uploadId: string; cam
               ) : re.preview ? (
                 <Button onClick={() => setRe({ ...re, confirm: true })}>Confirmar reasignación</Button>
               ) : (
-                <Button onClick={() => void makePreview()} disabled={!re.agent || (!csvHasMessage && !re.message.trim())}>
+                <Button onClick={() => void makePreview()} disabled={!re.agent}>
                   Vista previa
                 </Button>
               )}

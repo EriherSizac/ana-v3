@@ -6,7 +6,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { registerAgent, listCampaignAgents, setAgentOverrides } from '../lib/agents';
 import { campaignExists, listCampaignsDb } from '../lib/campaignsDb';
-import { buildRosterView, canManageAgents, parseRosterAgents } from '../lib/agentRoster';
+import { buildRosterView, canManageAgents, canReadRoster, parseRosterAgents } from '../lib/agentRoster';
 import { normalizeId, readCampaignAgents, RosterListError } from '../lib/campaignAgentsList';
 import { resolveUserAccess } from '../lib/access';
 import { ANA_PERMISSIONS } from '../lib/permissions';
@@ -109,7 +109,8 @@ async function adminRosterGet(
 ): Promise<APIGatewayProxyResultV2> {
   const campaign = (rawCampaign ?? '').trim();
   if (!campaign) return bad('falta campaign');
-  if (!canManageAgents(access, campaign)) return bad('sin permiso', 403);
+  // Lectura: gestión o carga + reparto (supervisores), add-supervisor-contact-access D4.
+  if (!canReadRoster(access, campaign)) return bad('sin permiso', 403);
   try {
     return ok(await buildRosterView(campaign));
   } catch (e) {

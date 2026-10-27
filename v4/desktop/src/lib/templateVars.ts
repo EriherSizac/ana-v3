@@ -5,6 +5,21 @@
 
 import { normalizeContactRow } from '../../electron/whatsapp/template';
 
+/** Plantilla que v4 fija cuando la carga no trae una (presign sin `template`). */
+export const DEFAULT_UPLOAD_TEMPLATE = '{mensaje}';
+
+/**
+ * Plantilla inicial del editor de "Mi asignación" (add-supervisor-contact-access D7):
+ * la plantilla por defecto `{mensaje}` sin columna `mensaje`/`message` en el
+ * archivo equivale a "sin plantilla" → editor vacío y obligatorio.
+ */
+export function defaultTemplateFor(template: string | undefined | null, columns: string[]): string {
+  const tpl = template ?? '';
+  if (tpl.trim() !== DEFAULT_UPLOAD_TEMPLATE) return tpl;
+  const lower = columns.map((c) => c.trim().toLowerCase());
+  return lower.includes('mensaje') || lower.includes('message') ? tpl : '';
+}
+
 // Modificadores válidos al final de un placeholder ({campo:dinero} etc.).
 const MOD_RE = /\s*:\s*(dinero|money|\$|num|numero|plain)$/i;
 

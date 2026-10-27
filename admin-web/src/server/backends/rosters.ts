@@ -12,14 +12,35 @@ export interface FleetOverride {
   updatedBy: string | null;
 }
 
+/** Tipo de integrante de la lista derivada (add-supervisor-contact-access). Ausente = agente. */
+export type MemberKind = 'agent' | 'supervisor';
+
 export interface FleetRoster {
   campaign: string;
   generatedAt: string | null;
-  agents: Array<{ username: string; enabled: boolean; override: FleetOverride | null; lastSeen?: number | null; active?: boolean }>;
+  agents: Array<{
+    username: string;
+    enabled: boolean;
+    override: FleetOverride | null;
+    kind: MemberKind;
+    lastSeen?: number | null;
+    active?: boolean;
+  }>;
   inactiveOverrides: Array<{ username: string } & FleetOverride>;
 }
 
 export type Fleet = 'v3' | 'v4';
+
+const kindOf = (a: any): MemberKind => (a?.kind === 'supervisor' ? 'supervisor' : 'agent');
+
+/**
+ * Destinatarios habilitados de una carga: agentes y, solo si se pide, también
+ * supervisores (toggle "Incluir supervisores", add-supervisor-contact-access D3).
+ */
+export function enabledRecipients(roster: FleetRoster, includeSupervisors: boolean): { agents: string[]; supervisors: string[] } {
+  const enabled = roster.agents.filter((a) => a.enabled && (includeSupervisors || a.kind !== 'supervisor'));
+  return { agents: enabled.map((a) => a.username), supervisors: enabled.filter((a) => a.kind === 'supervisor').map((a) => a.username) };
+}
 
 const ov = (o: any): FleetOverride | null =>
   o && typeof o.enabled === 'boolean'
@@ -31,7 +52,7 @@ function fromV3(data: any): FleetRoster {
   return {
     campaign: String(d.campaign ?? ''),
     generatedAt: d.generatedAt ?? null,
-    agents: (d.agents ?? []).map((a: any) => ({ username: String(a.username), enabled: a.enabled !== false, override: ov(a.override) })),
+    agents: (d.agents ?? []).map((a: any) => ({ username: String(a.username), enabled: a.enabled !== false, override: ov(a.override), kind: kindOf(a) })),
     inactiveOverrides: (d.inactiveOverrides ?? []).map((o: any) => ({ username: String(o.username), ...ov(o)! })),
   };
 }
@@ -44,6 +65,7 @@ function fromV4(d: any): FleetRoster {
       username: String(a.operatorId),
       enabled: a.enabled !== false,
       override: ov(a.override),
+      kind: kindOf(a),
       lastSeen: typeof a.lastSeen === 'number' ? a.lastSeen : null,
       active: a.active === true,
     })),

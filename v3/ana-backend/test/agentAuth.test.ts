@@ -3,7 +3,7 @@ import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateAgent, verifyAgentToken } from '../src/lib/agentAuth';
 import { installCondS3, type CondS3 } from './helpers/condS3';
-import { derivedList } from './helpers/admin';
+import { derivedList, derivedMembers } from './helpers/admin';
 import { ISSUER, OTHER_CLIENT, bearer, setupAgentAuth, signIdToken } from './helpers/agentJwt';
 
 const s3mock = mockClient(S3Client);
@@ -85,6 +85,22 @@ describe('verificación del ID token (D4)', () => {
 
 describe('propiedad y roster (D5)', () => {
   const route = 'GET /get/chats';
+
+  it('supervisora derivada sin excepción → ok (add-supervisor-contact-access)', async () => {
+    s3.set('campaign-agents/prueba.json', derivedMembers('prueba', [['sara', 'supervisor']]));
+    const r = await evaluateAgent(ev(bearer(signIdToken({ 'cognito:username': 'sara' }))), { route, agent: 'sara', campaign: 'prueba' });
+    expect(r).toEqual({ reason: 'ok', user: 'sara' });
+  });
+
+  it('supervisora deshabilitada → not_in_roster', async () => {
+    s3.set('campaign-agents/prueba.json', derivedMembers('prueba', [['sara', 'supervisor']]));
+    s3.set(
+      'rosters/prueba.json',
+      JSON.stringify({ schemaVersion: 2, campaign: 'prueba', updatedAt: null, updatedBy: null, overrides: { sara: { enabled: false, updatedAt: 'x', updatedBy: 'lider' } } }),
+    );
+    const r = await evaluateAgent(ev(bearer(signIdToken({ 'cognito:username': 'sara' }))), { route, agent: 'sara', campaign: 'prueba' });
+    expect(r.reason).toBe('not_in_roster');
+  });
 
   it('Erick → erick: identidad normalizada y habilitado', async () => {
     s3.set('campaign-agents/prueba.json', derivedList('prueba', ['erick']));

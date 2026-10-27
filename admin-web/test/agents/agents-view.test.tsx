@@ -129,6 +129,38 @@ describe('/agentes', () => {
     expect(screen.getByTestId('state-v4-ana.lopez')).toHaveTextContent(/Actividad:/);
   });
 
+  it('supervisora: insignia "Supervisor" junto al estado y se deshabilita igual que un agente', async () => {
+    const sara: UserRow = {
+      username: 'sara',
+      name: 'Sara',
+      email: null,
+      enabled: true,
+      status: 'CONFIRMED',
+      roles: [{ roleName: 'Supervisor DIDI VIP', campaign: 'didi_vip' }],
+      fleets: { v3: { state: 'agent', override: null, kind: 'supervisor' }, v4: { state: 'agent', override: null, kind: 'supervisor', lastSeen: null } },
+    };
+    let disabled = false;
+    setApi((url) => {
+      if (url === '/api/campaigns/didi_vip/agents') {
+        disabled = true;
+        return { fleet: 'v3', roster: {} };
+      }
+      if (!url.includes('campaign=')) return noCampaign([sara]);
+      return listing({}, [
+        disabled ? { ...sara, fleets: { ...sara.fleets!, v3: { state: 'disabled', kind: 'supervisor', override: { enabled: false, updatedAt: now, updatedBy: 'lider.didi' } } } } : sara,
+      ]);
+    });
+    render(<AgentsView />);
+    await chooseCampaign();
+    const v3 = await screen.findByTestId('state-v3-sara');
+    expect(v3).toHaveTextContent('Agente');
+    expect(within(v3).getByText('Supervisor')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Deshabilitar en v3' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Deshabilitar' }));
+    await waitFor(() => expect(screen.getByTestId('state-v3-sara')).toHaveTextContent('Deshabilitado'));
+    expect(within(screen.getByTestId('state-v3-sara')).getByText('Supervisor')).toBeInTheDocument();
+  });
+
   it('"No es agente": sin control de habilitar y con motivo', async () => {
     setApi((url) => (url.includes('campaign=') ? listing() : noCampaign()));
     render(<AgentsView />);

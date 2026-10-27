@@ -11,7 +11,7 @@ import {
   updateRoster,
 } from '../src/lib/roster';
 import { installCondS3, type CondS3 } from './helpers/condS3';
-import { derivedList } from './helpers/admin';
+import { derivedList, derivedMembers } from './helpers/admin';
 
 const s3mock = mockClient(S3Client);
 let s3: CondS3;
@@ -85,8 +85,8 @@ describe('Regla de habilitación efectiva', () => {
     );
     const r = await readEffectiveRoster('prueba');
     expect(r.agents).toEqual([
-      { username: 'ana.lopez', enabled: true, override: null },
-      { username: 'luis', enabled: false, override: { enabled: false, updatedAt: '2026-10-01T00:00:00Z', updatedBy: 'erick.silva' } },
+      { username: 'ana.lopez', enabled: true, override: null, kind: 'agent' },
+      { username: 'luis', enabled: false, override: { enabled: false, updatedAt: '2026-10-01T00:00:00Z', updatedBy: 'erick.silva' }, kind: 'agent' },
     ]);
     expect(r.inactiveOverrides).toEqual([{ username: 'viejo.agente', enabled: false, updatedAt: '2026-09-01T00:00:00Z', updatedBy: 'erick.silva' }]);
   });
@@ -141,5 +141,31 @@ describe('Escritura concurrente del roster', () => {
   it('deshabilitar a cualquier username válido se acepta', async () => {
     await updateRoster('prueba', [{ username: 'pedro', enabled: false }], 'e');
     expect(s3.json('rosters/prueba.json').overrides.pedro.enabled).toBe(false);
+  });
+});
+
+describe('Supervisores en la lista derivada (add-supervisor-contact-access)', () => {
+  it('kind ausente = agent; supervisor se conserva y está habilitado', async () => {
+    s3.set('campaign-agents/prueba.json', derivedMembers('prueba', [['ana.lopez', 'agent'], ['sara', 'supervisor']]));
+    const r = await readEffectiveRoster('prueba');
+    expect(r.agents.map((a) => [a.username, a.kind, a.enabled])).toEqual([
+      ['ana.lopez', 'agent', true],
+      ['sara', 'supervisor', true],
+    ]);
+    expect(await getEnabledAgents('prueba')).toEqual(['ana.lopez', 'sara']);
+    expect(await isAgentEnabled('prueba', 'sara')).toBe(true);
+  });
+
+  it('lista anterior sin kind → todos agent', async () => {
+    s3.set('campaign-agents/prueba.json', derivedList('prueba', ['luis']));
+    expect((await readEffectiveRoster('prueba')).agents[0]!.kind).toBe('agent');
+  });
+
+  it('las excepciones aplican al supervisor', async () => {
+    s3.set('campaign-agents/prueba.json', derivedMembers('prueba', [['sara', 'supervisor']]));
+    await updateRoster('prueba', [{ username: 'sara', enabled: false }], 'lider');
+    expect(await isAgentEnabled('prueba', 'sara')).toBe(false);
+    const r = await updateRoster('prueba', [{ username: 'sara', enabled: true }], 'lider');
+    expect(r.agents[0]).toMatchObject({ username: 'sara', kind: 'supervisor', enabled: true });
   });
 });

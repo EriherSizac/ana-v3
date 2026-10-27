@@ -107,12 +107,23 @@ describe('GET /api/users', () => {
     mockFetch(LEADER, routes());
     const body = await bodyOf(await getUsers(authedRequest('/api/users?campaign=didi_vip'), ctx()));
     const by = Object.fromEntries(body.users.map((u: { username: string }) => [u.username, u]));
-    expect(by['ana.lopez'].fleets.v3).toEqual({ state: 'agent', override: null });
+    expect(by['ana.lopez'].fleets.v3).toEqual({ state: 'agent', override: null, kind: 'agent' });
     expect(by['ana.lopez'].fleets.v4).toMatchObject({ state: 'disabled', override: { updatedBy: 'lider.didi' }, lastSeen: 1761400000000 });
     expect(by.luis.fleets.v3).toEqual({ state: 'not_agent', reason: 'Sin rol con permiso de envío en la campaña' });
     expect(by.pedro.fleets.v3).toEqual({ state: 'not_agent', reason: 'Deshabilitado en Cognito' });
     expect(by.zoe.fleets.v4.reason).toBe('Deshabilitado en Cognito');
     expect(body.fleets.v3.available).toBe(true);
+  });
+
+  it('supervisor derivado: estado de agente con kind supervisor (insignia)', async () => {
+    mockFetch(LEADER, routes({
+      [`GET ${V3}/admin/campaigns/didi_vip/roster`]: () =>
+        v3Roster([{ username: 'ana.lopez', enabled: true, override: null }, { username: 'luis', enabled: true, override: null, kind: 'supervisor' }]),
+    }));
+    const body = await bodyOf(await getUsers(authedRequest('/api/users?campaign=didi_vip'), ctx()));
+    const by = Object.fromEntries(body.users.map((u: { username: string }) => [u.username, u]));
+    expect(by.luis.fleets.v3).toEqual({ state: 'agent', override: null, kind: 'supervisor' });
+    expect(by['ana.lopez'].fleets.v3.kind).toBe('agent');
   });
 
   it('filtros por estado de flota', async () => {

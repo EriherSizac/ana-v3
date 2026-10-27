@@ -4,15 +4,18 @@
 // Author: Erick Hernández Silva
 
 import { CognitoIdentityProviderClient, ListUsersCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { ANA_PERMISSIONS, isAgentRole } from './permissions';
+import { ANA_PERMISSIONS, isAgentRole, isSupervisorRole } from './permissions';
 import { getManyRolePermissions } from './rolePerms';
 import { db } from './db';
-import { normalizeId, type CampaignAgentsList } from './campaignAgentsList';
+import { normalizeId, type CampaignAgentsList, type MemberKind } from './campaignAgentsList';
 
 // Agente de X = usuario del pool con Enabled y estado CONFIRMED o
 // FORCE_CHANGE_PASSWORD ∧ algún rol de AGENTE ("Agente <Campaña>") con
 // campaign_name normalizado = X que no tiene deny `-ana:campaign:message:send`
 // (almacén local por role_id o inline). Roles `*` nunca derivan agentes.
+// Supervisor de X (add-supervisor-contact-access D2) = mismo usuario elegible
+// con rol de SUPERVISOR de X sin ese deny; se lista con kind:"supervisor"
+// (si además es agente de X, queda una vez con kind:"agent").
 
 export const ELIGIBLE_STATUSES = new Set(['CONFIRMED', 'FORCE_CHANGE_PASSWORD']);
 const SEND_DENY = `-${ANA_PERMISSIONS.CAMPAIGN_SEND}`;
@@ -81,6 +84,15 @@ export function roleGrantsSend(role: NormalizedRole, localPerms: string[] = []):
   return true;
 }
 
+/** Tipo de integrante que deriva el rol (null = no deriva). Agente gana sobre supervisor. */
+export function roleMemberKind(role: NormalizedRole, localPerms: string[] = []): MemberKind | null {
+  if (roleGrantsSend(role, localPerms)) return 'agent';
+  if (!isSupervisorRole(role.role_name)) return null;
+  if (localPerms.includes(SEND_DENY)) return null;
+  if ((role.permissions ?? []).some((p) => p?.permission_name === SEND_DENY)) return null;
+  return 'supervisor';
+}
+
 async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
@@ -136,12 +148,15 @@ export async function deriveCampaignAgents(deps: DeriveDeps): Promise<DeriveResu
     roles: (await deps.getUserRoles(eligible.get(u)!.username)).map(normalizeRole),
   }));
 
-  // Almacén local solo para roles de agente de campaña.
+  // Almacén local solo para roles de agente o supervisor de campaña.
   const agentRoleIds = [
     ...new Set(
       details.flatMap((d) =>
         d.roles
-          .filter((r) => isAgentRole(r.role_name) && normalizeId(r.campaign_name) !== '*' && r.role_id)
+          .filter(
+            (r) =>
+              (isAgentRole(r.role_name) || isSupervisorRole(r.role_name)) && normalizeId(r.campaign_name) !== '*' && r.role_id,
+          )
           .map((r) => r.role_id),
       ),
     ),
@@ -152,14 +167,15 @@ export async function deriveCampaignAgents(deps: DeriveDeps): Promise<DeriveResu
     for (const [k, v] of part) local.set(k, v);
   }
 
-  const byCampaign = new Map<string, Map<string, { cognitoUsername: string; roleIds: Set<string> }>>();
+  const byCampaign = new Map<string, Map<string, { cognitoUsername: string; roleIds: Set<string>; kind: MemberKind }>>();
   let rolesOutsideCatalog = 0;
   const outside = new Set<string>();
   for (const d of details) {
     for (const r of d.roles) {
       const c = normalizeId(r.campaign_name);
       if (!c || c === '*') continue;
-      if (!roleGrantsSend(r, local.get(r.role_id) ?? [])) continue;
+      const kind = roleMemberKind(r, local.get(r.role_id) ?? []);
+      if (!kind) continue;
       if (!catalogSet.has(c)) {
         rolesOutsideCatalog++;
         outside.add(c);
@@ -167,8 +183,13 @@ export async function deriveCampaignAgents(deps: DeriveDeps): Promise<DeriveResu
       }
       const m = byCampaign.get(c) ?? new Map();
       byCampaign.set(c, m);
-      const entry = m.get(d.username) ?? { cognitoUsername: eligible.get(d.username)!.username, roleIds: new Set<string>() };
+      const entry = m.get(d.username) ?? {
+        cognitoUsername: eligible.get(d.username)!.username,
+        roleIds: new Set<string>(),
+        kind,
+      };
       entry.roleIds.add(r.role_id);
+      if (kind === 'agent') entry.kind = 'agent';
       m.set(d.username, entry);
     }
   }
@@ -179,7 +200,7 @@ export async function deriveCampaignAgents(deps: DeriveDeps): Promise<DeriveResu
     const m = byCampaign.get(campaign) ?? new Map();
     const entries = [...m.entries()]
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([username, e]) => ({ username, cognitoUsername: e.cognitoUsername, roleIds: [...e.roleIds].sort() }));
+      .map(([username, e]) => ({ username, cognitoUsername: e.cognitoUsername, roleIds: [...e.roleIds].sort(), kind: e.kind }));
     agents += entries.length;
     return { schemaVersion: 1 as const, campaign, generatedAt, agents: entries };
   });

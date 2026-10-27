@@ -19,10 +19,14 @@ export const ROSTER_WRITE_RETRIES = 3;
 export const campaignAgentsKey = (campaign: string): string => `campaign-agents/${campaign}.json`;
 export const rosterKey = (campaign: string): string => `rosters/${campaign}.json`;
 
+/** Tipo de integrante (add-supervisor-contact-access D2). Ausente = agente. */
+export type MemberKind = 'agent' | 'supervisor';
+
 export interface DerivedAgent {
   username: string;
   cognitoUsername: string;
   roleIds: string[];
+  kind: MemberKind;
 }
 
 export interface CampaignAgentsList {
@@ -94,6 +98,7 @@ export function parseCampaignAgents(text: string, campaign: string, now = Date.n
       username,
       cognitoUsername: typeof a.cognitoUsername === 'string' ? a.cognitoUsername : a.username,
       roleIds: Array.isArray(a.roleIds) ? a.roleIds.filter((r): r is string => typeof r === 'string') : [],
+      kind: a.kind === 'supervisor' ? 'supervisor' : 'agent',
     });
   }
   agents.sort((x, y) => x.username.localeCompare(y.username));
@@ -186,6 +191,7 @@ export interface EffectiveAgent {
   username: string;
   enabled: boolean;
   override: RosterOverride | null;
+  kind: MemberKind;
 }
 
 export interface EffectiveRoster {
@@ -203,7 +209,7 @@ export function buildEffectiveRoster(list: CampaignAgentsList, roster: RosterV2)
     generatedAt: list.generatedAt,
     agents: list.agents.map((a) => {
       const override = roster.overrides[a.username] ?? null;
-      return { username: a.username, enabled: override?.enabled !== false, override };
+      return { username: a.username, enabled: override?.enabled !== false, override, kind: a.kind };
     }),
     inactiveOverrides: Object.entries(roster.overrides)
       .filter(([u]) => !derived.has(u))

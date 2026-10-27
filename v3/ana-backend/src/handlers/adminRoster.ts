@@ -1,4 +1,4 @@
-import { requireAdminAccess } from '../lib/adminAccess';
+import { hasPermission, requireAdminAccess, type AdminAccess } from '../lib/adminAccess';
 import { adminError, adminInternal, adminOk, parseJsonBody, type AdminEvent, type AdminResult } from '../lib/adminHttp';
 import { parseCampaignParam, parseUsername } from '../lib/identifiers';
 import {
@@ -17,6 +17,15 @@ import {
  */
 
 export const AGENTS_MANAGE = 'ana:admin:agents:manage';
+const CONTACTS_UPLOAD = 'ana:contacts:list:upload';
+const CONTACTS_DISTRIBUTE = 'ana:contacts:list:distribute';
+
+/**
+ * Lectura del roster (add-supervisor-contact-access D4): gestión de agentes, o
+ * carga Y reparto de contactos (supervisores). La escritura exige gestión.
+ */
+export const canReadRoster = (a: AdminAccess): boolean =>
+  hasPermission(a, AGENTS_MANAGE) || (hasPermission(a, CONTACTS_UPLOAD) && hasPermission(a, CONTACTS_DISTRIBUTE));
 const MAX_AGENTS = 200;
 
 const handleRosterError = (e: unknown, context: string): AdminResult => {
@@ -32,7 +41,7 @@ const handleRosterError = (e: unknown, context: string): AdminResult => {
 export const getRoster = async (event: AdminEvent): Promise<AdminResult> => {
   const campaign = parseCampaignParam(event.pathParameters?.campaign);
   if (!campaign) return adminError(400, 'Campaña inválida');
-  const auth = await requireAdminAccess(event, { permissions: [AGENTS_MANAGE], campaign });
+  const auth = await requireAdminAccess(event, { check: canReadRoster, campaign });
   if (!auth.ok) return auth.response;
   try {
     return adminOk(await readEffectiveRoster(campaign));

@@ -59,8 +59,8 @@ describe('/admin/agent-roster', () => {
     const { status, body } = await call(ev('GET /admin/agent-roster', { query: { campaign: 'didi_vip' } }));
     expect(status).toBe(200);
     expect(body.agents).toEqual([
-      { operatorId: 'Ana.Lopez', enabled: true, override: null, lastSeen: expect.any(Number), active: true },
-      { operatorId: 'luis', enabled: true, override: null, lastSeen: null, active: false },
+      { operatorId: 'Ana.Lopez', enabled: true, override: null, lastSeen: expect.any(Number), active: true, kind: 'agent' },
+      { operatorId: 'luis', enabled: true, override: null, lastSeen: null, active: false, kind: 'agent' },
     ]);
     expect(body.inactiveOverrides).toEqual([{ operatorId: 'viejo', enabled: false, updatedAt: 'y', updatedBy: 'x' }]);
   });
@@ -69,6 +69,51 @@ describe('/admin/agent-roster', () => {
     access.value = ADMIN;
     const { body } = await call(ev('GET /admin/agent-roster', { query: { campaign: 'zendere' } }));
     expect(body.agents.map((a: any) => [a.enabled, a.override])).toEqual([[true, null], [true, null]]);
+  });
+
+  it('supervisor (upload + distribute) lee el roster de su campaña con kind, pero no escribe', async () => {
+    installV3Bucket({
+      'campaign-agents/didi_vip.json': JSON.stringify({
+        schemaVersion: 1,
+        campaign: 'didi_vip',
+        generatedAt: new Date().toISOString(),
+        agents: [
+          { username: 'ana.lopez', cognitoUsername: 'Ana.Lopez', roleIds: ['r1'], kind: 'agent' },
+          { username: 'sara', cognitoUsername: 'sara', roleIds: ['s1'], kind: 'supervisor' },
+        ],
+      }),
+    });
+    vi.stubEnv('PERMISSIONS_ENFORCED', 'false');
+    access.value = { ...AGENT, username: 'sara', permissions: ['ana:contacts:list:upload', 'ana:contacts:list:distribute'] };
+    const r = await call(ev('GET /admin/agent-roster', { query: { campaign: 'didi_vip' } }));
+    expect(r.status).toBe(200);
+    expect(r.body.agents.map((a: any) => [a.operatorId, a.kind])).toEqual([
+      ['Ana.Lopez', 'agent'],
+      ['sara', 'supervisor'],
+    ]);
+    const w = await call(ev('POST /admin/agent-roster', { body: { campaign: 'didi_vip', agents: [{ operatorId: 'sara', enabled: false }] } }));
+    expect(w).toEqual({ status: 403, body: { error: 'sin permiso' } });
+    // Campaña ajena: 403 también para leer.
+    expect((await call(ev('GET /admin/agent-roster', { query: { campaign: 'zendere' } }))).status).toBe(403);
+  });
+
+  it('solo carga (sin reparto) no lee el roster', async () => {
+    access.value = { ...AGENT, permissions: ['ana:contacts:list:upload'] };
+    expect((await call(ev('GET /admin/agent-roster', { query: { campaign: 'didi_vip' } }))).status).toBe(403);
+  });
+
+  it('el líder deshabilita a una supervisora derivada como a un agente', async () => {
+    installV3Bucket({
+      'campaign-agents/didi_vip.json': JSON.stringify({
+        schemaVersion: 1,
+        campaign: 'didi_vip',
+        generatedAt: new Date().toISOString(),
+        agents: [{ username: 'sara', cognitoUsername: 'sara', roleIds: ['s1'], kind: 'supervisor' }],
+      }),
+    });
+    const r = await call(ev('POST /admin/agent-roster', { body: { campaign: 'didi_vip', agents: [{ operatorId: 'sara', enabled: false }] } }));
+    expect(r.status).toBe(200);
+    expect(r.body.agents[0]).toMatchObject({ operatorId: 'sara', kind: 'supervisor', enabled: false });
   });
 
   it('GET sin campaign → 400 falta campaign', async () => {

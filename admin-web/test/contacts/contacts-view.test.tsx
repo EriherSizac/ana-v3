@@ -17,11 +17,15 @@ import { ConsoleGate } from '@/components/system/ConsoleGate';
 import { ApiError } from '@/lib/api-client';
 
 type Handler = (url: string, init?: { method?: string; json?: any }) => unknown;
+/** `enabled`: '<campaña>:<flota>' → agentes; '<campaña>:<flota>:sup' → supervisores (solo con includeSupervisors=1). */
 function setApi(enabled: Record<string, string[]>, handler: Handler = () => ({})) {
   apiFetch.mockImplementation(async (url: string, init?: { method?: string; json?: any }) => {
     if (url === '/api/campaigns') return { campaigns: ['didi_vip', 'zendere'] };
-    const m = url.match(/^\/api\/campaigns\/([^/]+)\/enabled-agents\?fleet=(v3|v4)$/);
-    if (m) return { agents: enabled[`${m[1]}:${m[2]}`] ?? [] };
+    const m = url.match(/^\/api\/campaigns\/([^/]+)\/enabled-agents\?fleet=(v3|v4)(&includeSupervisors=1)?$/);
+    if (m) {
+      const sup = m[3] ? (enabled[`${m[1]}:${m[2]}:sup`] ?? []) : [];
+      return { agents: [...(enabled[`${m[1]}:${m[2]}`] ?? []), ...sup], supervisors: sup };
+    }
     return handler(url, init);
   });
 }
@@ -97,33 +101,78 @@ describe('/contactos', () => {
     expect(within(summary).getAllByText('Teléfono duplicado')).toHaveLength(2);
   });
 
-  it('v3 sin mensaje → vista previa deshabilitada con "Escribe el mensaje"', async () => {
+  it('flota v3 preseleccionada y sin campo de mensaje: la vista previa no lo exige', async () => {
     setApi({ 'didi_vip:v3': ['ana'] });
-    await setup();
+    render(<ContactsUploadView />);
+    expect(await screen.findByRole('button', { name: /Flota/ })).toHaveTextContent('v3 (CLI)');
+    await pick(/Campaña/, 'didi_vip');
     await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
     await userEvent.upload(screen.getByLabelText('Archivo CSV'), csvFile(tenRows));
     await screen.findByTestId('validation-summary');
-    expect(screen.getByRole('button', { name: 'Vista previa' })).toBeDisabled();
-    expect(screen.getByText('Escribe el mensaje')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Mensaje plantilla/)).toBeNull();
+    expect(screen.queryByLabelText('Plantilla')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Vista previa' })).toBeEnabled();
+  });
+
+  it('toggle "Incluir supervisores": apagado excluye, encendido reparte 2/2 con etiqueta Supervisor', async () => {
+    let sent: any = null;
+    setApi({ 'didi_vip:v3': ['ana'], 'didi_vip:v3:sup': ['sara'] }, (url, init) => {
+      if (init?.method === 'POST') {
+        sent = init.json;
+        return { fleet: 'v3', status: 'completed', manifest: { perAgent: [] } };
+      }
+      return {};
+    });
+    await setup();
+    const toggle = screen.getByRole('switch', { name: 'Incluir supervisores' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
+    await userEvent.upload(screen.getByLabelText('Archivo CSV'), csvFile('contact_phone,first_name\n5215500000101,A\n5215500000102,B\n5215500000103,C\n5215500000104,D'));
+    await screen.findByTestId('validation-summary');
+    await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }));
+    expect(await screen.findByTestId('preview-ana')).toHaveTextContent('4 contactos');
+    expect(screen.queryByTestId('preview-sara')).toBeNull();
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await waitFor(() => expect(apiFetch.mock.calls.some(([u]) => String(u).includes('includeSupervisors=1'))).toBe(true));
+    await waitFor(() => expect(screen.getByText(/1 supervisor/)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }));
+    expect(await screen.findByTestId('preview-ana')).toHaveTextContent('2 contactos');
+    expect(screen.getByTestId('preview-sara')).toHaveTextContent('2 contactos');
+    expect(within(screen.getByTestId('preview-sara')).getByText('Supervisor')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar carga' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Entregar' }));
+    await screen.findByTestId('delivery');
+    expect(sent).toMatchObject({ includeSupervisors: true, plan: { agents: ['ana', 'sara'] } });
+  });
+
+  it('asignar a un agente con supervisores: el selector los etiqueta', async () => {
+    setApi({ 'didi_vip:v3': ['ana'], 'didi_vip:v3:sup': ['sara'] });
+    await setup();
+    await userEvent.click(screen.getByRole('switch', { name: 'Incluir supervisores' }));
+    await pick(/Modo/, 'Asignar a un agente');
+    await waitFor(() => expect(screen.getByRole('button', { name: /Agente/ })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: /Agente/ }));
+    expect(await screen.findByRole('option', { name: 'sara (Supervisor)' })).toBeInTheDocument();
   });
 
   async function previewTen() {
     await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
     await userEvent.upload(screen.getByLabelText('Archivo CSV'), csvFile(tenRows));
     await screen.findByTestId('validation-summary');
-    await userEvent.type(screen.getByLabelText(/Mensaje plantilla/), 'Hola {{first_name}');
     await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }));
     return screen.findByTestId('preview');
   }
 
-  it('reparto entre tres agentes: 4/3/3 con primeras filas y mensaje', async () => {
+  it('reparto entre tres agentes: 4/3/3 con primeras filas (teléfono y nombre)', async () => {
     setApi({ 'didi_vip:v3': ['carla', 'ana', 'beto'] });
     await setup();
     await previewTen();
     expect(screen.getByTestId('preview-ana')).toHaveTextContent('4 contactos');
     expect(screen.getByTestId('preview-beto')).toHaveTextContent('3 contactos');
     expect(screen.getByTestId('preview-carla')).toHaveTextContent('3 contactos');
-    expect(screen.getByTestId('preview-ana')).toHaveTextContent('Hola N0');
+    expect(screen.getByTestId('preview-ana')).toHaveTextContent('5215500000100');
+    expect(screen.getByTestId('preview-ana')).toHaveTextContent('N0');
     expect(apiFetch.mock.calls.some(([u]) => String(u).endsWith('/uploads'))).toBe(false);
   });
 
@@ -145,7 +194,9 @@ describe('/contactos', () => {
     const delivery = await screen.findByTestId('delivery');
     expect(delivery).toHaveTextContent('Carga entregada');
     expect(delivery).toHaveTextContent('ana: 5 contactos');
-    expect(sent).toMatchObject({ fleet: 'v3', mode: 'distribute', fileName: 'contactos.csv', message: 'Hola {first_name}', plan: { agents: ['ana', 'beto'], counts: { ana: 5, beto: 5 } } });
+    expect(delivery).toHaveTextContent('Mi asignación');
+    expect(sent).toMatchObject({ fleet: 'v3', mode: 'distribute', fileName: 'contactos.csv', includeSupervisors: false, plan: { agents: ['ana', 'beto'], counts: { ana: 5, beto: 5 } } });
+    expect(sent).not.toHaveProperty('message');
     expect(sent.plan.hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -184,7 +235,7 @@ describe('/contactos', () => {
     await pick(/Agente/, 'Ana.Lopez');
     await userEvent.upload(screen.getByLabelText('Archivo CSV'), csvFile(tenRows));
     await screen.findByTestId('validation-summary');
-    expect(screen.getByLabelText('Plantilla')).toHaveValue('{mensaje}');
+    expect(screen.queryByLabelText('Plantilla')).toBeNull();
     expect(screen.getByLabelText('Código de país')).toHaveValue('52');
     await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }));
     expect(await screen.findByTestId('preview-Ana.Lopez')).toHaveTextContent('10 contactos');
@@ -192,7 +243,8 @@ describe('/contactos', () => {
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Entregar' }));
     expect(await screen.findByText('Procesando')).toBeInTheDocument();
     expect(await screen.findByText('Carga procesada: 10 contactos')).toBeInTheDocument();
-    expect(sent).toMatchObject({ fleet: 'v4', mode: 'single', agent: 'Ana.Lopez', template: '{mensaje}', countryCode: '52', phoneColumn: 'contact_phone' });
+    expect(sent).toMatchObject({ fleet: 'v4', mode: 'single', agent: 'Ana.Lopez', countryCode: '52', phoneColumn: 'contact_phone' });
+    expect(sent).not.toHaveProperty('template');
   });
 
   it('v4 sin resultado en el tiempo de sondeo → "Sigue en proceso; revisa el historial"', async () => {

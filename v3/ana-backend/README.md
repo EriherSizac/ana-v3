@@ -195,11 +195,15 @@ El alta de agentes **ya no** se hace con `credentials.csv`: agente de la campañ
 es un usuario del pool habilitado (`CONFIRMED` o `FORCE_CHANGE_PASSWORD`) con un
 rol de la API de Roles cuyo `campaign_name` es X y cuyo nombre contiene
 "agente" (envío por defecto, salvo deny `-ana:campaign:message:send`). Roles `*`,
-líderes y admins no son agentes.
+líderes y admins no son agentes. Los usuarios con rol "Supervisor <Campaña>" (sin
+ese deny) también se listan, con `kind:"supervisor"` (los agentes llevan
+`kind:"agent"`; sin `kind` = agente): reciben contactos solo si quien carga
+enciende "Incluir supervisores" en ANA Admin, y la habilitación y las excepciones
+les aplican igual (CLI, "Mi asignación").
 
 | Objeto S3 | Escritor | Forma |
 |---|---|---|
-| `campaign-agents/{campaign}.json` | solo la sincronización de v4 (cada 5 min) | `{"schemaVersion":1,"campaign","generatedAt","agents":[{"username","cognitoUsername","roleIds"}]}` |
+| `campaign-agents/{campaign}.json` | solo la sincronización de v4 (cada 5 min) | `{"schemaVersion":1,"campaign","generatedAt","agents":[{"username","cognitoUsername","roleIds","kind"}]}` |
 | `rosters/{campaign}.json` | rutas `/admin/*` | `{"schemaVersion":2,"campaign","updatedAt","updatedBy","overrides":{"<username>":{"enabled","updatedAt","updatedBy"}}}` |
 
 Regla efectiva (`src/lib/roster.ts`, la usan la autenticación del CLI y la carga
@@ -209,7 +213,7 @@ ilegibles, de otra versión o vencidos = error (no se habilita a nadie).
 
 | Método | Ruta | Permiso | Descripción |
 |---|---|---|---|
-| GET | `/admin/campaigns/{campaign}/roster` | `ana:admin:agents:manage` | lista derivada con estado efectivo + `inactiveOverrides` |
+| GET | `/admin/campaigns/{campaign}/roster` | `ana:admin:agents:manage`, o `ana:contacts:list:upload` + `ana:contacts:list:distribute` (supervisores, solo lectura) | lista derivada con estado efectivo, `kind` + `inactiveOverrides` |
 | POST | `/admin/campaigns/{campaign}/roster/agents` | `ana:admin:agents:manage` | `{"agents":[{"username","enabled"}]}` (1–200); `enabled:true` a quien no es agente → 409 |
 
 ```bash
@@ -247,26 +251,28 @@ las retira `migrate-cli-to-cognito-login`.
 
 | Método | Ruta | Permisos | Descripción |
 |---|---|---|---|
-| POST | `/admin/campaigns/{campaign}/contacts` | `ana:contacts:list:upload` + `ana:contacts:list:distribute` | `{"uploadId","fileName","mode":"distribute"\|"single","message"?,"files":[{"agent","csv"}]}` (1–200 archivos, body ≤ 5 500 000 bytes → si no, 413) |
+| POST | `/admin/campaigns/{campaign}/contacts` | `ana:contacts:list:upload` + `ana:contacts:list:distribute` | `{"uploadId","fileName","mode":"distribute"\|"single","files":[{"agent","csv"}]}` (1–200 archivos, body ≤ 5 500 000 bytes → si no, 413; `message` se ignora) |
 | GET | `/admin/campaigns/{campaign}/uploads` | los mismos | 50 cargas más recientes (manifiestos sin `message`) |
 
 - Cada agente debe estar **habilitado** (regla efectiva del roster); si no, 409
   `Agentes no habilitados` sin escribir nada.
-- Escribe `agents/{campaign}/{agent}-contacts-{ts}.csv` (lo consume el CLI con
-  `GET /get/chats`) y una copia idéntica en `historic/agents/...`, con el mismo
-  `{ts}`; **no** usa `assignments/`. La columna `message` se procesa igual que en
-  la carga de supervisor (`src/lib/contactsCsv.ts`) y los saltos de línea del
-  mensaje se convierten a `\n` literal.
+- Escribe en los **pendientes del agente**
+  `assignments/agents/{campaign}/{agent}-contacts-{ts}.csv` y una copia idéntica en
+  `historic/agents/...`, con el mismo `{ts}` y `ana_upload_id` como última
+  columna; **no** escribe en `agents/` ni agrega `message`. El agente revisa,
+  escribe el mensaje y publica a `agents/` (lo que consume el CLI) desde
+  "Mi asignación" de ANA Admin (rutas `/agent/assignments*`).
 - Manifiesto `uploads/{campaign}/{uploadId}.json`
-  (`schemaVersion:1`, `status` `completed`/`failed`, `perAgent` con llaves).
+  (`schemaVersion:1`, `status` `completed`/`failed`, `destination:"assignments"`,
+  `message:null`, `perAgent` con llaves).
   Reintentar el mismo `uploadId` devuelve el manifiesto `completed` sin
   duplicar archivos; un `failed` se reprocesa.
-- Fallo a mitad de la carga: se borran los `agents/...` ya escritos, el
+- Fallo a mitad de la carga: se borran los `assignments/agents/...` ya escritos, el
   manifiesto queda `failed` y la respuesta 500 lista `written` y `rolledBack`.
 
 ```bash
 curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"uploadId":"20261026T100000-abcdef12","fileName":"cartera.csv","mode":"single","message":"Hola {first_name}","files":[{"agent":"ana.lopez","csv":"contact_phone,first_name\n5215500000001,Ana"}]}' \
+  -d '{"uploadId":"20261026T100000-abcdef12","fileName":"cartera.csv","mode":"single","files":[{"agent":"ana.lopez","csv":"contact_phone,first_name\n5215500000001,Ana"}]}' \
   https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/contacts
 curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/uploads
 ```

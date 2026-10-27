@@ -15,12 +15,20 @@ export const CAMPAIGN_AGENTS_PREFIX = 'campaign-agents/';
 export const LIST_MAX_AGE_MS = 24 * 60 * 60 * 1000; // vigencia de la lista: 24 h
 const CACHE_TTL_MS = 60 * 1000;
 
+/** Tipo de integrante de la lista (add-supervisor-contact-access D2). */
+export type MemberKind = 'agent' | 'supervisor';
+
+/** Tipo efectivo: `kind` ausente o desconocido = agente (listas anteriores). */
+export const memberKind = (a: { kind?: unknown }): MemberKind => (a.kind === 'supervisor' ? 'supervisor' : 'agent');
+
 export interface CampaignAgent {
   /** username normalizado (trim + minúsculas). */
   username: string;
   /** username tal como lo emite el pool (operatorId en v4). */
   cognitoUsername: string;
   roleIds: string[];
+  /** Ausente = agente. */
+  kind?: MemberKind;
 }
 
 export interface CampaignAgentsList {

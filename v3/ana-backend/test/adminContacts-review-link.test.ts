@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('Identificador de carga en las filas entregadas', () => {
-  it('ana_upload_id como última columna en agents/ e historic/ (contenido idéntico)', async () => {
+  it('ana_upload_id como última columna en assignments/ e historic/ (contenido idéntico)', async () => {
     const res = await post(body());
     expect(res.statusCode).toBe(200);
     const m = parse(res).data;

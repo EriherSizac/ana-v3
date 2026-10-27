@@ -5,7 +5,7 @@
 
 import { GetCommand, QueryCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb } from './dynamo';
-import { normalizeId, readCampaignAgents } from './campaignAgentsList';
+import { memberKind, normalizeId, readCampaignAgents, type MemberKind } from './campaignAgentsList';
 
 // Roster de agentes por campaña. PK=campaign, SK=operatorId. Persistente (no
 // TTL): el líder/admin necesitan ver a sus agentes aunque estén offline.
@@ -89,11 +89,21 @@ export async function listCampaignAgents(campaign: string): Promise<AgentEntry[]
  * Lanza RosterListError si la lista está en error (ilegible o vencida).
  */
 export async function listEnabledAgents(campaign: string): Promise<string[]> {
+  return (await listEnabledMembers(campaign)).map((m) => m.operatorId);
+}
+
+/**
+ * Como listEnabledAgents, con el tipo de cada integrante (agente o
+ * supervisor, add-supervisor-contact-access D3). Supervisores incluidos.
+ */
+export async function listEnabledMembers(campaign: string): Promise<{ operatorId: string; kind: MemberKind }[]> {
   const list = await readCampaignAgents(campaign);
   if (!list) return [];
   const entries = await listCampaignAgents(campaign);
   const disabled = new Set(entries.filter((e) => e.enabled === false).map((e) => normalizeId(e.operatorId)));
-  return list.agents.filter((a) => !disabled.has(normalizeId(a.username))).map((a) => a.cognitoUsername);
+  return list.agents
+    .filter((a) => !disabled.has(normalizeId(a.username)))
+    .map((a) => ({ operatorId: a.cognitoUsername, kind: memberKind(a) }));
 }
 
 /** operatorIds activos (para reparto del líder). */

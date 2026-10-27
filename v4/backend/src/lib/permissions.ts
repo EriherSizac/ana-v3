@@ -54,6 +54,10 @@ export const normalizeRoleName = (name?: string): string =>
 // otorga ana:campaign:message:send por defecto (deny `-perm` lo quita).
 export const isAgentRole = (name?: string): boolean => /agente/.test(normalizeRoleName(name));
 
+// Un rol cuyo nombre contiene "supervisor" ("Supervisor <Campaña>") carga y
+// reparte contactos de sus campañas y puede recibirlos (add-supervisor-contact-access D1).
+export const isSupervisorRole = (name?: string): boolean => /supervisor/.test(normalizeRoleName(name));
+
 /**
  * Rol de superadmin (v4-enforce-permissions D7): sin diacríticos, en
  * minúsculas y sin espacios, guiones ni guiones bajos contiene "superadmin"

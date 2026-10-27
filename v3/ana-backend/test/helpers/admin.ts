@@ -72,3 +72,19 @@ export const derivedList = (campaign: string, usernames: string[], generatedAt =
     generatedAt,
     agents: usernames.map((u) => ({ username: u, cognitoUsername: u, roleIds: ['r1'] })),
   });
+
+/** Lista derivada con tipo por integrante (add-supervisor-contact-access). */
+export const derivedMembers = (campaign: string, members: Array<[string, 'agent' | 'supervisor']>, generatedAt = new Date().toISOString()) =>
+  JSON.stringify({
+    schemaVersion: 1,
+    campaign,
+    generatedAt,
+    agents: members.map(([u, kind]) => ({ username: u, cognitoUsername: u, roleIds: ['r1'], kind })),
+  });
+
+/** Supervisor de prueba: carga y reparto, sin gestión de agentes. */
+export const SUPERVISOR_PRUEBA: MeAccess = {
+  permissions: ['ana:contacts:list:upload', 'ana:contacts:list:distribute', 'ana:campaign:message:send'],
+  campaigns: ['prueba'],
+  roleNames: ['Supervisor Prueba'],
+};

@@ -58,7 +58,8 @@ describe('POST /api/campaigns/[campaign]/uploads — v3', () => {
     const sent = JSON.parse(call.body!);
     expect(sent.uploadId).toMatch(/^\d{8}T\d{6}-[0-9a-f]{8}$/);
     expect(sent.mode).toBe('distribute');
-    expect(sent.message).toBe('Hola {first_name}');
+    // add-supervisor-contact-access: quien carga ya no define el mensaje.
+    expect(sent).not.toHaveProperty('message');
     expect(sent.files).toEqual([
       { agent: 'ana', csv: 'contact_phone,first_name\n5215500000001,Ana\n5215500000003,Carla\n' },
       { agent: 'beto', csv: 'contact_phone,first_name\n5215500000002,Beto\n' },
@@ -102,12 +103,61 @@ describe('POST /api/campaigns/[campaign]/uploads — v3', () => {
     expect(res.status).toBe(409);
   });
 
-  it('v3 sin mensaje ni columna message → 400', async () => {
+  it('v3 sin mensaje ni columna message → se entrega (el agente escribe el mensaje)', async () => {
     mockFetch(LEADER, routes());
+    vi.spyOn(console, 'log').mockImplementation(() => {});
     const plan = await clientPlan(CSV, 'v3', ['ana', 'beto']);
     const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, plan });
-    expect(res.status).toBe(400);
-    expect((await bodyOf(res)).error.message).toBe('Escribe el mensaje');
+    expect(res.status).toBe(200);
+  });
+
+  describe('Incluir supervisores', () => {
+    const withSup = (sup: { enabled: boolean } = { enabled: true }) => () =>
+      Response.json({
+        success: true,
+        data: {
+          campaign: 'didi_vip',
+          generatedAt: 'x',
+          agents: [
+            { username: 'ana', enabled: true, override: null, kind: 'agent' },
+            { username: 'sara', enabled: sup.enabled, override: null, kind: 'supervisor' },
+          ],
+          inactiveOverrides: [],
+        },
+      });
+
+    it('toggle apagado: el plan solo usa agentes; un plan con la supervisora → 409', async () => {
+      const { calls } = mockFetch(LEADER, routes({ [`GET ${V3}/admin/campaigns/didi_vip/roster`]: withSup() }));
+      const plan = await clientPlan(CSV, 'v3', ['ana', 'sara']);
+      const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, plan });
+      expect(res.status).toBe(409);
+      expect(calls.some((c) => c.url.endsWith('/contacts'))).toBe(false);
+    });
+
+    it('toggle encendido: reparte también a la supervisora', async () => {
+      const { calls } = mockFetch(LEADER, routes({ [`GET ${V3}/admin/campaigns/didi_vip/roster`]: withSup() }));
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const plan = await clientPlan(CSV, 'v3', ['ana', 'sara']);
+      const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, includeSupervisors: true, plan });
+      expect(res.status).toBe(200);
+      const sent = JSON.parse(calls.find((c) => c.url.endsWith('/contacts'))!.body!);
+      expect(sent.files.map((x: any) => x.agent)).toEqual(['ana', 'sara']);
+    });
+
+    it('supervisora deshabilitada tras la vista previa → 409', async () => {
+      mockFetch(LEADER, routes({ [`GET ${V3}/admin/campaigns/didi_vip/roster`]: withSup({ enabled: false }) }));
+      const plan = await clientPlan(CSV, 'v3', ['ana', 'sara']);
+      const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, includeSupervisors: true, plan });
+      expect(res.status).toBe(409);
+    });
+
+    it('supervisor (upload + distribute sin gestión) puede cargar', async () => {
+      mockFetch({ ...LEADER, permissions: ['ana:contacts:list:upload', 'ana:contacts:list:distribute', 'ana:campaign:message:send'], isLeader: false, roleNames: ['Supervisor DIDI VIP'] }, routes());
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const plan = await clientPlan(CSV, 'v3', ['ana', 'beto']);
+      const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, plan });
+      expect(res.status).toBe(200);
+    });
   });
 
   it('sin permiso de reparto → 403; campaña ajena → 403', async () => {
@@ -158,10 +208,11 @@ describe('POST /api/campaigns/[campaign]/uploads — v4', () => {
       campaign: 'didi_vip',
       distribute: true,
       assignments: { 'Ana.Lopez': 1 },
-      template: '{mensaje}',
       countryCode: '52',
       phoneColumn: 'contact_phone',
     });
+    // Sin plantilla: v4 usa {mensaje} por defecto y el agente escribe el mensaje en el desktop.
+    expect(JSON.parse(presign.body!)).not.toHaveProperty('template');
     const put = calls.find((c) => c.method === 'PUT')!;
     expect(put.body).toBe('contact_phone,first_name\n5215500000001,Ana\n5215500000002,Beto\n5215500000003,Carla\n');
     expect(put.headers.get('authorization')).toBeNull();
@@ -223,5 +274,29 @@ describe('GET /api/campaigns/[campaign]/uploads y enabled-agents', () => {
     });
     const body = await bodyOf(await getEnabled(authedRequest('/api/campaigns/didi_vip/enabled-agents?fleet=v3'), ctx({ campaign: 'didi_vip' })));
     expect(body.agents).toEqual(['ana']);
+  });
+
+  it('enabled-agents excluye supervisores salvo includeSupervisors=1 (y los marca)', async () => {
+    const roster = () =>
+      Response.json({ campaign: 'didi_vip', generatedAt: 'x', agents: [
+        { operatorId: 'Ana.Lopez', enabled: true, override: null, lastSeen: null, active: false, kind: 'agent' },
+        { operatorId: 'sara', enabled: true, override: null, lastSeen: null, active: false, kind: 'supervisor' },
+        { operatorId: 'luis', enabled: true, override: null, lastSeen: null, active: false },
+      ], inactiveOverrides: [] });
+    mockFetch(LEADER, { [`GET ${V4}/admin/agent-roster`]: roster });
+    const off = await bodyOf(await getEnabled(authedRequest('/api/campaigns/didi_vip/enabled-agents?fleet=v4'), ctx({ campaign: 'didi_vip' })));
+    expect(off).toMatchObject({ agents: ['Ana.Lopez', 'luis'], supervisors: [], includeSupervisors: false });
+    const on = await bodyOf(await getEnabled(authedRequest('/api/campaigns/didi_vip/enabled-agents?fleet=v4&includeSupervisors=1'), ctx({ campaign: 'didi_vip' })));
+    expect(on).toMatchObject({ agents: ['Ana.Lopez', 'sara', 'luis'], supervisors: ['sara'], includeSupervisors: true });
+  });
+
+  it('enabled-agents permitido al supervisor; 403 a quien solo carga', async () => {
+    mockFetch({ ...LEADER, permissions: ['ana:contacts:list:upload', 'ana:contacts:list:distribute'], isLeader: false }, {
+      [`GET ${V3}/admin/campaigns/didi_vip/roster`]: () => Response.json({ success: true, data: { campaign: 'didi_vip', generatedAt: 'x', agents: [], inactiveOverrides: [] } }),
+    });
+    expect((await getEnabled(authedRequest('/api/campaigns/didi_vip/enabled-agents?fleet=v3'), ctx({ campaign: 'didi_vip' }))).status).toBe(200);
+    setupServerTest();
+    mockFetch({ ...LEADER, permissions: ['ana:contacts:list:upload'], isLeader: false }, {});
+    expect((await getEnabled(authedRequest('/api/campaigns/didi_vip/enabled-agents?fleet=v3'), ctx({ campaign: 'didi_vip' }))).status).toBe(403);
   });
 });

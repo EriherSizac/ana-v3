@@ -28,6 +28,7 @@ function fleetState(user: PoolUser, r: RosterResult): FleetState {
     return {
       state: entry.enabled ? 'agent' : 'disabled',
       override: entry.override,
+      kind: entry.kind,
       ...(entry.lastSeen !== undefined ? { lastSeen: entry.lastSeen } : {}),
     };
   }

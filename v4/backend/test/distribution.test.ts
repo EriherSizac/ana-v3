@@ -65,6 +65,56 @@ async function runTrigger(meta: Record<string, string>) {
   return writes.map((w) => w.operatorId);
 }
 
+const withSupervisor = () =>
+  JSON.stringify({
+    schemaVersion: 1,
+    campaign: 'didi_vip',
+    generatedAt: new Date().toISOString(),
+    agents: [
+      { username: 'ana.lopez', cognitoUsername: 'Ana.Lopez', roleIds: ['r1'], kind: 'agent' },
+      { username: 'sara', cognitoUsername: 'sara', roleIds: ['s1'], kind: 'supervisor' },
+    ],
+  });
+
+describe('supervisores como destinatarios (add-supervisor-contact-access)', () => {
+  beforeEach(() => {
+    ddbMock.reset();
+    s3Mock.reset();
+    clearCampaignAgentsCache();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    access.value = LEADER;
+    eligible.value = ['Ana.Lopez', 'sara'];
+    objects = { 'campaign-agents/didi_vip.json': { body: withSupervisor() } };
+    installS3();
+    installAgentsTable({});
+  });
+
+  it('reparto automático con flag: solo agentes (sara es supervisora)', async () => {
+    vi.stubEnv('AGENT_ROSTER_FILTER', 'true');
+    expect(await getDistributableAgents('didi_vip')).toEqual(['Ana.Lopez']);
+  });
+
+  it('assignments a una supervisora habilitada → URL', async () => {
+    vi.stubEnv('AGENT_ROSTER_FILTER', 'true');
+    const r = await presign({ campaign: 'didi_vip', distribute: true, assignments: { sara: 1 } });
+    expect(r.status).toBe(200);
+    expect(r.body.metadata.assignments).toBe('{"sara":1}');
+  });
+
+  it('presign sin template usa {mensaje} por defecto (carga de ANA Admin sin plantilla)', async () => {
+    const r = await presign({ campaign: 'didi_vip', distribute: true, assignments: { 'Ana.Lopez': 1 } });
+    expect(r.status).toBe(200);
+    expect(r.body.metadata.template).toBe('{mensaje}');
+  });
+
+  it('el trigger reparte a la supervisora con assignments', async () => {
+    vi.stubEnv('AGENT_ROSTER_FILTER', 'true');
+    const ops = await runTrigger({ operatorid: 'lider.didi', distribute: '1', campaign: 'didi_vip', assignments: '{"sara":1}' });
+    expect(ops).toEqual(['sara', 'sara', 'sara']);
+  });
+});
+
 describe('AGENT_ROSTER_FILTER', () => {
   beforeEach(() => {
     ddbMock.reset();

@@ -26,7 +26,8 @@ const body = (over: Record<string, unknown> = {}) => ({
 });
 
 const post = (b: unknown, username = 'erick.silva') => uploadContacts(adminEvent({ username, path: { campaign: 'prueba' }, body: b }));
-const agentsPuts = () => s3.puts.filter((p) => p.key.startsWith('agents/'));
+/** Pendientes escritos por la carga (add-supervisor-contact-access: ya no van a agents/). */
+const agentsPuts = () => s3.puts.filter((p) => p.key.startsWith('assignments/agents/'));
 
 beforeEach(() => {
   s3mock.reset();
@@ -42,7 +43,7 @@ afterEach(() => {
 });
 
 describe('POST /admin/campaigns/{campaign}/contacts', () => {
-  it('carga a dos agentes: agents/ + historic/ con el mismo ts, sin assignments/, manifiesto completed', async () => {
+  it('carga a dos agentes: assignments/ + historic/ con el mismo ts, sin agents/, manifiesto completed', async () => {
     mockV4Me(LEADER_PRUEBA);
     const res = await post(body());
     expect(res.statusCode).toBe(200);
@@ -55,7 +56,8 @@ describe('POST /admin/campaigns/{campaign}/contacts', () => {
       mode: 'distribute',
       uploadedBy: 'erick.silva',
       status: 'completed',
-      message: 'Hola {first_name}',
+      destination: 'assignments',
+      message: null,
       totalRows: 3,
     });
     expect(m.perAgent.map((p: any) => [p.agent, p.rows])).toEqual([
@@ -63,31 +65,31 @@ describe('POST /admin/campaigns/{campaign}/contacts', () => {
       ['luis', 1],
     ]);
     const ts = m.perAgent[0].key.match(/-contacts-(.+)\.csv$/)[1];
-    expect(m.perAgent[1].key).toBe(`agents/prueba/luis-contacts-${ts}.csv`);
+    expect(m.perAgent[1].key).toBe(`assignments/agents/prueba/luis-contacts-${ts}.csv`);
     expect(m.perAgent[1].historicKey).toBe(`historic/agents/prueba/luis-contacts-${ts}.csv`);
     for (const p of m.perAgent) expect(s3.store.get(p.key)!.body).toBe(s3.store.get(p.historicKey)!.body);
-    expect(s3.puts.some((p) => p.key.startsWith('assignments/'))).toBe(false);
+    expect(s3.puts.some((p) => p.key.startsWith('agents/'))).toBe(false);
     expect(s3.json('uploads/prueba/20261026T100000-abcdef12.json').status).toBe('completed');
     // El BOM se elimina.
     expect(s3.store.get(m.perAgent[1].key)!.body.startsWith('contact_phone')).toBe(true);
   });
 
-  it('GET /get/chats entrega el archivo del agente', async () => {
+  it('GET /get/chats no entrega la carga: queda pendiente del agente', async () => {
     mockV4Me(LEADER_PRUEBA);
     await post(body());
     const res = await getChats({ pathParameters: { agentId: 'ana.lopez', campaignId: 'prueba' } } as unknown as APIGatewayProxyEvent);
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('5215500000001');
-    expect(res.body).not.toContain('5215500000003');
+    expect(res.statusCode).toBe(404);
   });
 
-  it('mensaje con salto de línea → una sola línea con \\n literal', async () => {
+  it('message del body se ignora: el CSV no gana columna message', async () => {
     mockV4Me(ADMIN);
     await post(body({ message: 'Hola {first_name}\nSaldo: {total_balance}', files: [{ agent: 'ana.lopez', csv: CSV_ANA }] }));
-    const file = agentsPuts()[0]!.body;
-    const lines = file.trimEnd().split('\n');
-    expect(lines).toHaveLength(3);
-    expect(lines[1]).toBe('5215500000001,Ana,100,Hola {first_name}\\nSaldo: {total_balance},20261026T100000-abcdef12');
+    const lines = agentsPuts()[0]!.body.trimEnd().split('\n');
+    expect(lines).toEqual([
+      'contact_phone,first_name,total_balance,ana_upload_id',
+      '5215500000001,Ana,100,20261026T100000-abcdef12',
+      '5215500000002,Bea,200,20261026T100000-abcdef12',
+    ]);
   });
 
   it('body > 5 500 000 bytes → 413 sin S3', async () => {
@@ -132,10 +134,16 @@ describe('POST /admin/campaigns/{campaign}/contacts', () => {
     expect(parse(res)).toEqual({ success: false, message: 'ana.lopez: falta columna de teléfono' });
   });
 
-  it('sin mensaje → 400 "Mensaje requerido"', async () => {
+  it('sin mensaje ni columna message → 200 (el agente escribe el mensaje)', async () => {
     mockV4Me(ADMIN);
     const res = await post(body({ message: undefined }));
-    expect(parse(res)).toEqual({ success: false, message: 'Mensaje requerido' });
+    expect(res.statusCode).toBe(200);
+    expect(parse(res).data.message).toBeNull();
+  });
+
+  it('un message no textual de un cliente anterior también se ignora', async () => {
+    mockV4Me(ADMIN);
+    expect((await post(body({ message: 42 }))).statusCode).toBe(200);
   });
 
   it('con columna message en todos los CSV el mensaje es opcional', async () => {
@@ -153,11 +161,11 @@ describe('POST /admin/campaigns/{campaign}/contacts', () => {
     expect(parse(await post(body(over))).message).toBe(msg);
   });
 
-  it('error en el tercer archivo de cinco: rollback de agents/, manifiesto failed y 500 con lo escrito/revertido', async () => {
+  it('error en el tercer archivo de cinco: rollback de assignments/, manifiesto failed y 500 con lo escrito/revertido', async () => {
     mockV4Me(ADMIN);
     let agentWrites = 0;
     s3.beforePut = (key) => {
-      if (key.startsWith('agents/') && ++agentWrites === 3) throw Object.assign(new Error('boom'), { name: 'InternalError' });
+      if (key.startsWith('assignments/agents/') && ++agentWrites === 3) throw Object.assign(new Error('boom'), { name: 'InternalError' });
     };
     const files = ['ana.lopez', 'luis', 'c', 'd', 'e'].map((agent) => ({ agent, csv: CSV_ANA }));
     const res = await post(body({ files }));

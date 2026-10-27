@@ -43,6 +43,75 @@ const confirmed = (username: string): PoolUser => ({ username, enabled: true, st
 const agentsOf = (lists: Awaited<ReturnType<typeof deriveCampaignAgents>>['lists'], c: string) =>
   lists.find((l) => l.campaign === c)!.agents.map((a) => a.username);
 
+const kindsOf = (lists: Awaited<ReturnType<typeof deriveCampaignAgents>>['lists'], c: string) =>
+  Object.fromEntries(lists.find((l) => l.campaign === c)!.agents.map((a) => [a.username, a.kind]));
+
+describe('deriveCampaignAgents: supervisores (add-supervisor-contact-access)', () => {
+  it('rol "Supervisor DIDI VIP" → integrante con kind supervisor', async () => {
+    const { d } = deps({
+      pool: [confirmed('sara')],
+      directory: [{ username: 'sara', roles: [{ id: 's1', name: 'Supervisor DIDI VIP', campaign: 'DIDI_VIP' }] }],
+      detail: { sara: [{ role_id: 's1', role_name: 'Supervisor DIDI VIP', campaign_name: 'DIDI_VIP' }] },
+    });
+    expect(kindsOf((await deriveCampaignAgents(d)).lists, 'didi_vip')).toEqual({ sara: 'supervisor' });
+  });
+
+  it('agente y supervisor de la misma campaña → una vez con kind agent', async () => {
+    const { d } = deps({
+      pool: [confirmed('ana')],
+      directory: [{ username: 'ana', roles: [{ id: 's1', name: 'Supervisor Prueba', campaign: 'prueba' }, { id: 'r1', name: 'Agente Prueba', campaign: 'prueba' }] }],
+      detail: {
+        ana: [
+          { role_id: 's1', role_name: 'Supervisor Prueba', campaign_name: 'prueba' },
+          { role_id: 'r1', role_name: 'Agente Prueba', campaign_name: 'prueba' },
+        ],
+      },
+    });
+    const { lists } = await deriveCampaignAgents(d);
+    expect(lists.find((l) => l.campaign === 'prueba')!.agents).toEqual([
+      { username: 'ana', cognitoUsername: 'ana', roleIds: ['r1', 's1'], kind: 'agent' },
+    ]);
+  });
+
+  it('nombre con acento y mayúsculas también es supervisor', async () => {
+    const { d } = deps({
+      pool: [confirmed('sara')],
+      directory: [{ username: 'sara', roles: [{ id: 's1', name: 'SUPERVISÓR Prueba', campaign: 'prueba' }] }],
+      detail: { sara: [{ role_id: 's1', role_name: 'SUPERVISÓR Prueba', campaign_name: 'prueba' }] },
+    });
+    expect(kindsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual({ sara: 'supervisor' });
+  });
+
+  it('deny local de envío en el rol de supervisor → no deriva', async () => {
+    const { d, getRolePermissions } = deps({
+      pool: [confirmed('sara')],
+      directory: [{ username: 'sara', roles: [{ id: 's1', name: 'Supervisor Prueba', campaign: 'prueba' }] }],
+      detail: { sara: [{ role_id: 's1', role_name: 'Supervisor Prueba', campaign_name: 'prueba' }] },
+      local: { s1: [`-${SEND}`] },
+    });
+    expect(agentsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual([]);
+    expect(getRolePermissions).toHaveBeenCalledWith(['s1']);
+  });
+
+  it('supervisor deshabilitado en Cognito no deriva', async () => {
+    const { d } = deps({
+      pool: [{ username: 'sara', enabled: false, status: 'CONFIRMED' }],
+      directory: [{ username: 'sara', roles: [{ id: 's1', name: 'Supervisor Prueba', campaign: 'prueba' }] }],
+      detail: { sara: [{ role_id: 's1', role_name: 'Supervisor Prueba', campaign_name: 'prueba' }] },
+    });
+    expect(agentsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual([]);
+  });
+
+  it('líder sin rol de supervisor sigue sin derivar', async () => {
+    const { d } = deps({
+      pool: [confirmed('luis')],
+      directory: [{ username: 'luis', roles: [{ id: 'l1', name: 'Líder Prueba', campaign: 'prueba' }] }],
+      detail: { luis: [{ role_id: 'l1', role_name: 'Líder Prueba', campaign_name: 'prueba' }] },
+    });
+    expect(agentsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual([]);
+  });
+});
+
 describe('deriveCampaignAgents (design D11)', () => {
   it('agente con rol "Agente DIDI VIP" (campaign DIDI_VIP) sin configuración → agente de didi_vip', async () => {
     const { d } = deps({
@@ -53,7 +122,7 @@ describe('deriveCampaignAgents (design D11)', () => {
     const { lists } = await deriveCampaignAgents(d);
     const l = lists.find((x) => x.campaign === 'didi_vip')!;
     expect(l).toMatchObject({ schemaVersion: 1, generatedAt: NOW.toISOString() });
-    expect(l.agents).toEqual([{ username: 'ana.lopez', cognitoUsername: 'Ana.Lopez', roleIds: ['r1'] }]);
+    expect(l.agents).toEqual([{ username: 'ana.lopez', cognitoUsername: 'Ana.Lopez', roleIds: ['r1'], kind: 'agent' }]);
   });
 
   it('nombre en minúsculas o sin acento también es rol de agente', async () => {

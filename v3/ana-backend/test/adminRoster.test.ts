@@ -3,7 +3,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getRoster, updateRosterAgents } from '../src/handlers/adminRoster';
 import { installCondS3, type CondS3 } from './helpers/condS3';
-import { ADMIN, AGENT, LEADER_DIDI, LEADER_PRUEBA, adminEvent, derivedList, mockV4Me, parse } from './helpers/admin';
+import { ADMIN, AGENT, LEADER_DIDI, LEADER_PRUEBA, SUPERVISOR_PRUEBA, adminEvent, derivedList, derivedMembers, mockV4Me, parse } from './helpers/admin';
 
 const s3mock = mockClient(S3Client);
 let s3: CondS3;
@@ -44,8 +44,8 @@ describe('GET /admin/campaigns/{campaign}/roster', () => {
         campaign: 'prueba',
         generatedAt: '2026-10-26T09:55:00.000Z',
         agents: [
-          { username: 'ana.lopez', enabled: true, override: null },
-          { username: 'luis', enabled: false, override: { enabled: false, updatedAt: '2026-10-25T00:00:00Z', updatedBy: 'erick.silva' } },
+          { username: 'ana.lopez', enabled: true, override: null, kind: 'agent' },
+          { username: 'luis', enabled: false, override: { enabled: false, updatedAt: '2026-10-25T00:00:00Z', updatedBy: 'erick.silva' }, kind: 'agent' },
         ],
         inactiveOverrides: [],
       },
@@ -154,5 +154,47 @@ describe('POST /admin/campaigns/{campaign}/roster/agents', () => {
     mockV4Me(ADMIN);
     await updateRosterAgents(adminEvent({ path: { campaign: 'prueba' }, body: { agents: [{ username: 'luis', enabled: false }] } }));
     expect(s3.puts.map((p) => p.key)).toEqual(['rosters/prueba.json']);
+  });
+});
+
+describe('roster y supervisores (add-supervisor-contact-access)', () => {
+  it('supervisor (upload + distribute) lee el roster de su campaña con kind', async () => {
+    mockV4Me(SUPERVISOR_PRUEBA);
+    s3.set('campaign-agents/prueba.json', derivedMembers('prueba', [['ana.lopez', 'agent'], ['sara', 'supervisor']]));
+    const res = await getRoster(adminEvent({ username: 'sara', path: { campaign: 'prueba' } }));
+    expect(res.statusCode).toBe(200);
+    expect(parse(res).data.agents.map((a: any) => [a.username, a.kind])).toEqual([
+      ['ana.lopez', 'agent'],
+      ['sara', 'supervisor'],
+    ]);
+  });
+
+  it('supervisor de otra campaña → 403 sin S3', async () => {
+    mockV4Me({ ...SUPERVISOR_PRUEBA, campaigns: ['didi_vip'] });
+    const res = await getRoster(adminEvent({ path: { campaign: 'prueba' } }));
+    expect(res.statusCode).toBe(403);
+    expect(s3Calls()).toBe(0);
+  });
+
+  it('solo carga (sin reparto) → 403 al leer', async () => {
+    mockV4Me({ ...SUPERVISOR_PRUEBA, permissions: ['ana:contacts:list:upload'] });
+    const res = await getRoster(adminEvent({ path: { campaign: 'prueba' } }));
+    expect(parse(res)).toEqual({ success: false, message: 'Sin permiso' });
+  });
+
+  it('supervisor no escribe el roster → 403 "Sin permiso" sin S3', async () => {
+    mockV4Me(SUPERVISOR_PRUEBA);
+    const res = await updateRosterAgents(adminEvent({ path: { campaign: 'prueba' }, body: { agents: [{ username: 'luis', enabled: false }] } }));
+    expect(res.statusCode).toBe(403);
+    expect(parse(res)).toEqual({ success: false, message: 'Sin permiso' });
+    expect(s3Calls()).toBe(0);
+  });
+
+  it('el líder deshabilita a una supervisora derivada', async () => {
+    mockV4Me(LEADER_PRUEBA);
+    s3.set('campaign-agents/prueba.json', derivedMembers('prueba', [['sara', 'supervisor']]));
+    const res = await updateRosterAgents(adminEvent({ path: { campaign: 'prueba' }, body: { agents: [{ username: 'sara', enabled: false }] } }));
+    expect(res.statusCode).toBe(200);
+    expect(parse(res).data.agents[0]).toMatchObject({ username: 'sara', kind: 'supervisor', enabled: false });
   });
 });

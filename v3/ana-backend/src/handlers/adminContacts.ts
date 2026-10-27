@@ -1,7 +1,7 @@
 import { DeleteObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { requireAdminAccess } from '../lib/adminAccess';
 import { adminError, adminInternal, adminOk, parseJsonBody, type AdminEvent, type AdminResult } from '../lib/adminHttp';
-import { addMessageColumn, headerColumns, messageToSingleLine, PHONE_COLUMNS, stripBom } from '../lib/contactsCsv';
+import { headerColumns, PHONE_COLUMNS, stripBom } from '../lib/contactsCsv';
 import { parseCampaignParam, parseUsername } from '../lib/identifiers';
 import { getEnabledAgents, RosterError } from '../lib/roster';
 import { bucketName, getText, putJson, s3 } from '../lib/s3Json';
@@ -11,10 +11,11 @@ import { bucketName, getText, putJson, s3 } from '../lib/s3Json';
  * GET  /admin/campaigns/{campaign}/uploads  — historial (50 más recientes).
  * (authorizer `cognitoAdminJwt`; spec v3/agent-assignments de add-contact-upload-console)
  *
- * Escribe directo en `agents/{campaign}/{agent}-contacts-{ts}.csv` (lo que
- * consume el CLI con GET /get/chats) + copia en `historic/`, con manifiesto
- * idempotente en `uploads/{campaign}/{uploadId}.json`. Nunca registra
- * contenido de los CSV.
+ * Escribe en las asignaciones pendientes del agente
+ * `assignments/agents/{campaign}/{agent}-contacts-{ts}.csv` + copia en
+ * `historic/` (add-supervisor-contact-access D5: el agente publica a `agents/`
+ * desde "Mi asignación"), sin mensaje, con manifiesto idempotente en
+ * `uploads/{campaign}/{uploadId}.json`. Nunca registra contenido de los CSV.
  */
 
 export const CONTACTS_UPLOAD = 'ana:contacts:list:upload';
@@ -64,6 +65,17 @@ export function appendUploadIdColumn(csv: string, uploadId: string): string {
   return lines.map((l, i) => (i === 0 ? `${l},${UPLOAD_ID_COLUMN}` : l.trim() ? `${l},${uploadId}` : l)).join('\n') + '\n';
 }
 
+/**
+ * Filas del CSV como las escribía la carga (recorta cada línea, omite vacías,
+ * termina en salto de línea) sin agregar columna `message`.
+ */
+export function normalizeRows(csv: string): { csv: string; contactCount: number } {
+  const lines = csv.trim().split('\n').map((l) => l.trim());
+  const out = [lines[0] ?? ''];
+  for (const l of lines.slice(1)) if (l) out.push(l);
+  return { csv: out.join('\n') + '\n', contactCount: out.length - 1 };
+}
+
 export interface ManifestEntry {
   agent: string;
   rows: number;
@@ -80,6 +92,9 @@ export interface UploadManifest {
   uploadedBy: string;
   uploadedAt: string;
   status: 'completed' | 'failed';
+  /** Dónde quedaron los archivos (add-supervisor-contact-access): pendientes del agente. */
+  destination: 'assignments';
+  /** Siempre null: quien carga ya no define el mensaje. */
   message: string | null;
   totalRows: number;
   perAgent: ManifestEntry[];
@@ -101,7 +116,6 @@ interface ParsedUpload {
   uploadId: string;
   fileName: string;
   mode: 'distribute' | 'single';
-  message: string;
   files: Array<{ agent: string; csv: string }>;
   source?: ReviewSource;
 }
@@ -113,7 +127,7 @@ export function parseUploadBody(body: unknown): ParsedUpload | { error: string }
   if (typeof b.uploadId !== 'string' || !UPLOAD_ID_RE.test(b.uploadId)) return { error: 'uploadId inválido' };
   if (typeof b.fileName !== 'string' || !b.fileName.trim() || b.fileName.length > 255) return { error: 'fileName inválido' };
   if (b.mode !== 'distribute' && b.mode !== 'single') return { error: 'mode inválido' };
-  if (b.message !== undefined && b.message !== null && typeof b.message !== 'string') return { error: 'message inválido' };
+  // `message` se ignora (clientes anteriores lo enviaban): el agente escribe el mensaje.
   if (!Array.isArray(b.files) || b.files.length === 0) return { error: 'files debe tener al menos un archivo' };
   if (b.files.length > MAX_FILES) return { error: `files admite como máximo ${MAX_FILES} archivos` };
   const seen = new Set<string>();
@@ -139,14 +153,13 @@ export function parseUploadBody(body: unknown): ParsedUpload | { error: string }
     uploadId: b.uploadId,
     fileName: b.fileName.trim(),
     mode: b.mode,
-    message: typeof b.message === 'string' ? b.message : '',
     files,
     ...(source ? { source } : {}),
   };
 }
 
-/** Valida cada CSV (columna de teléfono, filas, mensaje). `null` si todo bien. */
-export function validateFiles(p: Pick<ParsedUpload, 'files' | 'message'>): string | null {
+/** Valida cada CSV (columna de teléfono, filas). `null` si todo bien. */
+export function validateFiles(p: Pick<ParsedUpload, 'files'>): string | null {
   for (const f of p.files) {
     const cols = headerColumns(f.csv);
     if (cols.some((c) => c.toLowerCase() === UPLOAD_ID_COLUMN)) return `${f.agent}: columna reservada ${UPLOAD_ID_COLUMN}`;
@@ -157,8 +170,6 @@ export function validateFiles(p: Pick<ParsedUpload, 'files' | 'message'>): strin
       .filter((l) => l.trim());
     if (dataRows.length === 0) return `${f.agent}: sin filas`;
   }
-  const needsMessage = p.files.some((f) => !headerColumns(f.csv).some((c) => c.includes('message')));
-  if (needsMessage && !p.message.trim()) return 'Mensaje requerido';
   return null;
 }
 
@@ -210,19 +221,18 @@ export const uploadContacts = async (event: AdminEvent): Promise<AdminResult> =>
     if (notEnabled.length > 0) return adminError(409, 'Agentes no habilitados', { agents: notEnabled });
 
     const ts = makeTimestampForKey();
-    const message = messageToSingleLine(parsed.message);
     const perAgent: ManifestEntry[] = [];
     const written: string[] = [];
     let failure: unknown = null;
     for (const f of parsed.files) {
-      const withMessage = addMessageColumn(f.csv, message);
-      const processed = { ...withMessage, csv: appendUploadIdColumn(withMessage.csv, parsed.uploadId) };
-      const key = `agents/${campaign}/${f.agent}-contacts-${ts}.csv`;
+      const processed = normalizeRows(f.csv);
+      const csv = appendUploadIdColumn(processed.csv, parsed.uploadId);
+      const key = `assignments/agents/${campaign}/${f.agent}-contacts-${ts}.csv`;
       const historicKey = `historic/agents/${campaign}/${f.agent}-contacts-${ts}.csv`;
       try {
-        await s3.send(new PutObjectCommand({ Bucket: bucketName(), Key: key, Body: processed.csv, ContentType: 'text/csv' }));
+        await s3.send(new PutObjectCommand({ Bucket: bucketName(), Key: key, Body: csv, ContentType: 'text/csv' }));
         written.push(key);
-        await s3.send(new PutObjectCommand({ Bucket: bucketName(), Key: historicKey, Body: processed.csv, ContentType: 'text/csv' }));
+        await s3.send(new PutObjectCommand({ Bucket: bucketName(), Key: historicKey, Body: csv, ContentType: 'text/csv' }));
       } catch (e) {
         failure = e;
         break;
@@ -239,14 +249,15 @@ export const uploadContacts = async (event: AdminEvent): Promise<AdminResult> =>
       uploadedBy: auth.username,
       uploadedAt: new Date().toISOString(),
       status: failure ? 'failed' : 'completed',
-      message: parsed.message || null,
+      destination: 'assignments',
+      message: null,
       totalRows: perAgent.reduce((n, p) => n + p.rows, 0),
       perAgent,
       ...(parsed.source !== undefined ? { source: parsed.source } : {}),
     };
 
     if (failure) {
-      // Rollback best-effort de lo que el CLI podría consumir (agents/).
+      // Rollback best-effort de los pendientes ya escritos (assignments/).
       const rolledBack: string[] = [];
       for (const key of written) {
         try {

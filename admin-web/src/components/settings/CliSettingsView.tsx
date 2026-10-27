@@ -1,10 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Badge, Button, ConfirmDialog, InlineMessage, PageContainer, PageHeader, Skeleton } from '@/components/ui';
+import { Badge, Button, ConfirmDialog, InlineMessage, PageContainer, PageHeader, Skeleton, Toggle } from '@/components/ui';
 import { formatDate } from '@/lib/agents';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
-import { cn } from '@/lib/cn';
 
 interface CatalogEntry {
   key: string;
@@ -28,24 +27,8 @@ const LABELS: Record<string, string> = {
 
 const onOff = (v: boolean) => (v ? 'Activado' : 'Desactivado');
 
-export function Toggle({ checked, label, onChange, disabled }: { checked: boolean; label: string; onChange: () => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onChange}
-      className={cn(
-        'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary disabled:opacity-60',
-        checked ? 'bg-primary' : 'bg-neutral-60',
-      )}
-    >
-      <span className={cn('inline-block h-5 w-5 rounded-full bg-white shadow-card transition-transform', checked ? 'translate-x-5' : 'translate-x-0.5')} />
-    </button>
-  );
-}
+/** Reexportado desde `@/components/ui` (compatibilidad con importaciones anteriores). */
+export { Toggle } from '@/components/ui';
 
 /** Configuración remota del CLI v3 (solo Developer). La página se arma desde el catálogo. */
 export function CliSettingsView({ children }: { children?: ReactNode } = {}) {

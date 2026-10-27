@@ -63,7 +63,7 @@ beforeEach(() => {
 });
 
 describe('/contactos: columna reservada (v3)', () => {
-  async function setupUpload(csv: string, message = '') {
+  async function setupUpload(csv: string) {
     apiFetch.mockImplementation(async (url: string) => {
       if (url === '/api/campaigns') return { campaigns: ['prueba'] };
       if (url.includes('enabled-agents')) return { agents: ['ana'] };
@@ -76,7 +76,6 @@ describe('/contactos: columna reservada (v3)', () => {
     await userEvent.click(screen.getByRole('option', { name: 'v3 (CLI)' }));
     await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
     await userEvent.upload(screen.getByLabelText('Archivo CSV'), new File([csv], 'c.csv', { type: 'text/csv' }));
-    if (message) await userEvent.type(await screen.findByLabelText(/Mensaje plantilla/), message);
   }
 
   it('CSV con ana_upload_id → "La columna ana_upload_id está reservada" y no permite continuar', async () => {
@@ -85,8 +84,8 @@ describe('/contactos: columna reservada (v3)', () => {
     expect(screen.getByRole('button', { name: 'Vista previa' })).toBeDisabled();
   });
 
-  it('{upload} sin columna que lo contenga → "Variable desconocida: {upload}" y vista previa deshabilitada', async () => {
-    await setupUpload('phone,first_name\n5215500000001,Ana', 'Hola {{upload}');
+  it('{upload} en la columna message sin columna que lo contenga → "Variable desconocida: {upload}" y vista previa deshabilitada', async () => {
+    await setupUpload('phone,first_name,message\n5215500000001,Ana,Hola {upload}');
     expect((await screen.findAllByText('Variable desconocida: {upload}')).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Vista previa' })).toBeDisabled();
   });

@@ -13,6 +13,7 @@ import {
   SUPERADMIN_USERNAME,
   isLeaderRole,
   isAgentRole,
+  isSupervisorRole,
   isSuperadminRole,
   isDeveloperRole,
   ROUTE_PERMISSIONS,
@@ -40,6 +41,8 @@ export interface UserAccess {
   isLeader: boolean;
   /** Rol cuyo nombre contiene "developer" (v4-add-desktop-remote-settings D3); no da permisos ana:*. */
   isDeveloper: boolean;
+  /** Rol cuyo nombre contiene "supervisor" (add-supervisor-contact-access D1). */
+  isSupervisor?: boolean;
 }
 
 const ALL_PERMS = Object.values(ANA_PERMISSIONS);
@@ -114,8 +117,9 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
   // 3) Rol de agente ("Agente <Campaña>"): envío de campaña por defecto, POR ROL.
   //    Un deny `-ana:campaign:message:send` de ESE rol (local o inline) lo quita.
   const sendDeny = `-${ANA_PERMISSIONS.CAMPAIGN_SEND}`;
+  //    Igual para roles de supervisor (add-supervisor-contact-access D1).
   for (const r of roles) {
-    if (!isAgentRole(r.role_name)) continue;
+    if (!isAgentRole(r.role_name) && !isSupervisorRole(r.role_name)) continue;
     const local = permsByRole.get(r.role_id) ?? [];
     const inline = (r.permissions ?? []).map((p) => p.permission_name);
     if (!local.includes(sendDeny) && !inline.includes(sendDeny)) {
@@ -143,6 +147,14 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
     permissions.add(ANA_PERMISSIONS.AGENTS_MANAGE);
   }
 
+  const isSupervisor = roles.some((r) => isSupervisorRole(r.role_name));
+  if (isSupervisor) {
+    // El supervisor siempre carga y reparte en sus campañas (override deny),
+    // sin gestionar el roster (add-supervisor-contact-access D1).
+    permissions.add(ANA_PERMISSIONS.CONTACTS_UPLOAD);
+    permissions.add(ANA_PERMISSIONS.CONTACTS_DISTRIBUTE);
+  }
+
   const isAdmin = explicitGrants.has(ANA_PERMISSIONS.ADMIN_CONSOLE);
   if (isAdmin) for (const p of ALL_PERMS) permissions.add(p);
 
@@ -158,6 +170,7 @@ export async function resolveUserAccess(rawUsername: string): Promise<UserAccess
     isAdmin,
     isLeader,
     isDeveloper: roles.some((r) => isDeveloperRole(r.role_name)),
+    isSupervisor,
   };
   // No cachear lookups vacíos: un [] puede ser fallo transitorio de la API
   // externa, no "sin roles" real (guía §6: no convertir un outage en denegación).

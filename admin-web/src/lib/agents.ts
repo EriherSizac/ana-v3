@@ -18,6 +18,8 @@ export interface FleetState {
   reason?: string;
   /** v4: última actividad (epoch ms). */
   lastSeen?: number | null;
+  /** Integrante de la lista derivada como supervisor (add-supervisor-contact-access). */
+  kind?: 'agent' | 'supervisor';
 }
 
 export interface UserRoleView {

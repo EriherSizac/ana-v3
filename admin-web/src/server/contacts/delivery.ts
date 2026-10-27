@@ -18,7 +18,7 @@ import {
   type Fleet,
   type Mode,
 } from '@/lib/contacts';
-import { getRoster } from '../backends/rosters';
+import { enabledRecipients, getRoster } from '../backends/rosters';
 import { callUpstream, upstreamMessage } from '../backends/http';
 import { serverEnv } from '../env';
 import { codeForStatus, HttpError } from '../errors';
@@ -30,10 +30,9 @@ export interface UploadRequest {
   agent?: string | null;
   fileName: string;
   csv: string;
-  /** v3: mensaje plantilla (si el CSV no trae `message`). */
-  message?: string;
-  /** v4: plantilla (default `{mensaje}`), código de país (default `52`) y columna de teléfono. */
-  template?: string;
+  /** Toggle "Incluir supervisores" (add-supervisor-contact-access): filtra el roster igual que la vista previa. */
+  includeSupervisors: boolean;
+  /** v4: código de país (default `52`) y columna de teléfono. Sin plantilla: el agente escribe el mensaje. */
   countryCode?: string;
   phoneColumn?: string | null;
   plan: { agents: string[]; counts: Record<string, number>; hash: string };
@@ -59,8 +58,7 @@ export function parseUploadRequest(body: unknown): UploadRequest {
     agent: typeof b.agent === 'string' ? b.agent : null,
     fileName: b.fileName.trim().slice(0, 255),
     csv: b.csv,
-    message: typeof b.message === 'string' ? b.message : '',
-    template: typeof b.template === 'string' && b.template.trim() ? b.template : '{mensaje}',
+    includeSupervisors: b.includeSupervisors === true,
     countryCode: typeof b.countryCode === 'string' && /^\d{1,4}$/.test(b.countryCode) ? b.countryCode : '52',
     phoneColumn: typeof b.phoneColumn === 'string' ? b.phoneColumn : null,
     plan,
@@ -94,17 +92,15 @@ export async function verifyPlan(req: UploadRequest, token: string, campaign: { 
   const phone = detectPhoneColumn(parsed.header, fleet, req.phoneColumn);
   if ('error' in phone) throw new HttpError('invalid_request', phone.error);
   if (fleet === 'v3' && hasReservedColumn(parsed.header)) throw new HttpError('invalid_request', RESERVED_COLUMN_ERROR);
-  const hasMessageColumn = parsed.header.includes('message');
-  if (fleet === 'v3' && !hasMessageColumn && !req.message?.trim()) throw new HttpError('invalid_request', 'Escribe el mensaje');
   const { valid } = validateRows(parsed, fleet, phone.column);
   if (valid.length === 0) throw new HttpError('invalid_request', 'El archivo no tiene filas válidas');
   if (fleet === 'v3') {
-    const bad = variablesResolvingToUploadId([req.message ?? '', ...valid.map((r) => r.record.message ?? '')], parsed.header);
+    const bad = variablesResolvingToUploadId(valid.map((r) => r.record.message ?? ''), parsed.header);
     if (bad.length) throw new HttpError('invalid_request', unknownVariableError(bad));
   }
 
   const roster = await getRoster(fleet, token, campaign[fleet]);
-  const enabled = roster.agents.filter((a) => a.enabled).map((a) => a.username);
+  const enabled = enabledRecipients(roster, req.includeSupervisors).agents;
   const plan = buildPlan({ fleet, mode: req.mode, enabled, agent: req.agent, rows: valid });
   if ('error' in plan) throw new HttpError('conflict', ROSTER_CHANGED);
   const hash = await planHash(plan, valid);
@@ -135,7 +131,6 @@ export async function deliverV3(req: UploadRequest, v: Verified, token: string, 
     uploadId,
     fileName: req.fileName,
     mode: req.mode,
-    ...(req.message ? { message: req.message } : {}),
     files,
     ...(req.source !== undefined ? { source: req.source } : {}),
   };
@@ -166,7 +161,6 @@ export async function deliverV4(req: UploadRequest, v: Verified, token: string, 
     label: 'v4:presign',
     body: {
       filename: req.fileName,
-      template: req.template,
       countryCode: req.countryCode,
       phoneColumn: v.phoneColumn,
       campaign,

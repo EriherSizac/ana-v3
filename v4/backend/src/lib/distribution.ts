@@ -4,7 +4,7 @@
 // Author: Erick Hernández Silva
 
 import { getEligibleAgents } from './dashboard';
-import { listEnabledAgents } from './agents';
+import { listEnabledAgents, listEnabledMembers } from './agents';
 import { normalizeId } from './campaignAgentsList';
 
 /** Flag de transición (design D6). Se lee en cada llamada; default apagado. */
@@ -13,8 +13,9 @@ export const rosterFilterOn = (): boolean => process.env.AGENT_ROSTER_FILTER ===
 /**
  * Agentes para el reparto automático (`distribute` sin `assignments`).
  * Flag apagado: elegibles del Dashboard (comportamiento previo).
- * Flag encendido: elegibles del Dashboard ∩ habilitados (lista derivada vigente
- * menos `enabled:false`). Si la lista está en error → [] (el caller manda los
+ * Flag encendido: elegibles del Dashboard ∩ agentes habilitados (lista derivada
+ * vigente menos `enabled:false`; los supervisores no entran al reparto
+ * automático, add-supervisor-contact-access D3). Si la lista está en error → [] (el caller manda los
  * jobs al uploader).
  */
 export async function getDistributableAgents(campaign: string): Promise<string[]> {
@@ -22,7 +23,7 @@ export async function getDistributableAgents(campaign: string): Promise<string[]
   if (!rosterFilterOn()) return eligible;
   let enabled: string[];
   try {
-    enabled = await listEnabledAgents(campaign);
+    enabled = (await listEnabledMembers(campaign)).filter((m) => m.kind === 'agent').map((m) => m.operatorId);
   } catch (e) {
     console.error('[distribution] roster no disponible', campaign, e instanceof Error ? e.message : e);
     return [];
@@ -37,7 +38,7 @@ export type AssignmentsCheck =
 
 /**
  * Con el flag encendido, todos los destinatarios de `assignments` deben estar
- * habilitados (400 si alguno no; 503 si la lista está en error).
+ * habilitados (agentes o supervisores) (400 si alguno no; 503 si la lista está en error).
  */
 export async function checkAssignmentsEnabled(campaign: string, operatorIds: string[]): Promise<AssignmentsCheck> {
   if (!rosterFilterOn()) return { ok: true };

@@ -9,6 +9,7 @@ import { TemplateEditor, getUnknownTemplateVars } from '../ui/TemplateEditor';
 import { ProgressBar } from './Campaigns';
 import { maskPhone } from '../lib/api';
 import { truncationNotice } from '../lib/assignmentNotice';
+import { defaultTemplateFor } from '../lib/templateVars';
 import type { AssignedJob, AssignmentInfo, SendProgress } from '../types/ana';
 
 const isPending = (j: AssignedJob) => !j.status || j.status === 'pending' || j.status === 'leased';
@@ -100,7 +101,7 @@ export function Assignment() {
           key: k,
           label: fileLabel(j),
           jobs: [],
-          defaultTemplate: j.template ?? '',
+          defaultTemplate: defaultTemplateFor(j.template, Object.keys(j.row ?? {})),
           columns: Object.keys(j.row ?? {}),
           sampleRow: j.row ?? {},
         };

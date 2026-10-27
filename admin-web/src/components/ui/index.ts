@@ -9,5 +9,6 @@ export { ToastProvider, useToast, InlineMessage } from './Toast';
 export { FilterPill, toggleValue } from './FilterPill';
 export { SearchableSelect } from './SearchableSelect';
 export { SearchableMultiselect } from './SearchableMultiselect';
+export { Toggle, type ToggleProps } from './Toggle';
 export { type SelectOption, filterOptions } from './Combobox';
 export { PageContainer, PageHeader, TableContainer } from './Page';
