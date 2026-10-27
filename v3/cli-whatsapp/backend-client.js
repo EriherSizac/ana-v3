@@ -97,5 +97,21 @@ export function createBackendClient({ baseUrl, session, cliVersion = 'unknown', 
     return session.authMessage();
   }
 
-  return { fetch: backendFetch, fetchAgentCampaigns, recheckAuthorization };
+  /**
+   * Actualización de acceso forzada (add-realtime-v3-cli D7): relee siempre
+   * `GET /agent/campaigns` y actualiza el aviso según la campaña de la sesión.
+   * Devuelve el aviso vigente o null.
+   */
+  async function refreshAccess() {
+    try {
+      const { campaigns } = await fetchAgentCampaigns();
+      const c = session.campaign;
+      session.noteBackendStatus(c && campaigns.map((x) => String(x).toLowerCase()).includes(c) ? 200 : 403);
+    } catch (e) {
+      if (e?.status) session.noteBackendStatus(e.status);
+    }
+    return session.authMessage();
+  }
+
+  return { fetch: backendFetch, fetchAgentCampaigns, recheckAuthorization, refreshAccess };
 }

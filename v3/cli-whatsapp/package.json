@@ -8,7 +8,7 @@
     "start": "node index.js",
     "start-image": "node index.js --clipboard-media",
     "test": "node --test",
-    "build:bundle": "esbuild index.js --bundle --platform=node --format=cjs --outfile=dist\\app.cjs --external:playwright",
+    "build:bundle": "esbuild index.js --bundle --platform=node --format=cjs --outfile=dist\\app.cjs --external:playwright --external:bufferutil --external:utf-8-validate",
     "build:exe": "pkg dist\\app.cjs --targets node18-win-x64 --output dist\\ANA.exe",
     "build": "powershell -ExecutionPolicy Bypass -File build.ps1",
     "upload": "powershell -ExecutionPolicy Bypass -File setup-and-upload.ps1"
@@ -17,7 +17,8 @@
     "csv-parser": "^3.0.0",
     "csv-writer": "^1.6.0",
     "playwright": "^1.48.2",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "esbuild": "^0.24.2",

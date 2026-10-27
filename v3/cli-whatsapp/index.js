@@ -232,7 +232,7 @@ function waitForEnterIfPkg(message) {
     });
   });
 }
-import { CONFIG, __dirname_export as DATA_DIR } from "./config.js";
+import { CONFIG, __dirname_export as DATA_DIR, realtimeConfig } from "./config.js";
 import { CONSTANTS } from "./constants.js";
 import { saveResults, saveResponses } from "./csv-utils.js";
 import {
@@ -258,8 +258,10 @@ import {
   insertInteractions,
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
-import { remoteSettings, startRemoteSettings } from "./remote-settings.js";
-import { agentSession, backend, sessionStore, getIdToken } from "./agent-runtime.js";
+import { remoteSettings, startRemoteSettings, POLL_INTERVAL_MS as SETTINGS_INTERVAL_MS, BACKUP_INTERVAL_MS as SETTINGS_BACKUP_INTERVAL_MS } from "./remote-settings.js";
+import { agentSession, backend, sessionStore, getIdToken, CLI_VERSION } from "./agent-runtime.js";
+import { createRealtime, wsSocketFactory } from "./realtime.js";
+import { createPollWaker, waitForNextPoll, waitLabel, POLL_INTERVAL_MS as POLL_FAST_MS } from "./poll-wait.js";
 import { phone } from "./phone-utils.js";
 import { interactionDateTime } from "./interaction-time.js";
 import {
@@ -274,6 +276,9 @@ import {
   removeJournal,
   listOtherJournals,
 } from "./assignment-journal.js";
+
+// Canal realtime activo (add-realtime-v3-cli); se cierra con Ctrl+C.
+let activeRealtime = null;
 
 const REVIEW_ERROR =
   "Envío interrumpido por cierre del CLI; revisar antes de reenviar";
@@ -320,6 +325,11 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log("\n🛑 Cerrando por Ctrl+C...");
+    try {
+      activeRealtime?.stop();
+    } catch (e) {
+      // Ignorar
+    }
     try {
       await closeBrowser();
     } catch (e) {
@@ -412,6 +422,84 @@ async function main() {
       remoteSettings.setTokenProvider(getIdToken);
       startRemoteSettings();
 
+      // Canal realtime (add-realtime-v3-cli): avisa asignaciones publicadas y
+      // cambios de configuración; con el canal activo los polls son de respaldo
+      // (2 min) y la configuración se lee cada 15 min. Sin URL, con
+      // ANA_REALTIME=off o si `ws` falla, todo sigue como antes (30 s / 5 min).
+      const waker = createPollWaker();
+      const rtCfg = realtimeConfig();
+      let realtime = null;
+      if (rtCfg.enabled) {
+        try {
+          const { default: WebSocketImpl } = await import("ws");
+          realtime = createRealtime({
+            url: rtCfg.url,
+            version: CLI_VERSION,
+            getToken: () => getIdToken(),
+            createSocket: wsSocketFactory(WebSocketImpl),
+          });
+          realtime.setCampaign(identity.campaign);
+          remoteSettings.setIntervalProvider(() =>
+            realtime?.isActive() ? SETTINGS_BACKUP_INTERVAL_MS : SETTINGS_INTERVAL_MS,
+          );
+          realtime.on("assignment", () => waker.wake());
+          realtime.on("settings", () => remoteSettings.refreshNow());
+          // Conexión confirmada: lectura de configuración y, si está esperando, poll.
+          realtime.on("active", () => {
+            remoteSettings.intervalChanged();
+            remoteSettings.refreshNow();
+            waker.wake({ pendingIfIdle: false });
+          });
+          realtime.on("inactive", () => remoteSettings.intervalChanged());
+          // Actualización forzada: revalida la campaña, relee configuración y
+          // consulta (al terminar el ciclo si hay uno en curso).
+          realtime.on("refresh", () => {
+            remoteSettings.refreshNow();
+            void backend
+              .refreshAccess()
+              .then((msg) => {
+                if (msg) console.warn(`⚠️  ${msg}`);
+              })
+              .finally(() => waker.wake());
+          });
+          realtime.start();
+          activeRealtime = realtime;
+        } catch (e) {
+          console.error("⚠️  Canal realtime no disponible; se sigue con polling:", e?.message || e);
+          realtime = null;
+        }
+      } else {
+        console.log(`ℹ️  Canal realtime deshabilitado (${rtCfg.reason})`);
+      }
+
+      // Espera entre polls: 30 s (o 2 min con el canal activo), interrumpible por
+      // un aviso. `label` fija un texto propio y siempre 30 s (avisos de sesión).
+      const sleepUntilNextPoll = async (pages = [], label = null) => {
+        const isInteractive = Boolean(process.stdout && process.stdout.isTTY);
+        const targets = pages.filter(Boolean);
+        let lastLoggedMinute = null;
+        const why = await waitForNextPoll({
+          isActive: () => (label ? false : Boolean(realtime?.isActive())),
+          waker,
+          onTick: async (remaining, active) => {
+            const uiText = label ? `${label}: ${formatMsAsHms(remaining)}` : waitLabel(active, remaining);
+            if (targets.length) await Promise.all(targets.map((p) => setStatusWidgetText(p, uiText)));
+            if (isInteractive) {
+              process.stdout.write(`\r⏳ ${uiText}   `);
+            } else {
+              const m = Math.floor(remaining / 60000);
+              if (m !== lastLoggedMinute) {
+                lastLoggedMinute = m;
+                console.log(`⏳ ${uiText}`);
+              }
+            }
+          },
+        });
+        if (isInteractive) process.stdout.write("\n");
+        if (targets.length) await Promise.all(targets.map((p) => setStatusWidgetText(p, "")));
+        if (why === "woken") console.log("🔔 Aviso en vivo: consultando asignaciones...");
+      };
+
       // Después de initWhatsApp, las credenciales ya están configuradas
       // Ahora podemos abrir la ventana manual si está habilitada
       if (shouldOpenManual && !manualWindowStarted) {
@@ -452,7 +540,7 @@ async function main() {
           });
       }
 
-      const POLL_INTERVAL_MS = 30 * 1000;
+      const POLL_INTERVAL_MS = POLL_FAST_MS;
       const PAUSE_AFTER_MESSAGES = CONSTANTS.PAUSE_AFTER_MESSAGES;
       const PAUSE_DURATION_MS = 30 * 60 * 1000;
 
@@ -522,11 +610,7 @@ async function main() {
         const authBlock = await backend.recheckAuthorization();
         if (authBlock) {
           console.warn(`⚠️  ${authBlock}`);
-          await sleepWithCountdown(POLL_INTERVAL_MS, `${authBlock} · reintento`, [
-            page,
-            manualPage,
-            monitorPage,
-          ]);
+          await sleepUntilNextPoll([page, manualPage, monitorPage], `${authBlock} · reintento`);
           continue;
         }
 
@@ -599,11 +683,7 @@ async function main() {
           const authMsg = agentSession.authMessage();
           if (authMsg) console.warn(`⚠️  ${authMsg}`);
           else console.log("ℹ️  No hay contactos asignados.");
-          await sleepWithCountdown(POLL_INTERVAL_MS, authMsg ? `${authMsg} · reintento` : "Próximo poll", [
-            page,
-            manualPage,
-            monitorPage,
-          ]);
+          await sleepUntilNextPoll([page, manualPage, monitorPage], authMsg ? `${authMsg} · reintento` : null);
           continue;
         }
 
@@ -835,13 +915,9 @@ async function main() {
         console.log("\nℹ️  Backup automático desactivado (solo manual).");
 
         console.log(
-          `\n✅ Ciclo ${cycle} completado. Volviendo a hacer poll en ${POLL_INTERVAL_MS / 1000}s...`,
+          `\n✅ Ciclo ${cycle} completado. Volviendo a hacer poll en ${realtime?.isActive() ? "2 min (en vivo)" : `${POLL_INTERVAL_MS / 1000}s`}...`,
         );
-        await sleepWithCountdown(POLL_INTERVAL_MS, "Próximo poll", [
-          page,
-          manualPage,
-          monitorPage,
-        ]);
+        await sleepUntilNextPoll([page, manualPage, monitorPage]);
       }
     }
   } catch (error) {

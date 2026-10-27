@@ -110,6 +110,16 @@ $filesToCopy = @(
     "no-whatsapp-registry.js",
     "assignment-journal.js",
     "agent-config.js",
+    "agent-runtime.js",
+    "agent-session.js",
+    "backend-client.js",
+    "cognito-auth.js",
+    "session-store.js",
+    "login-flow.js",
+    "login-overlay.js",
+    "remote-settings.js",
+    "realtime.js",
+    "poll-wait.js",
     "package.json",
     "package-lock.json"
 )

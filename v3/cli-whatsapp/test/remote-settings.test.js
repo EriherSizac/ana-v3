@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRemoteSettings, DEFAULT_SETTINGS, POLL_INTERVAL_MS } from '../remote-settings.js';
+import { createRemoteSettings, DEFAULT_SETTINGS, POLL_INTERVAL_MS, BACKUP_INTERVAL_MS } from '../remote-settings.js';
 
 const quiet = { warn() {}, error() {} };
 
@@ -110,4 +110,46 @@ test('ignora llaves desconocidas y tipos incorrectos', async () => {
   });
   await rs.refresh();
   assert.deepEqual(rs.all(), { noWhatsappConsultRegistration: false });
+});
+
+test('canal realtime: intervalo variable (15 min activo / 5 min inactivo) y refreshNow coalescido', async () => {
+  let value = false;
+  let calls = 0;
+  const timers = fakeTimers();
+  const timeouts = [];
+  let active = true;
+  const rs = createRemoteSettings({
+    baseUrl: 'https://v3.test',
+    getToken: async () => 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return json(200, { settings: { noWhatsappConsultRegistration: value } });
+    },
+    logger: quiet,
+    intervalMs: () => (active ? BACKUP_INTERVAL_MS : POLL_INTERVAL_MS),
+    setTimeoutImpl: (fn, ms) => {
+      const t = { fn, ms };
+      timeouts.push(t);
+      return t;
+    },
+    clearTimeoutImpl: () => {},
+    ...timers,
+  });
+  rs.start();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(timers.timers[0].ms, BACKUP_INTERVAL_MS);
+  value = true;
+  rs.refreshNow();
+  rs.refreshNow();
+  assert.equal(timeouts.length, 1);
+  assert.equal(timeouts[0].ms, 1000);
+  await timeouts[0].fn();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(calls, 2);
+  assert.equal(rs.get('noWhatsappConsultRegistration'), true);
+  active = false;
+  rs.intervalChanged();
+  assert.equal(timers.timers.length, 1);
+  assert.equal(timers.timers[0].ms, POLL_INTERVAL_MS);
+  rs.stop();
 });

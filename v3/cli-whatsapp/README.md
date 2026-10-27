@@ -317,6 +317,20 @@ Hola {{first_name}}, ...
    Presiona Ctrl+C para cerrar el programa
 ```
 
+## 📡 Canal en vivo (realtime)
+
+Desde la versión siguiente a 1.0.47 (`add-realtime-v3-cli`), tras el login el proceso principal abre un WebSocket al canal realtime de ANA (`client=cli`, ID token de la sesión como subprotocolo `ana.v1`; nunca se imprime ni se guarda):
+
+| Situación | Espera entre polls (`/get/chats`) | Lectura de `/agent/settings` |
+|---|---|---|
+| Canal activo (widget: "En vivo · respaldo en 1m 45s") | 2 min (`POLL_BACKUP_INTERVAL_MS`) | 15 min (`BACKUP_INTERVAL_MS`) |
+| Canal inactivo, sin URL o `ANA_REALTIME=off` (widget: "Próximo poll") | 30 s (`POLL_INTERVAL_MS`) | 5 min (`POLL_INTERVAL_MS`) |
+
+- `assignment.published` de tu agente y campaña termina la espera y consulta en ≤ 2 s; durante un ciclo de envío o la pausa por lote no interrumpe nada: consulta al terminar.
+- `settings.changed` (`scope: cli`) relee la configuración en ≤ 1 s.
+- Actualización forzada (`session.refresh`, al cambiar roster, permisos o configuración, o desde "Forzar actualización" en ANA Admin): revalida tu campaña con `GET /agent/campaigns`, relee la configuración, consulta asignaciones y reconecta en ≤ 10 s.
+- Variables: `ANA_REALTIME_URL` (URL `wss://…execute-api…/prod`; por defecto `CONFIG.realtimeUrl` de `config.js`, que se fija en el release) y `ANA_REALTIME=off` (desactiva el canal en este equipo). Sin URL, el CLI funciona como antes.
+
 ## ⚠️ Notas Importantes
 
 ### Sistema de Dos Ventanas

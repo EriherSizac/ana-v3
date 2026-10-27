@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { realtimeConfigFrom } from './realtime.js';
 
 const resolveBaseDir = () => {
   if (process.env.ANA_DATA_DIR) return process.env.ANA_DATA_DIR;
@@ -34,6 +35,13 @@ export const CONFIG = {
   showOverlay: true, // Si es true, muestra un overlay para evitar interacción del usuario
   enableManualWindow: true, // Si es true, abre ventana para respuestas manuales
   enableMonitorWindow: true, // Cambiar a false para desactivar la ventana monitor
+  // Canal realtime (add-realtime-v3-cli): URL execute-api `RealtimeWsUrl` del stack
+  // v4 (sin dominio propio). Vacío = sin canal (polls cada 30 s como antes); se
+  // fija en el release. ANA_REALTIME_URL la reemplaza; ANA_REALTIME=off la apaga.
+  realtimeUrl: '',
 };
+
+/** `{ enabled, url, reason? }` del canal realtime para este proceso. */
+export const realtimeConfig = (env = process.env) => realtimeConfigFrom(env, CONFIG.realtimeUrl);
 
 export const __dirname_export = baseDir;

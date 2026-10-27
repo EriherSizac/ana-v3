@@ -19,7 +19,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
   noWhatsappConsultRegistration: false,
 });
 
+/** Lectura periódica sin canal realtime. */
 export const POLL_INTERVAL_MS = 5 * 60 * 1000;
+/** Lectura periódica con el canal realtime activo (add-realtime-v3-cli). */
+export const BACKUP_INTERVAL_MS = 15 * 60 * 1000;
+/** Ventana de coalescencia de `refreshNow()`. */
+export const REFRESH_NOW_COALESCE_MS = 1000;
 export const REQUEST_TIMEOUT_MS = 5000;
 
 const typeOk = (key, value) => typeof DEFAULT_SETTINGS[key] === typeof value;
@@ -37,8 +42,14 @@ export function createRemoteSettings({
   timeoutMs = REQUEST_TIMEOUT_MS,
   setIntervalImpl = (fn, ms) => setInterval(fn, ms),
   clearIntervalImpl = (h) => clearInterval(h),
+  setTimeoutImpl = (fn, ms) => setTimeout(fn, ms),
+  clearTimeoutImpl = (h) => clearTimeout(h),
   logger = console,
 } = {}) {
+  // `intervalMs` puede ser una función (canal realtime activo → 15 min; inactivo → 5 min).
+  let intervalSource = intervalMs;
+  const currentInterval = () => (typeof intervalSource === 'function' ? intervalSource() : intervalSource);
+  let coalesce = null;
   let current = { ...DEFAULT_SETTINGS };
   let lastSuccessAt = null;
   let timer = null;
@@ -117,12 +128,34 @@ export function createRemoteSettings({
     start() {
       if (timer) return;
       void refresh();
-      timer = setIntervalImpl(() => void refresh(), intervalMs);
+      timer = setIntervalImpl(() => void refresh(), currentInterval());
       timer?.unref?.();
+    },
+    /** Fuente del intervalo (número o función; el canal realtime la fija). */
+    setIntervalProvider(fn) {
+      intervalSource = fn;
+    },
+    /** El intervalo cambió (canal activo/inactivo): reinicia el ciclo periódico. */
+    intervalChanged() {
+      if (!timer) return;
+      clearIntervalImpl(timer);
+      timer = setIntervalImpl(() => void refresh(), currentInterval());
+      timer?.unref?.();
+    },
+    /** Lectura en máximo 1 s (agrupa las llamadas de ese segundo) y reinicia el ciclo. */
+    refreshNow() {
+      if (coalesce) return;
+      coalesce = setTimeoutImpl(() => {
+        coalesce = null;
+        void refresh().finally(() => this.intervalChanged());
+      }, REFRESH_NOW_COALESCE_MS);
+      coalesce?.unref?.();
     },
     stop() {
       if (timer) clearIntervalImpl(timer);
+      if (coalesce) clearTimeoutImpl(coalesce);
       timer = null;
+      coalesce = null;
     },
     get lastSuccessAt() {
       return lastSuccessAt;

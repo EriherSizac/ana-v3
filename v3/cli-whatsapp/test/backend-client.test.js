@@ -89,3 +89,19 @@ test('fetchAgentCampaigns y recheckAuthorization', async () => {
   assert.equal(await ok.client.recheckAuthorization(), null);
   assert.equal(ok.calls.length, 0); // sin aviso no consulta
 });
+
+test('refreshAccess (actualización forzada): relee /agent/campaigns aun sin aviso y marca forbidden si ya no está la campaña', async () => {
+  const { client, session, calls } = await setup([{ status: 200, body: JSON.stringify({ username: 'erick', campaigns: ['zendere'] }) }]);
+  assert.equal(session.authStatus, 'ok');
+  const msg = await client.refreshAccess();
+  assert.equal(calls[0].url, 'https://api.test/agent/campaigns');
+  assert.equal(session.authStatus, 'forbidden');
+  assert.equal(msg, 'Tu usuario no está habilitado en esta campaña');
+});
+
+test('refreshAccess: campaña vigente → ok', async () => {
+  const { client, session } = await setup([{ status: 200, body: JSON.stringify({ username: 'erick', campaigns: ['Prueba'] }) }]);
+  session.noteBackendStatus(403);
+  assert.equal(await client.refreshAccess(), null);
+  assert.equal(session.authStatus, 'ok');
+});
