@@ -17,6 +17,8 @@ import { decideSetToken, shouldHeartbeat, type SetTokenReason } from './auth/ses
 import { decideReply, type MainAccess } from './auth/replyGate';
 import { RemoteSettings, paceOf } from './settings/remoteSettings';
 import { BypassGuard, type AttemptState } from './update/bypass';
+import { RealtimeClient, type WsLike } from './realtime/client';
+import { createRealtimeWiring, realtimeConfig } from './realtime/wiring';
 import {
   createGuard,
   isAppUrl,
@@ -256,13 +258,26 @@ async function runJob(
   }
 }
 
+// Canal realtime (add-realtime-v4-desktop): con el canal activo el poll de jobs
+// es de respaldo (2 min) y la configuración cada 15 min; sin canal, 5 s y 5 min.
+const realtimeWiring = createRealtimeWiring({
+  pollNow: () => poller.pollNow(),
+  pollIntervalChanged: () => poller.intervalChanged(),
+  settingsRefreshNow: () => remoteSettings.refreshNow(),
+  settingsIntervalChanged: () => remoteSettings.intervalChanged(),
+  refreshAccess: () => refreshAccess(),
+  notifyRenderer: (reason) => send('access:refresh', { reason }),
+  log: (m) => console.log(m),
+});
+
 // Configuración remota del desktop (v4-add-desktop-remote-settings): tras el
-// login y cada 5 min; defaults mientras nunca se haya leído.
+// login y cada 5 min (15 min con canal realtime); defaults mientras nunca se haya leído.
 const remoteSettings = new RemoteSettings({
   apiBase: API_BASE,
   hasSession,
   authFetch,
   onChange: (s) => send('settings:changed', s),
+  intervalMs: realtimeWiring.settingsIntervalMs,
 });
 
 const poller = new JobPoller({
@@ -272,6 +287,8 @@ const poller = new JobPoller({
   runJob,
   // Ritmo vigente en cada cálculo de espera.
   pace: () => paceOf(remoteSettings.get()),
+  // 5 s sin canal realtime, 2 min con el canal activo.
+  intervalMs: realtimeWiring.pollIntervalMs,
   onProgress: (p) => send('wa:progress', p),
   // Asignación pendiente del agente → vista "Mi asignación" en el renderer.
   onAssignment: (jobs, info) => {
@@ -280,6 +297,25 @@ const poller = new JobPoller({
     send('jobs:assignment-info', info);
   },
 });
+
+// URL: ANA_REALTIME_URL o la embebida al compilar (build-config.json); sin URL
+// o con ANA_REALTIME=off no hay conexión y el polling queda como antes.
+const realtimeCfg = realtimeConfig(process.env, readBuildConfig());
+const realtime = realtimeCfg.enabled
+  ? new RealtimeClient({
+      url: realtimeCfg.url!,
+      client: 'desktop',
+      version: app.getVersion(),
+      getToken: () => broker.getFreshToken(),
+      // Node 22 de Electron: WebSocket global con subprotocolos.
+      createSocket: (url, protocols) => new WebSocket(url, protocols) as unknown as WsLike,
+      onState: (s) => realtimeWiring.onState(s),
+      onConfirmed: () => realtimeWiring.onConfirmed(),
+      onEvent: (e) => realtimeWiring.onEvent(e),
+      onRefresh: (r) => realtimeWiring.onRefresh(r),
+    })
+  : null;
+console.log(`[realtime] ${realtime ? 'habilitado' : `deshabilitado (${realtimeCfg.reason})`}`);
 
 // ---- IPC desde el renderer ----
 // El agente aprueba qué enviar (y con qué plantilla) desde "Mi asignación".
@@ -339,6 +375,8 @@ handle(
         // poller ni WhatsApp.
         broker.setToken(token);
         void refreshAccess();
+        // Token nuevo → reconexión planeada del canal (make-before-break).
+        void realtime?.renew();
         break;
       case 'login':
         broker.setToken(token);
@@ -355,6 +393,7 @@ handle(
         wa.configure(API_BASE, { hasSession, authFetch }, action.operator);
         poller.start();
         remoteSettings.start();
+        realtime?.start();
         // Reconecta WhatsApp restaurando la sesión (sin pedir QR si existe).
         if (!wa.isReady()) void wa.start();
         break;
@@ -365,6 +404,7 @@ handle(
         activeOperator = null;
         mainAccess = null;
         poller.stop();
+        realtime?.stop();
         agentCampaign = null;
         send('auth:expired', {});
         break;
@@ -375,6 +415,7 @@ handle(
         activeOperator = null;
         mainAccess = null;
         poller.stop();
+        realtime?.stop();
         agentCampaign = null;
         await wa.logoutLocal();
         send('wa:event', { type: 'status', status: 'disconnected' });
@@ -419,7 +460,7 @@ handle('update:retry', noArgs, () => {
 // ---- Acceso de emergencia de Sistemas (gate de actualización) ----
 // El hash scrypt de la contraseña maestra se inyecta al compilar
 // (ANA_UPDATE_BYPASS_HASH → dist-electron/build-config.json). Sin hash, no hay bypass.
-function readBuildConfig(): { updateBypassHash?: string } {
+function readBuildConfig(): { updateBypassHash?: string; realtimeUrl?: string } {
   try {
     return JSON.parse(fs.readFileSync(path.join(__dirname, 'build-config.json'), 'utf-8'));
   } catch {
@@ -583,6 +624,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', async () => {
   poller.stop();
+  realtime?.stop();
   await wa.stop();
 });
 app.on('window-all-closed', () => {

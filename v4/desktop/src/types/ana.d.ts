@@ -29,6 +29,8 @@ export interface AnaBridge {
   getAssignmentInfo: () => Promise<AssignmentInfo>;
   getSettings: () => Promise<DesktopSettings>;
   onSettings: (cb: (s: DesktopSettings) => void) => () => void;
+  /** El servidor forzó la actualización de acceso: volver a leer `GET /me`. */
+  onAccessRefresh: (cb: () => void) => () => void;
   approveJobs: (
     jobIds: string[],
     templates: Record<string, string>,

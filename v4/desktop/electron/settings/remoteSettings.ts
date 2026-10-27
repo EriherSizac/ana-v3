@@ -20,7 +20,12 @@ export const DEFAULT_SETTINGS: Readonly<DesktopSettings> = {
   openChatInteraction: false,
 };
 
+/** Lectura periódica sin canal realtime (comportamiento previo). */
 export const SETTINGS_REFRESH_MS = 5 * 60 * 1000;
+/** Lectura periódica con el canal realtime activo (add-realtime-v4-desktop). */
+export const SETTINGS_BACKUP_REFRESH_MS = 15 * 60 * 1000;
+/** Ventana de coalescencia de `refreshNow()`. */
+export const REFRESH_NOW_COALESCE_MS = 1000;
 
 /** Límites (espejo del catálogo del backend) para no confiar en un valor raro. */
 const LIMITS: Record<'sendMinGapSeconds' | 'sendMaxPerWindow' | 'sendWindowMinutes', [number, number]> = {
@@ -53,6 +58,8 @@ export interface RemoteSettingsDeps {
   hasSession: () => boolean;
   authFetch: AuthFetch;
   onChange?: (s: DesktopSettings) => void;
+  /** Intervalo vigente (5 min sin canal, 15 min con canal activo); se lee en cada ciclo. */
+  intervalMs?: () => number;
 }
 
 /**
@@ -62,7 +69,10 @@ export interface RemoteSettingsDeps {
  */
 export class RemoteSettings {
   private current: DesktopSettings = { ...DEFAULT_SETTINGS };
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private started = false;
+  private lastRefreshAt = 0;
+  private coalesce: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private deps: RemoteSettingsDeps) {}
 
@@ -74,6 +84,7 @@ export class RemoteSettings {
   async refresh(): Promise<boolean> {
     if (!this.deps.hasSession()) return false;
     try {
+      this.lastRefreshAt = Date.now();
       const res = await this.deps.authFetch(`${this.deps.apiBase}/settings`);
       if (!res.ok) return false;
       const body = (await res.json()) as { values?: unknown };
@@ -87,15 +98,52 @@ export class RemoteSettings {
     }
   }
 
-  /** Lectura inmediata y luego cada SETTINGS_REFRESH_MS (idempotente). */
+  private interval(): number {
+    return this.deps.intervalMs?.() ?? SETTINGS_REFRESH_MS;
+  }
+
+  /** Agenda la siguiente lectura periódica según el intervalo vigente. */
+  private schedule(): void {
+    if (this.timer) clearTimeout(this.timer);
+    const wait = Math.max(0, this.lastRefreshAt + this.interval() - Date.now());
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.refresh().finally(() => {
+        if (this.started) this.schedule();
+      });
+    }, wait);
+  }
+
+  /** Lectura inmediata y luego cada intervalo vigente (idempotente). */
   start(): void {
     void this.refresh();
-    if (this.timer) return;
-    this.timer = setInterval(() => void this.refresh(), SETTINGS_REFRESH_MS);
+    if (this.started) return;
+    this.started = true;
+    this.lastRefreshAt = Date.now();
+    this.schedule();
+  }
+
+  /** Lectura en máximo 1 s (agrupa las llamadas de ese segundo) y reinicia el ciclo. */
+  refreshNow(): void {
+    if (this.coalesce) return;
+    this.coalesce = setTimeout(() => {
+      this.coalesce = null;
+      void this.refresh().finally(() => {
+        if (this.started) this.schedule();
+      });
+    }, REFRESH_NOW_COALESCE_MS);
+  }
+
+  /** El intervalo cambió (canal activo/inactivo): reagenda desde la última lectura. */
+  intervalChanged(): void {
+    if (this.started) this.schedule();
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
+    if (this.timer) clearTimeout(this.timer);
+    if (this.coalesce) clearTimeout(this.coalesce);
     this.timer = null;
+    this.coalesce = null;
+    this.started = false;
   }
 }

@@ -108,6 +108,10 @@ export function App() {
     }
   }
 
+  // Actualización de acceso forzada (add-realtime-v4-desktop): relee /me y
+  // recalcula pestañas sin reiniciar la app.
+  useEffect(() => window.ana.onAccessRefresh?.(() => void loadAccess()), []);
+
   async function onLogin() {
     setLoginNotice(null);
     await loadAccess();

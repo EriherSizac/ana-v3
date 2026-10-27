@@ -23,9 +23,19 @@ if (hash && !/^scrypt\$[0-9a-f]{16,}\$[0-9a-f]{32,}$/i.test(hash)) {
   process.exit(1);
 }
 
+// URL del canal realtime (add-realtime-v4-desktop D6): la salida RealtimeWsUrl
+// (execute-api, sin dominio propio). Sin ella el build no abre WebSocket.
+const realtimeUrl = (process.env.ANA_REALTIME_URL ?? '').trim();
+if (realtimeUrl && !/^wss:\/\/[^\s]+$/i.test(realtimeUrl)) {
+  console.error('[build-config] ANA_REALTIME_URL inválida: se espera wss://...');
+  process.exit(1);
+}
+
 const out = join(root, 'dist-electron', 'build-config.json');
 mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, JSON.stringify(hash ? { updateBypassHash: hash } : {}, null, 2) + '\n');
+const config = { ...(hash ? { updateBypassHash: hash } : {}), ...(realtimeUrl ? { realtimeUrl } : {}) };
+writeFileSync(out, JSON.stringify(config, null, 2) + '\n');
 console.log(
   `[build-config] ${out} — acceso de emergencia ${hash ? 'HABILITADO' : 'deshabilitado (sin ANA_UPDATE_BYPASS_HASH)'}`,
 );
+console.log(`[build-config] canal realtime ${realtimeUrl ? `→ ${realtimeUrl}` : 'deshabilitado (sin ANA_REALTIME_URL)'}`);

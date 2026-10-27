@@ -64,6 +64,11 @@ export interface PollerDeps {
   onAssignment: (jobs: SendJob[], info: AssignmentInfo) => void;
   /** Ritmo vigente (configuración remota); se lee en cada cálculo de espera. */
   pace?: () => Pace;
+  /**
+   * Espera entre consultas (add-realtime-v4-desktop D3): 5 s sin canal realtime,
+   * 2 min con el canal activo. Se lee en cada espera.
+   */
+  intervalMs?: () => number;
 }
 
 /** Ritmo anti-bloqueo en ms (v4-add-desktop-remote-settings). */
@@ -82,7 +87,12 @@ export interface AssignmentInfo {
 
 const EMPTY_INFO: AssignmentInfo = { truncated: false, pendingTotal: 0, historyTotal: 0 };
 
-const POLL_INTERVAL_MS = 5000;
+/** Espera entre consultas sin canal realtime (comportamiento previo). */
+export const POLL_INTERVAL_MS = 5000;
+/** Espera entre consultas con el canal realtime activo (respaldo). */
+export const POLL_BACKUP_INTERVAL_MS = 2 * 60 * 1000;
+/** Ventana de coalescencia de `pollNow()` (add-realtime-v4-desktop D4). */
+export const POLL_NOW_COALESCE_MS = 1000;
 // Ritmo por defecto: ≥2 min entre mensajes, máx 7 por ventana de 20 min.
 export const DEFAULT_PACE: Pace = { minGapMs: 2 * 60 * 1000, windowMs: 20 * 60 * 1000, maxPerWindow: 7 };
 
@@ -102,6 +112,9 @@ export class JobPoller {
   private known = new Map<string, SendJob>(); // jobId → job (último poll)
   private lastAssignment: SendJob[] = []; // última asignación manual publicada
   private lastInfo: AssignmentInfo = EMPTY_INFO; // totales de la última consulta
+  private dirty = false; // pidieron consultar (evento realtime) y aún no se consulta
+  private wake: (() => void) | null = null; // despierta la espera en curso
+  private coalesce: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private deps: PollerDeps) {}
 
@@ -123,6 +136,55 @@ export class JobPoller {
 
   stop() {
     this.running = false;
+    if (this.coalesce) clearTimeout(this.coalesce);
+    this.coalesce = null;
+    this.dirty = false;
+    this.wake?.();
+  }
+
+  /**
+   * Consulta en máximo 1 s (agrupa las llamadas de ese segundo). Con un envío
+   * en curso no interrumpe: consulta al terminar el lote.
+   */
+  pollNow() {
+    if (!this.running || this.coalesce) return;
+    this.coalesce = setTimeout(() => {
+      this.coalesce = null;
+      this.dirty = true;
+      this.wake?.();
+    }, POLL_NOW_COALESCE_MS);
+  }
+
+  /** El intervalo cambió (canal activo/inactivo): recalcula la espera en curso. */
+  intervalChanged() {
+    this.wake?.();
+  }
+
+  private interval(): number {
+    return this.deps.intervalMs?.() ?? POLL_INTERVAL_MS;
+  }
+
+  /** Espera interrumpible: `wake` la despierta para recalcular o consultar ya. */
+  private sleepFor(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const t = setTimeout(done, ms);
+      const self = this;
+      function done() {
+        clearTimeout(t);
+        if (self.wake === done) self.wake = null;
+        resolve();
+      }
+      this.wake = done;
+    });
+  }
+
+  /** Espera hasta el siguiente ciclo (intervalo vigente desde `start`) o un `pollNow`. */
+  private async waitNext(start: number) {
+    while (this.running && !this.dirty) {
+      const remaining = start + this.interval() - Date.now();
+      if (remaining <= 0) return;
+      await this.sleepFor(remaining);
+    }
   }
 
   /** Deja de iniciar jobs (el que esté en curso termina con su ack). */
@@ -203,11 +265,14 @@ export class JobPoller {
   private async loop() {
     while (this.running) {
       if (!this.deps.hasSession() || this.sending) {
-        await sleep(2000);
+        // Un pollNow durante el envío queda en `dirty`: se consulta al terminar.
+        await this.sleepFor(2000);
         continue;
       }
+      this.dirty = false; // esta consulta cubre lo pedido hasta ahora
+      const started = Date.now();
       await this.pollOnce();
-      await sleep(POLL_INTERVAL_MS);
+      await this.waitNext(started);
     }
   }
 

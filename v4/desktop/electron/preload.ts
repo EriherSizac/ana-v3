@@ -78,6 +78,14 @@ const api = {
   },
   getAssignmentInfo: () => ipcRenderer.invoke('jobs:get-assignment-info'),
 
+  // Actualización de acceso forzada por el servidor (add-realtime-v4-desktop D7):
+  // el renderer vuelve a leer GET /me y recalcula sus pestañas.
+  onAccessRefresh: (cb: () => void) => {
+    const fn = () => cb();
+    ipcRenderer.on('access:refresh', fn);
+    return () => ipcRenderer.removeListener('access:refresh', fn);
+  },
+
   // Configuración remota del desktop (v4-add-desktop-remote-settings).
   getSettings: () => ipcRenderer.invoke('settings:get'),
   onSettings: (cb: (s: any) => void) => {
