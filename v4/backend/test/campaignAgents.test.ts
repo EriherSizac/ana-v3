@@ -102,13 +102,13 @@ describe('deriveCampaignAgents: supervisores (add-supervisor-contact-access)', (
     expect(agentsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual([]);
   });
 
-  it('líder sin rol de supervisor sigue sin derivar', async () => {
+  it('líder deriva como supervisor', async () => {
     const { d } = deps({
       pool: [confirmed('luis')],
       directory: [{ username: 'luis', roles: [{ id: 'l1', name: 'Líder Prueba', campaign: 'prueba' }] }],
       detail: { luis: [{ role_id: 'l1', role_name: 'Líder Prueba', campaign_name: 'prueba' }] },
     });
-    expect(agentsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual([]);
+    expect(kindsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual({ luis: 'supervisor' });
   });
 });
 
@@ -140,13 +140,13 @@ describe('deriveCampaignAgents (design D11)', () => {
     expect(agentsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual(['a', 'b']);
   });
 
-  it('líder no es agente', async () => {
+  it('líder no es agente: deriva como supervisor', async () => {
     const { d } = deps({
       pool: [confirmed('luis')],
       directory: [{ username: 'luis', roles: [{ id: 'r1', name: 'Líder DIDI VIP', campaign: 'didi_vip' }] }],
       detail: { luis: [{ role_id: 'r1', role_name: 'Líder DIDI VIP', campaign_name: 'didi_vip' }] },
     });
-    expect(agentsOf((await deriveCampaignAgents(d)).lists, 'didi_vip')).toEqual([]);
+    expect(kindsOf((await deriveCampaignAgents(d)).lists, 'didi_vip')).toEqual({ luis: 'supervisor' });
   });
 
   it('rol global * no hace agente y no se consulta su detalle', async () => {
@@ -220,7 +220,7 @@ describe('deriveCampaignAgents (design D11)', () => {
     const { d, getUserRoles } = deps({
       pool: [confirmed('ana')],
       directory: [{ username: 'ana', roles: [{ id: 'r1', name: 'Agente Prueba', campaign: 'prueba' }] }],
-      detail: { ana: [{ role_id: 'r2', role_name: 'Líder Prueba', campaign_name: 'prueba' }] },
+      detail: { ana: [{ role_id: 'r2', role_name: 'Calidad Prueba', campaign_name: 'prueba' }] },
     });
     expect(agentsOf((await deriveCampaignAgents(d)).lists, 'prueba')).toEqual([]);
     expect(getUserRoles).toHaveBeenCalledWith('ana');

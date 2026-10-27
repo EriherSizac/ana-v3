@@ -108,8 +108,10 @@ describe('resolveUserAccess: rol de supervisor (add-supervisor-contact-access)',
     expect(isSupervisorRole(name)).toBe(true);
   });
 
-  it('Líder no es supervisor', () => {
-    expect(isSupervisorRole('Líder DIDI VIP')).toBe(false);
+  it('Líder es supervisor (en Pernexium el supervisor es el rol Líder)', () => {
+    expect(isSupervisorRole('Líder DIDI VIP')).toBe(true);
+    expect(isSupervisorRole('Lider Kubo')).toBe(true);
+    expect(isSupervisorRole('Coordinacion DiDi')).toBe(false);
   });
 
   it('deny de envío en el rol: conserva carga y reparto, quita envío', async () => {

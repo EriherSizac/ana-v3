@@ -64,3 +64,5 @@ Flota inicial `v3`. Se quitan textarea de mensaje y plantilla v4; el código de 
 3. v4 backend: `sls deploy` (rol de supervisor, sincronización con supervisores, lectura del roster, reparto automático solo agentes). En ≤ 5 min las listas incluyen supervisores.
 4. v4 desktop: incluir el ajuste de plantilla en el siguiente release (sin él, el agente ve `{mensaje}` marcado como variable desconocida y lo reemplaza; no bloquea).
 - Rollback: revertir v4 (las listas se regeneran sin supervisores en ≤ 5 min); revertir v3 vuelve a escribir en `agents/`.
+
+- **Supervisor = Líder (2026-10-26, decisión del usuario):** la API de Roles no tiene roles "Supervisor"; el supervisor de Pernexium es "Líder <Campaña>". `isSupervisorRole` acepta "lider" o "supervisor" (normalizado). "Coordinación" no cuenta.
