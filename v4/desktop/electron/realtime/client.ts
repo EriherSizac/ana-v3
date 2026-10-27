@@ -97,9 +97,9 @@ interface Conn {
 
 /** Sobre válido del catálogo, o null (JSON inválido, `v` distinto o tipo desconocido). */
 export function parseEnvelope(raw: unknown): RealtimeEnvelope | { type: 'pong' } | { type: 'session.refresh'; reason: string } | null {
-  let msg: any;
+  let msg: { type?: unknown; v?: unknown; ref?: { reason?: unknown } } | null;
   try {
-    msg = typeof raw === 'string' ? JSON.parse(raw) : JSON.parse(String(raw));
+    msg = JSON.parse(typeof raw === 'string' ? raw : String(raw));
   } catch {
     return null;
   }
@@ -107,8 +107,8 @@ export function parseEnvelope(raw: unknown): RealtimeEnvelope | { type: 'pong' }
   if (msg.type === 'pong') return { type: 'pong' };
   if (msg.v !== 1) return null;
   if (msg.type === 'session.refresh') return { type: 'session.refresh', reason: String(msg.ref?.reason ?? 'unknown') };
-  if (!(KNOWN_EVENTS as readonly string[]).includes(msg.type)) return null;
-  return msg as RealtimeEnvelope;
+  if (typeof msg.type !== 'string' || !(KNOWN_EVENTS as readonly string[]).includes(msg.type)) return null;
+  return msg as unknown as RealtimeEnvelope;
 }
 
 /** URL de conexión con `client` y `v` (sin token). */
