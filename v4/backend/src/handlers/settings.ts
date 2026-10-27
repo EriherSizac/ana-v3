@@ -7,6 +7,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { ok, bad, claimUser } from '../lib/http';
 import { resolveUserAccess } from '../lib/access';
 import { adminView, effectiveSettings, readSettings, validateUpdate, writeSettings } from '../lib/desktopSettings';
+import { emitRealtime, forceRefresh } from '../lib/realtime';
 
 /**
  * GET  /settings                → valores efectivos (cualquier autenticado).
@@ -45,6 +46,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       const saved = await writeSettings(current, body.version, v.values, access.username);
       if (!saved) return bad('la configuración cambió', 409);
       console.log(JSON.stringify({ evt: 'desktop_settings_update', by: access.username, keys: Object.keys(v.values), version: saved.version }));
+      // Realtime (add-realtime-gateway D12): aviso a desktops y admins y
+      // actualización forzada de todos los desktops. Nunca lanza.
+      await Promise.all([
+        emitRealtime({ type: 'settings.changed', ref: { scope: 'desktop' } }),
+        forceRefresh({ reason: 'settings', target: { kind: 'client', client: 'desktop' }, by: access.username }),
+      ]);
       return ok(adminView(saved));
     }
     return bad(`ruta no manejada: ${event.routeKey}`, 404);

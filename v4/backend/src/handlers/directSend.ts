@@ -13,6 +13,7 @@ import { campaignExists } from '../lib/campaignsDb';
 import { fetchEligibleAgents } from '../lib/dashboard';
 import { matchesApiKey } from '../lib/apiKey';
 import { resolveCatalogCampaign } from '../lib/identity';
+import { emitRealtime } from '../lib/realtime';
 
 // Endpoint sistema-a-sistema (sin Cognito): autentica por X-Api-Key contra
 // SEND_API_KEY y, solo durante una rotación, SEND_API_KEY_NEXT. Ambas llegan
@@ -110,6 +111,8 @@ export const handler = async (
         return ok({ queued: true, jobId: job.jobId, operatorId, campaign, duplicate: true });
       throw e;
     }
+    // Aviso realtime al agente (add-realtime-gateway); nunca lanza.
+    await emitRealtime({ type: 'jobs.changed', users: [operatorId], campaign });
     return ok({ queued: true, jobId: job.jobId, operatorId, campaign });
   } catch (e) {
     console.error('[directSend] error', e);

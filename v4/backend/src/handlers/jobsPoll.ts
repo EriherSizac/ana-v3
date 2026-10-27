@@ -10,6 +10,31 @@ import { JOBS_TABLE, classify, isFinalStatus, isReviewDue, type FinalStatus, typ
 import { promoteToReview } from '../lib/jobReview';
 import { ok, bad, claimUser } from '../lib/http';
 import { routeAllowed } from '../lib/access';
+import { emitRealtime } from '../lib/realtime';
+
+/** Máximo un `uploads.changed` por carga cada 10 s (por contenedor; add-realtime-gateway). */
+export const UPLOAD_EVENT_MIN_GAP_MS = 10_000;
+const lastUploadEvent = new Map<string, number>();
+
+/** Solo pruebas. */
+export function resetUploadEventThrottleForTests(): void {
+  lastUploadEvent.clear();
+}
+
+/** Cargas (campaña + srcKey) cuyo aviso toca ahora, respetando la ventana de 10 s. */
+export function uploadsDue(touched: Map<string, string>, now = Date.now()): { srcKey: string; campaign: string }[] {
+  const due: { srcKey: string; campaign: string }[] = [];
+  for (const [srcKey, campaign] of touched) {
+    const last = lastUploadEvent.get(srcKey) ?? 0;
+    if (now - last < UPLOAD_EVENT_MIN_GAP_MS) continue;
+    lastUploadEvent.set(srcKey, now);
+    due.push({ srcKey, campaign });
+  }
+  if (lastUploadEvent.size > 5000) {
+    for (const [k, t] of lastUploadEvent) if (now - t >= UPLOAD_EVENT_MIN_GAP_MS) lastUploadEvent.delete(k);
+  }
+  return due;
+}
 
 /**
  * GET /jobs/poll  → jobs del PROPIO operador, sin lease (v4-harden-send-job-queue D3):
@@ -152,6 +177,8 @@ async function ack(
   const notFound: string[] = [];
   const invalid: string[] = [];
   let acked = 0;
+  // Cargas tocadas por este ack (srcKey → campaña) para el aviso realtime.
+  const touched = new Map<string, string>();
 
   await Promise.all(
     raw.map(async (a) => {
@@ -163,11 +190,12 @@ async function ack(
       }
       const status: FinalStatus = a.status;
       try {
-        await ddb.send(
+        const res = await ddb.send(
           new UpdateCommand({
             TableName: JOBS_TABLE,
             Key: { operatorId: user, jobId },
             UpdateExpression: 'SET #s = :s, sentAt = :t REMOVE leaseUntil',
+            ReturnValues: 'ALL_NEW',
             // Desde pending (desktops viejos), sending o review; el mismo
             // resultado repetido es idempotente (reintento del desktop).
             ConditionExpression:
@@ -184,6 +212,10 @@ async function ack(
           }),
         );
         acked += 1;
+        const attrs = (res as { Attributes?: Record<string, unknown> } | undefined)?.Attributes;
+        if (typeof attrs?.srcKey === 'string' && attrs.srcKey && typeof attrs.campaign === 'string' && attrs.campaign) {
+          touched.set(attrs.srcKey, attrs.campaign);
+        }
       } catch (e) {
         if (!isConditionFailed(e)) throw e;
         // No existe → notFound; discarded u otro final → invalid.
@@ -192,5 +224,9 @@ async function ack(
       }
     }),
   );
+  const due = uploadsDue(touched);
+  if (due.length > 0) {
+    await emitRealtime(due.map((u) => ({ type: 'uploads.changed' as const, campaign: u.campaign, ref: { srcKey: u.srcKey, uploadId: u.srcKey } })));
+  }
   return ok({ acked, notFound, invalid });
 }

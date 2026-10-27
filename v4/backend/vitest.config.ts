@@ -10,6 +10,9 @@ export default defineConfig({
       ROLEPERMS_TABLE: 'roleperms-test',
       ACCESS_CACHE_TABLE: 'accesscache-test',
       UPLOADS_TABLE: 'uploads-test',
+      // Canal realtime: sin REALTIME_BUS no se publica (las pruebas lo fijan cuando lo necesitan).
+      REALTIME_TABLE: 'realtime-test',
+      STAGE: 'test',
       CSV_BUCKET: 'csv-test',
       MEDIA_BUCKET: 'media-test',
       JOBS_TABLE: 'jobs-test',

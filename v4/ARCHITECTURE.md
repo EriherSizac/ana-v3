@@ -175,6 +175,35 @@ Catálogo cerrado (cualquier otra llave → 400 `configuración desconocida: <ll
 - Desktop: el main (`electron/settings/remoteSettings.ts`) lee `GET /settings` tras el login y cada 5 min, conserva el último valor y usa los por defecto si nunca la leyó. El poller aplica el ritmo en cada cálculo de espera; `Chats` notifica `POST /interactions/open` solo con `openChatInteraction`. **Propagación ≤ 5 min.**
 - Se edita desde ANA Admin → "Configuración" → sección "Desktop v4" (solo Developer).
 
+## Canal realtime (`backend/src/lib/realtime.ts`, add-realtime-gateway)
+
+API WebSocket de API Gateway en el stack v4 (us-east-2), una por stage, para los tres clientes (desktop v4, CLI v3, ANA Admin). Solo **avisos** sin datos: el cliente vuelve a leer por REST, que conserva toda la autorización. El polling queda como respaldo.
+
+- **URL**: la de execute-api por defecto, sin dominio propio: salida `RealtimeWsUrl` del stack (`wss://<apiId>.execute-api.us-east-2.amazonaws.com/<stage>`). Cada cliente la recibe como configuración (`ANA_REALTIME_URL` del desktop y del CLI, `NEXT_PUBLIC_REALTIME_URL` de ANA Admin); sin URL no se conecta y conserva su polling actual. dev: `<RealtimeWsUrl de dev, tras el deploy>`; prod: `<RealtimeWsUrl de prod, tras el deploy>`.
+- **Handshake**: `?client=desktop|cli|admin&v=<versión>` y subprotocolo `Sec-WebSocket-Protocol: ana.v1, <ID token>` (nunca en el query string). Authorizer `realtimeAuthorizer` (`aws-jwt-verify`, `tokenUse: id`, App Clients de `realtimeClientIds`); si llega `Origin` debe estar en `REALTIME_ALLOWED_ORIGINS` y `client=admin` lo exige. `$connect` responde `Sec-WebSocket-Protocol: ana.v1`. Sin subprotocolo → 401 de API Gateway; cualquier otro rechazo → 403.
+- **Temas** (tabla `ana-backend-realtime-<stage>`, `PK=<tema>, SK=<connectionId>` + `PK=conn#<id>, SK=meta`, TTL 3 h): `u#<username>`, `k#<client>`, `c#<campaña>` (solo `admin`, eventos de campaña; `c#*` con todas), `m#<campaña>` y `r#<roleId>` (todos, para la actualización forzada; `r#unknown` si el acceso no se resolvió). El alcance se calcula en `$connect` con `resolveUserAccess`.
+- **Rutas**: `ping` → `{"type":"pong","at","exp"}`; cualquier otra acción → `{"type":"error","code":"unknown_action"}`.
+- **Catálogo v1** (sobre `{"v":1,"type","id","at","campaign"?,"ref"?}`, ≤ 1 KB, `ref` solo `uploadId`/`srcKey`/`scope`/`source`/`reason`):
+
+| Tipo | Destino | Productor |
+|---|---|---|
+| `jobs.changed` | usuario | `csvTrigger`, `POST /send`, `jobs/reassign`, `jobs/review/resolve` |
+| `assignment.pending` | usuario | puente v3 (`assignments/agents/…`) |
+| `assignment.published` | usuario | puente v3 (`agents/{c}/{agent}-contacts-*.csv`) |
+| `publications.changed` | usuario | puente v3 (`agent-publications/…`) |
+| `uploads.changed` | campaña | `csvTrigger`, `jobs/ack` (≤ 1 por carga cada 10 s), puente v3 (`uploads/…`) |
+| `review.changed` | campaña | `jobs/reassign`, `jobs/review/resolve`, puente v3 (`review/…`) |
+| `roster.changed` | campaña | `POST /admin/agent-roster`, puente v3 (`rosters/{c}.json`) |
+| `settings.changed` (`scope` `desktop`/`cli`) | ese tipo + `admin` | `PUT /admin/desktop-settings`, puente v3 (`config/cli-settings.json`) |
+| `session.refresh` (`ref.reason`) | actualización forzada | ver abajo |
+
+- **Reparto**: los handlers publican al bus `ana-realtime-<stage>` (`emitRealtime`/`forceRefresh`, timeout 1 s, nunca lanzan; `EmitFailed`). Las reglas `source: ana.v4` y `source: aws.s3` invocan `notify`, que hace `PostToConnection` (concurrencia 25), borra 410, cierra conexiones con token vencido hace > 5 min y descarta eventos de > 60 s. Entrega a lo más una vez, sin orden.
+- **Puente v3**: el bucket `ana-backend-storage-<stage>` publica a EventBridge (us-east-1) y la regla `ana-backend-<stage>-realtime-bridge` reenvía los prefijos del puente al bus de v4 (`--param="realtimeBusArn=<RealtimeBusArn>"` al desplegar v3).
+- **Actualización forzada** (`session.refresh` + `DeleteConnection`; API Gateway no permite elegir el código de cierre): automática al guardar permisos de un rol (`r#<roleId>` ∪ `r#unknown`), excepciones del roster v4 (`u#` de los agentes del cuerpo), roster v3 (`m#<campaña>`), configuración del desktop (`k#desktop`) o del CLI (`k#cli`); manual con `POST /admin/realtime/refresh` `{scope:"user",username}` | `{scope:"campaign",campaign}` (`m#<c>`, sin `m#*`) | `{scope:"all"}` (solo `isAdmin`: `ana:admin:console:manage` o superadmin; 202). El cliente cierra con 4001, relee su acceso (`/me` o `GET /agent/campaigns` en el CLI) y su estado, y reconecta tras 0–10 s sin crecer el backoff.
+- **Contrato de los clientes**: `ping` al abrir y cada 5 min; activo tras el primer `pong` (timeout 30 s); backoff exponencial con jitter 1 s → 5 min (15 min tras 403 o 5 fallos); reconexión planeada a los 110 min o con token nuevo (make-before-break); lectura REST al confirmar cada conexión. Con canal activo, respaldo lento (desktop y CLI: 2 min jobs/asignaciones, 15 min configuración); sin canal, el polling de hoy (5 s / 30 s y 5 min).
+- **Interruptor**: `--param="realtimeEnabled=false"` rechaza `$connect` (`disabled`), descarta eventos y `realtimeStats` (cada 5 min) cierra las conexiones abiertas; las rutas REST no cambian.
+- **Observabilidad**: métricas `AnaRealtime` con dimensión `Stage` (`ConnectAccepted`, `ConnectRejected{reason}`, `ActiveConnections{client}`, `EventsEmitted{type}`, `PostOk`, `PostGone`, `PostFailed`, `EmitFailed`, `ForcedClosed{reason}`, `BridgeSkipped`); alarmas `…-realtime-post-failing` (> 5 % en 15 min), `…-realtime-notify-errors` y `…-realtime-authorizer-errors`. Access log del stage sin headers.
+
 ## Seguridad del desktop
 
 - **Ventana**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`; el renderer solo ve `window.ana` (preload).

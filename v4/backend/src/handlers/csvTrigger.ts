@@ -14,6 +14,7 @@ import { getDistributableAgents } from '../lib/distribution';
 import { normalizeContactRow } from '../lib/contacts';
 import { fileNameFromKey, recordUpload, type RejectReason, type UploadRecord } from '../lib/uploads';
 import { canonicalOperatorId, resolveCatalogCampaign } from '../lib/identity';
+import { emitRealtime } from '../lib/realtime';
 
 const MAX_CSV_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_ROWS = 50_000;
@@ -63,6 +64,8 @@ function objectDate(lastModified: Date | undefined, eventTime: string | undefine
 async function safeRecord(rec: UploadRecord): Promise<void> {
   try {
     await recordUpload(rec);
+    // Aviso realtime a la campaña (add-realtime-gateway); nunca lanza.
+    await emitRealtime({ type: 'uploads.changed', campaign: rec.campaign, ref: { srcKey: rec.srcKey, uploadId: rec.srcKey } });
   } catch (e) {
     console.error(
       JSON.stringify({
@@ -293,6 +296,12 @@ export const handler = async (event: S3Event): Promise<void> => {
       } catch (e) {
         console.error(JSON.stringify({ evt: 'csv_delete_failed', key, error: (e as Error)?.name }));
       }
+    }
+
+    // Aviso realtime a cada destinatario con jobs nuevos (add-realtime-gateway); nunca lanza.
+    const recipients = [...new Set(written.map((j) => j.operatorId))];
+    if (recipients.length > 0) {
+      await emitRealtime({ type: 'jobs.changed', users: recipients, ...(campaign ? { campaign } : {}) });
     }
 
     if (campaign) {

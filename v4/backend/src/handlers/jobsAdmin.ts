@@ -19,6 +19,7 @@ import { ok, bad, claimUser } from '../lib/http';
 import { resolveUserAccess, type UserAccess } from '../lib/access';
 import { ANA_PERMISSIONS, type AnaPermission } from '../lib/permissions';
 import { campaignIn, canonicalOperatorId, resolveCatalogCampaign, sameCampaign } from '../lib/identity';
+import { emitRealtime } from '../lib/realtime';
 
 export const REASSIGN_CONCURRENCY = 10;
 export const REASSIGN_BUDGET_MS = 25_000;
@@ -359,6 +360,15 @@ async function resolveReview(
   console.log(
     JSON.stringify({ evt: 'review_resolve', campaign, action, by: access.username, count: refs.length, ok: results.filter((r) => r.ok).length }),
   );
+  // Avisos realtime (add-realtime-gateway): operadores afectados y la campaña; nunca lanza.
+  const done = results.filter((r) => r.ok);
+  if (done.length > 0) {
+    const users = [...new Set(done.flatMap((r) => [r.operatorId, ...(r.to ? [r.to] : [])]))];
+    await emitRealtime([
+      { type: 'jobs.changed', users, campaign },
+      { type: 'review.changed', campaign },
+    ]);
+  }
   return ok({ results });
 }
 
@@ -433,6 +443,13 @@ async function reassign(
   await Promise.all(Array.from({ length: Math.min(REASSIGN_CONCURRENCY, refs.length) }, worker));
   const remaining = refs.length - next;
   const partial = remaining > 0;
+  // Avisos realtime (add-realtime-gateway): ambos operadores y la campaña; nunca lanza.
+  if (moved > 0) {
+    await emitRealtime([
+      { type: 'jobs.changed', users: [from, to], campaign },
+      { type: 'review.changed', campaign },
+    ]);
+  }
 
   return ok({
     campaign,

@@ -21,6 +21,13 @@ custom:
   v3BucketDefault: ana-backend-storage-${self:provider.stage}
   v3Bucket: ${param:v3Bucket, self:custom.v3BucketDefault}
   userPoolId: us-east-2_UepfOyKpd
+  # Canal realtime (add-realtime-gateway). Orígenes de navegador permitidos en
+  # $connect por stage; override con --param="realtimeAllowedOrigins=a,b".
+  realtimeOriginsprod: https://ana-admin.pernexium.com.mx
+  realtimeOriginsdev: https://ana-admin.pernexium.com.mx,http://localhost:3000
+  realtimeOrigins: ${param:realtimeAllowedOrigins, self:custom.realtimeOrigins${self:provider.stage}, 'https://ana-admin.pernexium.com.mx'}
+  # Endpoint de la API de administración de conexiones (URL execute-api, sin dominio propio).
+  realtimeMgmtEndpoint: !Sub 'https://${WebsocketsApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}'
 
 provider:
   name: aws
@@ -30,6 +37,18 @@ provider:
   profile: pernexium
   memorySize: 256
   timeout: 29
+  # API WebSocket realtime (add-realtime-gateway D1/D2): una por stage.
+  websocketsApiName: ${self:service}-realtime-${self:provider.stage}
+  websocketsApiRouteSelectionExpression: $request.body.action
+  websocketsDescription: Canal realtime de ANA (avisos sin datos; add-realtime-gateway)
+  logs:
+    # Access log propio SIN headers (el token viaja en Sec-WebSocket-Protocol)
+    # y ejecución solo en ERROR sin datos completos (design D11, "Logs sin secretos").
+    websocket:
+      level: ERROR
+      fullExecutionData: false
+      accessLogging: true
+      format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","eventType":"$context.eventType","routeKey":"$context.routeKey","status":"$context.status","connectionId":"$context.connectionId","error":"$context.error.message"}'
   environment:
     STAGE: ${self:provider.stage}
     CONVERSATIONS_TABLE: ${self:service}-conversations-${self:provider.stage}
@@ -89,6 +108,15 @@ provider:
     # Transición de llaves S3 (v4-canonical-identity-keys D6): GET /media/url
     # acepta el segmento saneado propio. 'true' entre la migración y --delete-source.
     MEDIA_LEGACY_OWNER: ${param:mediaLegacyOwner, 'false'}
+    # Canal realtime (add-realtime-gateway). Interruptor `realtimeEnabled`
+    # (D10): 'false' rechaza conexiones, descarta eventos y cierra las abiertas
+    # en ≤ 5 min; los clientes vuelven solos a su polling rápido.
+    REALTIME_ENABLED: ${param:realtimeEnabled, 'true'}
+    REALTIME_TABLE: ${self:service}-realtime-${self:provider.stage}
+    REALTIME_BUS: ana-realtime-${self:provider.stage}
+    REALTIME_ALLOWED_ORIGINS: ${self:custom.realtimeOrigins}
+    # App Client(s) cuyos ID tokens acepta $connect (coma).
+    REALTIME_CLIENT_IDS: ${param:realtimeClientIds, '1r6niimhkl2fmias6kk85n4ou4'}
   httpApi:
     cors: true
     authorizers:
@@ -145,6 +173,27 @@ provider:
             - s3:GetObject
           Resource:
             - arn:aws:s3:::${self:custom.v3Bucket}/campaign-agents/*
+        # Realtime (add-realtime-gateway): registro de conexiones, publicación
+        # al bus y envío/cierre de conexiones WebSocket.
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+            - dynamodb:BatchWriteItem
+          Resource:
+            - !GetAtt RealtimeTable.Arn
+        - Effect: Allow
+          Action:
+            - events:PutEvents
+          Resource:
+            - !GetAtt AnaRealtimeBus.Arn
+        - Effect: Allow
+          Action:
+            - execute-api:ManageConnections
+          Resource:
+            - !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebsocketsApi}/*'
 
 package:
   individually: true
@@ -342,6 +391,79 @@ functions:
       - httpApi:
           path: /admin/desktop-settings
           method: put
+          authorizer: { name: cognitoJwt }
+
+  # --- Canal realtime (add-realtime-gateway) ---
+  # REQUEST authorizer de $connect: ID token en Sec-WebSocket-Protocol (D2).
+  realtimeAuthorizer:
+    handler: src/handlers/realtime.authorizer
+    description: Authorizer del WebSocket realtime (ID token como subprotocolo, origen, interruptor)
+    timeout: 10
+
+  realtimeConnect:
+    handler: src/handlers/realtime.connect
+    description: $connect del WebSocket realtime (temas derivados de la identidad)
+    timeout: 15
+    events:
+      - websocket:
+          route: $connect
+          authorizer:
+            name: realtimeAuthorizer
+            identitySource:
+              - route.request.header.Sec-WebSocket-Protocol
+
+  realtimeDisconnect:
+    handler: src/handlers/realtime.disconnect
+    description: $disconnect del WebSocket realtime (borra la conexión)
+    timeout: 10
+    events:
+      - websocket:
+          route: $disconnect
+
+  realtimePing:
+    handler: src/handlers/realtime.ping
+    description: Latido del WebSocket realtime (pong con exp del token)
+    timeout: 10
+    events:
+      - websocket:
+          route: ping
+
+  realtimeDefault:
+    handler: src/handlers/realtime.fallback
+    description: Acción desconocida en el WebSocket realtime (unknown_action)
+    timeout: 10
+    events:
+      - websocket:
+          route: $default
+
+  # Reparto de eventos v4, puente S3 de v3 y actualizaciones forzadas. Lo
+  # invocan las reglas AnaRealtimeV4Rule y AnaRealtimeS3Rule (resources).
+  notify:
+    handler: src/handlers/notify.handler
+    description: Reparte avisos realtime (PostToConnection) y actualizaciones forzadas
+    timeout: 30
+    environment:
+      REALTIME_MGMT_ENDPOINT: ${self:custom.realtimeMgmtEndpoint}
+
+  realtimeStats:
+    handler: src/handlers/realtimeStats.handler
+    description: ActiveConnections por tipo y cierre de conexiones con realtimeEnabled=false
+    timeout: 60
+    environment:
+      REALTIME_MGMT_ENDPOINT: ${self:custom.realtimeMgmtEndpoint}
+    events:
+      - schedule:
+          rate: rate(5 minutes)
+          enabled: true
+
+  # Actualización forzada manual (D12): solo ana:admin:console:manage o superadmin.
+  realtimeAdmin:
+    handler: src/handlers/realtimeAdmin.handler
+    description: Fuerza que las sesiones de un usuario, una campaña o todas relean su acceso
+    events:
+      - httpApi:
+          path: /admin/realtime/refresh
+          method: post
           authorizer: { name: cognitoJwt }
 
   csvTrigger:
@@ -597,3 +719,171 @@ resources:
         TimeToLiveSpecification:
           AttributeName: ttl
           Enabled: true
+
+    # --- Canal realtime (add-realtime-gateway) ---
+    # Registro de conexiones (D4): PK=<tema>, SK=<connectionId> y PK=conn#<id>,
+    # SK=meta. TTL = conexión + 3 h por si $disconnect nunca llega.
+    RealtimeTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.REALTIME_TABLE}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: PK, AttributeType: S }
+          - { AttributeName: SK, AttributeType: S }
+        KeySchema:
+          - { AttributeName: PK, KeyType: HASH }
+          - { AttributeName: SK, KeyType: RANGE }
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true
+
+    # Bus de avisos (D5). También recibe, entre regiones, los eventos S3 de v3 (D7).
+    AnaRealtimeBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:provider.environment.REALTIME_BUS}
+
+    # Eventos de los handlers v4 y peticiones de actualización forzada → notify.
+    # Un aviso de más de 60 s no vale nada: 1 reintento, sin DLQ.
+    AnaRealtimeV4Rule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-realtime-v4
+        EventBusName: !Ref AnaRealtimeBus
+        EventPattern:
+          source:
+            - ana.v4
+        State: ENABLED
+        Targets:
+          - Id: notify
+            Arn: !GetAtt NotifyLambdaFunction.Arn
+            RetryPolicy:
+              MaximumEventAgeInSeconds: 60
+              MaximumRetryAttempts: 1
+
+    # Eventos S3 de v3 reenviados desde us-east-1 (v3/realtime-bridge) → notify.
+    AnaRealtimeS3Rule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-realtime-v3-bridge
+        EventBusName: !Ref AnaRealtimeBus
+        EventPattern:
+          source:
+            - aws.s3
+        State: ENABLED
+        Targets:
+          - Id: notify
+            Arn: !GetAtt NotifyLambdaFunction.Arn
+            RetryPolicy:
+              MaximumEventAgeInSeconds: 60
+              MaximumRetryAttempts: 1
+
+    NotifyV4RulePermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: !GetAtt NotifyLambdaFunction.Arn
+        Principal: events.amazonaws.com
+        SourceArn: !GetAtt AnaRealtimeV4Rule.Arn
+
+    NotifyS3RulePermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: !GetAtt NotifyLambdaFunction.Arn
+        Principal: events.amazonaws.com
+        SourceArn: !GetAtt AnaRealtimeS3Rule.Arn
+
+    # Alarmas (D11). Más del 5 % de PostToConnection fallidos en 15 min.
+    RealtimePostFailingAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-realtime-post-failing
+        AlarmDescription: Más del 5 % de los envíos realtime (PostToConnection) fallan durante 15 minutos.
+        EvaluationPeriods: 1
+        Threshold: 5
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+        Metrics:
+          - Id: failed
+            ReturnData: false
+            MetricStat:
+              Stat: Sum
+              Period: 900
+              Metric:
+                Namespace: AnaRealtime
+                MetricName: PostFailed
+                Dimensions:
+                  - { Name: Stage, Value: '${self:provider.stage}' }
+          - Id: delivered
+            ReturnData: false
+            MetricStat:
+              Stat: Sum
+              Period: 900
+              Metric:
+                Namespace: AnaRealtime
+                MetricName: PostOk
+                Dimensions:
+                  - { Name: Stage, Value: '${self:provider.stage}' }
+          - Id: gone
+            ReturnData: false
+            MetricStat:
+              Stat: Sum
+              Period: 900
+              Metric:
+                Namespace: AnaRealtime
+                MetricName: PostGone
+                Dimensions:
+                  - { Name: Stage, Value: '${self:provider.stage}' }
+          - Id: pct
+            ReturnData: true
+            Label: PostFailed %
+            Expression: 100 * FILL(failed, 0) / (FILL(failed, 0) + FILL(delivered, 0) + FILL(gone, 0))
+
+    # La Lambda de reparto falla.
+    RealtimeNotifyErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-realtime-notify-errors
+        AlarmDescription: La Lambda notify (reparto realtime) falló.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:service}-${self:provider.stage}-notify
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+    # Errores del authorizer > 10 en 5 min (no cuenta los Deny, solo fallos).
+    RealtimeAuthorizerErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-${self:provider.stage}-realtime-authorizer-errors
+        AlarmDescription: El authorizer del WebSocket realtime falló más de 10 veces en 5 minutos.
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: ${self:service}-${self:provider.stage}-realtimeAuthorizer
+        Statistic: Sum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 10
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+
+  Outputs:
+    # URL execute-api por defecto (sin dominio propio): valor de configuración
+    # de los clientes (ANA_REALTIME_URL, NEXT_PUBLIC_REALTIME_URL).
+    RealtimeWsUrl:
+      Description: URL del WebSocket realtime
+      Value: !Sub 'wss://${WebsocketsApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}'
+    # Destino de la regla de reenvío de v3 (--param="realtimeBusArn=...").
+    RealtimeBusArn:
+      Description: ARN del bus realtime (destino del puente de v3)
+      Value: !GetAtt AnaRealtimeBus.Arn

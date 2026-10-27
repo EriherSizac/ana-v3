@@ -26,6 +26,7 @@ import { normalizeId, readCampaignAgents } from '../lib/campaignAgentsList';
 import { ANA_PERMISSIONS, sanitizeRolePermissions } from '../lib/permissions';
 import { setRolePermissions, getRolePermissions } from '../lib/rolePerms';
 import { invalidateByRole } from '../lib/accessCache';
+import { forceRefresh } from '../lib/realtime';
 import { checkAssignmentsEnabled, getDistributableAgents } from '../lib/distribution';
 import { campaignExists } from '../lib/campaignsDb';
 import { listAllRoles } from '../lib/roles';
@@ -319,6 +320,8 @@ async function setRolePerms(
   const permissions = sanitizeRolePermissions(payload.permissions ?? []);
   await setRolePermissions(roleId, permissions, payload.roleName);
   await invalidateByRole(roleId); // usuarios con ese rol re-resuelven acceso
+  // Realtime (add-realtime-gateway D12): las conexiones con ese rol releen /me. Nunca lanza.
+  await forceRefresh({ reason: 'permissions', target: { kind: 'role', roleId } });
   return ok({ roleId, permissions });
 }
 

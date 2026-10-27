@@ -417,11 +417,81 @@ functions:
             name: cognitoAdminJwt
 
 resources:
+  # Puente realtime v3 → v4 (add-realtime-gateway D7): la regla y su rol solo
+  # se crean con --param="realtimeBusArn=<salida RealtimeBusArn del stack v4>".
+  Conditions:
+    HasRealtimeBus:
+      Fn::Not:
+        - Fn::Equals:
+            - '${param:realtimeBusArn, ""}'
+            - ''
   Resources:
     StorageBucket:
       Type: AWS::S3::Bucket
       Properties:
         BucketName: ${self:service}-storage-${sls:stage}
+        # Eventos de objeto al bus por defecto de us-east-1 (sin costo de entrega);
+        # la regla RealtimeBridgeRule reenvía solo los prefijos del puente.
+        NotificationConfiguration:
+          EventBridgeConfiguration:
+            EventBridgeEnabled: true
+
+    # Reenvía, entre regiones, los cambios relevantes al bus realtime de v4
+    # (us-east-2). Ningún handler v3 cambia; si la regla falla o se deshabilita,
+    # v3 y sus clientes se comportan igual (spec v3/realtime-bridge).
+    RealtimeBridgeRole:
+      Type: AWS::IAM::Role
+      Condition: HasRealtimeBus
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal: { Service: events.amazonaws.com }
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: realtime-bridge-put-events
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - events:PutEvents
+                  Resource:
+                    - '${param:realtimeBusArn, ""}'
+
+    RealtimeBridgeRule:
+      Type: AWS::Events::Rule
+      Condition: HasRealtimeBus
+      Properties:
+        Name: ${self:service}-${sls:stage}-realtime-bridge
+        Description: Cambios de S3 de v3 hacia el canal realtime de v4 (add-realtime-gateway)
+        EventBusName: default
+        State: ENABLED
+        EventPattern:
+          source:
+            - aws.s3
+          detail-type:
+            - Object Created
+            - Object Deleted
+          detail:
+            bucket:
+              name:
+                - ${self:service}-storage-${sls:stage}
+            object:
+              key:
+                - prefix: agents/
+                - prefix: assignments/agents/
+                - prefix: agent-publications/
+                - prefix: review/
+                - prefix: rosters/
+                - prefix: uploads/
+                - config/cli-settings.json
+        Targets:
+          - Id: ana-realtime-v4
+            Arn: '${param:realtimeBusArn, ""}'
+            RoleArn:
+              Fn::GetAtt: [RealtimeBridgeRole, Arn]
 
     # Observabilidad de la autenticación de agente (migrate-cli-to-cognito-login 4.1):
     # cada línea {"evt":"agent_auth",...} (stdout, sin prefijo) suma 1 a

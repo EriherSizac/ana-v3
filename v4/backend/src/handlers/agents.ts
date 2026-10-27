@@ -12,6 +12,7 @@ import { resolveUserAccess } from '../lib/access';
 import { ANA_PERMISSIONS } from '../lib/permissions';
 import { ok, bad, claimUser } from '../lib/http';
 import { campaignIn, campaignKey, resolveCatalogCampaign, sameCampaign } from '../lib/identity';
+import { emitRealtime, forceRefresh } from '../lib/realtime';
 
 /**
  * POST /agents/heartbeat — el agente se marca activo en su campaña.
@@ -151,5 +152,11 @@ async function adminRosterPost(
     return { operatorId: derived.get(n) ?? existing.get(n) ?? a.operatorId, enabled: a.enabled };
   });
   await setAgentOverrides(campaign, entries, access.username);
+  // Realtime (add-realtime-gateway D12): aviso a la campaña y actualización
+  // forzada de los agentes del cuerpo. Nunca lanza.
+  await Promise.all([
+    emitRealtime({ type: 'roster.changed', campaign }),
+    forceRefresh({ reason: 'roster', target: { kind: 'user', users: entries.map((e) => e.operatorId) }, by: access.username }),
+  ]);
   return ok(await buildRosterView(campaign, list));
 }
