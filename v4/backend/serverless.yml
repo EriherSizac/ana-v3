@@ -41,14 +41,9 @@ provider:
   websocketsApiName: ${self:service}-realtime-${self:provider.stage}
   websocketsApiRouteSelectionExpression: $request.body.action
   websocketsDescription: Canal realtime de ANA (avisos sin datos; add-realtime-gateway)
-  logs:
-    # Access log propio SIN headers (el token viaja en Sec-WebSocket-Protocol)
-    # y ejecución solo en ERROR sin datos completos (design D11, "Logs sin secretos").
-    websocket:
-      level: ERROR
-      fullExecutionData: false
-      accessLogging: true
-      format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","eventType":"$context.eventType","routeKey":"$context.routeKey","status":"$context.status","connectionId":"$context.connectionId","error":"$context.error.message"}'
+  # Sin logs de stage del WebSocket: API Gateway exige un rol de CloudWatch a nivel
+  # de cuenta (configuración global que no existe en la cuenta). Las Lambdas del
+  # canal registran sus propios logs y métricas AnaRealtime/* (design D11).
   environment:
     STAGE: ${self:provider.stage}
     CONVERSATIONS_TABLE: ${self:service}-conversations-${self:provider.stage}

@@ -559,10 +559,8 @@ describe('serverless.yml: recursos realtime', () => {
     expect(sls.provider.websocketsApiRouteSelectionExpression).toBe('$request.body.action');
   });
 
-  it('access log sin headers y ejecución sin datos completos', () => {
-    const l = sls.provider.logs.websocket;
-    expect(l.fullExecutionData).toBe(false);
-    expect(l.format).not.toMatch(/header|Sec-WebSocket|authorizer/i);
+  it('sin logs de stage del WebSocket (requieren rol de CloudWatch a nivel de cuenta)', () => {
+    expect(sls.provider.logs?.websocket).toBeUndefined();
   });
 
   it('tabla, bus, reglas, alarmas, salidas e interruptor', () => {

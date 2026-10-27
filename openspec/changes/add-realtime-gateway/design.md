@@ -68,3 +68,5 @@ Reparto para 300: el peor caso (`settings.changed` o forzado a todos) son ~300 `
 - Un aviso perdido puede tardar hasta el respaldo de 2 min (D6).
 - Release a toda la flota con el interruptor listo, sin mecanismo de piloto por agente (Migration Plan).
 - Eventos de campaña a admins y permisos aplicados al reconectar: aceptados, más la actualización forzada automática y manual (D4, D12).
+
+- **Sin logs de stage del WebSocket (2026-10-26, deploy):** el primer deploy falló con "CloudWatch Logs role ARN must be set in account settings". Se quitó `provider.logs.websocket` en lugar de cambiar la configuración global de API Gateway de la cuenta; quedan los logs y métricas de las Lambdas.
