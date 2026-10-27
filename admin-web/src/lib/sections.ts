@@ -15,6 +15,12 @@ export interface Section {
 
 export const SECTIONS: Section[] = [
   {
+    href: '/mi-asignacion',
+    label: 'Mi asignación',
+    description: 'Revisa tus contactos asignados (v3), escribe tu mensaje y publícalos a tu CLI.',
+    isAllowed: (a) => hasPermission(a, PERMISSIONS.CAMPAIGN_SEND),
+  },
+  {
     href: '/agentes',
     label: 'Agentes',
     description: 'Usuarios del pool, sus roles y su estado de agente por campaña en v3 y v4.',

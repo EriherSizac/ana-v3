@@ -43,7 +43,9 @@ navegador ──(id token en Authorization)──▶ BFF (route handlers /api/*)
     Solo las lecturas de directorio (Cognito `ListUsers`, API de Roles) usan
     credenciales de servidor, y siempre después de autorizar.
 - **Entrada a la consola**: `isAdmin`, rol Developer, o permiso
-  `ana:admin:agents:manage` / `ana:contacts:list:upload`.
+  `ana:admin:agents:manage` / `ana:contacts:list:upload` / `ana:campaign:message:send`
+  (agentes y supervisores: solo ven "Mi asignación"; las demás rutas BFF exigen su
+  propio permiso y les responden 403).
 - **Secciones**: `src/lib/sections.ts` registra `{href, label, description, isAllowed(access)}`;
   la navegación y el gate por URL usan ese registro.
 
@@ -205,6 +207,36 @@ escrituras siguen exigiendo `ana:admin:agents:manage`).
   dígitos) o, en v3, un campo con salto de línea. Solo las válidas se entregan.
 - Ejemplos con datos falsos: `test/fixtures/contacts/*.example.csv`
   (`clean`, `dirty`, `espanol` para v4 y `newline`).
+
+## Sección Mi asignación (`/mi-asignacion`)
+
+Para usuarios con `ana:campaign:message:send` (rol "Agente <Campaña>", supervisores
+y líderes). Reemplaza la vista de agentes del portal anterior, con SSO en lugar de
+la palabra del día. Rutas BFF `/api/agent/*` → v3 `/agent/*` con el id token del
+usuario (mismo App Client que el CLI; v3 decide el roster y la propiedad de cada
+archivo).
+
+1. **Campaña**: solo las campañas donde el usuario está habilitado en v3
+   (`GET /api/agent/campaigns`); con una sola, queda preseleccionada.
+2. **Asignaciones pendientes** (`assignments/agents/{c}/{agente}-contacts-*.csv`,
+   lo que reparte Contactos para v3): se marca la más reciente; "Cargar
+   seleccionados" lee cada archivo y los combina (unión de columnas en orden).
+3. **Mensaje**: editor con "Insertar variable" (`{{columna}}`), `{columna}`,
+   expresiones (`{{total_balance*0.8}}`) y `\n`, con la semántica del CLI
+   (`src/lib/workspace/` ≡ `v3/cli-whatsapp/template-utils.js`); se precarga con la
+   columna `message` si existe. Un marcador sin resolver ("Variable desconocida")
+   bloquea publicar.
+4. **Columnas de teléfono**: una o varias (máx. 5); por defecto la que usaría el
+   CLI. Se genera un contacto por teléfono válido (≥ 10 dígitos, sin repetir).
+5. **Contactos**: búsqueda, orden por columna, selección por fila o "Seleccionar
+   todos los resultados" (sobre lo filtrado), teléfonos enmascarados y vista
+   previa del mensaje por fila.
+6. **Publicar** (`ConfirmDialog`): v3 relee los archivos (409 si cambiaron),
+   renderiza el mensaje en el servidor, escribe `agents/{c}/{agente}-contacts-{ts}.csv`
+   (lo consume el CLI) y quita de los pendientes las filas publicadas. El BFF
+   genera el `publishId` y reintenta una vez con el mismo id.
+7. **Historial de publicaciones**: fecha, contactos y archivos origen
+   ("Reescrito" con pendientes restantes o "Consumido").
 
 ## Sección Configuración (`/configuracion`)
 

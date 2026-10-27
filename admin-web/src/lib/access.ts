@@ -7,10 +7,12 @@ export const PERMISSIONS = {
   AGENTS_MANAGE: 'ana:admin:agents:manage',
   CONTACTS_UPLOAD: 'ana:contacts:list:upload',
   CONTACTS_DISTRIBUTE: 'ana:contacts:list:distribute',
+  /** Envío de campañas: agentes y supervisores (Mi asignación, add-agent-workspace). */
+  CAMPAIGN_SEND: 'ana:campaign:message:send',
 } as const;
 
 /** Permisos que, además de admin/Developer, dan entrada a la consola. */
-export const ENTRY_PERMISSIONS: readonly string[] = [PERMISSIONS.AGENTS_MANAGE, PERMISSIONS.CONTACTS_UPLOAD];
+export const ENTRY_PERMISSIONS: readonly string[] = [PERMISSIONS.AGENTS_MANAGE, PERMISSIONS.CONTACTS_UPLOAD, PERMISSIONS.CAMPAIGN_SEND];
 
 /** Acceso efectivo expuesto por `GET /api/me`. */
 export interface Access {

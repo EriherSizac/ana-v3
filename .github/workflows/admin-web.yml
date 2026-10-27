@@ -10,6 +10,10 @@ on:
       - 'v3/ana-backend/src/lib/contactsCsv.ts'
       - 'v3/cli-whatsapp/assignment-csv.js'
       - 'v3/cli-whatsapp/template-utils.js'
+      # Vista previa de Mi asignación ≡ publicación de v3 (add-agent-workspace).
+      - 'v3/ana-backend/src/lib/publication.ts'
+      - 'v3/ana-backend/src/lib/assignmentCsv.ts'
+      - 'v3/ana-backend/src/lib/templateRender.ts'
   push:
     branches: [main]
     paths:
@@ -20,6 +24,10 @@ on:
       - 'v3/ana-backend/src/lib/contactsCsv.ts'
       - 'v3/cli-whatsapp/assignment-csv.js'
       - 'v3/cli-whatsapp/template-utils.js'
+      # Vista previa de Mi asignación ≡ publicación de v3 (add-agent-workspace).
+      - 'v3/ana-backend/src/lib/publication.ts'
+      - 'v3/ana-backend/src/lib/assignmentCsv.ts'
+      - 'v3/ana-backend/src/lib/templateRender.ts'
 
 permissions:
   contents: read

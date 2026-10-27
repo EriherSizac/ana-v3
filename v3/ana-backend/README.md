@@ -280,6 +280,39 @@ curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/ca
 La ruta de supervisor con `X-Admin-Key` (`/supervisors/agents/{agent}/{campaign}/contacts`)
 queda como respaldo hasta el retiro de la llave.
 
+### "Mi asignación" del agente (`/agent/assignments*`, add-agent-workspace)
+
+Authorizer `cognitoAgentJwt` + token estricto de `/agent/*` + agente (o
+supervisor) habilitado en la campaña (`403 {"error":"Forbidden"}` si no). El
+agente es siempre el del token; ANA Admin reenvía el id token del usuario (mismo
+App Client que el CLI).
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/agent/assignments/{campaign}` | pendientes propios `assignments/agents/{c}/{agent}-contacts*.csv` (`key`, `fileName`, `lastModified`, `size`, `etag`), más reciente primero |
+| GET | `/agent/assignments/{campaign}/file?key=` | `{key, etag, lastModified, csv}` de un pendiente propio (otra llave → 403 `Archivo no permitido`; > 5 MB → 413) |
+| POST | `/agent/assignments/{campaign}/publish` | `{"publishId","template","phoneColumns":[...],"sources":[{"key","etag","rows":[índices]}]}` (1–20 archivos, ≤ 20 000 filas, plantilla ≤ 2000, 1–5 columnas de teléfono) |
+| GET | `/agent/assignments/{campaign}/publications` | 50 publicaciones más recientes del agente |
+
+Publicación: verifica el ETag de cada fuente (409 `La asignación cambió; vuelve a
+cargarla`), genera un contacto por teléfono elegido (≥ 10 dígitos, sin
+repetir), renderiza `message` en el servidor con la semántica del CLI
+(`src/lib/templateRender.ts` ≡ `cli-whatsapp/template-utils.js`; marcador sin
+resolver → 400 `Variable desconocida: …`), escribe
+`agents/{c}/{agent}-contacts-{ts}.csv` (`phone_number`, demás columnas, `message`
+con `\n` literal, `ana_upload_id`) + `historic/`, reescribe cada fuente sin las
+filas publicadas (`If-Match`) o la borra, y guarda
+`agent-publications/{c}/{agent}/{publishId}.json` (sin teléfonos). Un fallo
+revierte lo publicado y restaura las fuentes; el mismo `publishId` devuelve el
+manifiesto sin volver a publicar.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/agent/assignments/prueba
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"publishId":"20261026T120000-abcdef12","template":"Hola {{first_name}}","phoneColumns":["phone_number"],"sources":[{"key":"assignments/agents/prueba/ana.lopez-contacts-2026-10-26T10-00-00-000Z.csv","etag":"\"<etag>\"","rows":[0,1]}]}' \
+  https://ana-dev.pernexium.com.mx/agent/assignments/prueba/publish
+```
+
 ### Configuración remota del CLI (`config/cli-settings.json`)
 
 Documento global `{"schemaVersion":1,"settings":{...},"updatedAt","updatedBy"}`

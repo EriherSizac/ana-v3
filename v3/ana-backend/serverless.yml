@@ -312,6 +312,44 @@ functions:
           authorizer:
             name: cognitoAgentJwt
 
+  # add-agent-workspace: "Mi asignación" de ANA Admin (mismo token/App Client que el CLI)
+  agentListAssignments:
+    handler: src/handlers/agentAssignments.listAssignments
+    events:
+      - httpApi:
+          path: /agent/assignments/{campaign}
+          method: get
+          authorizer:
+            name: cognitoAgentJwt
+
+  agentGetAssignmentFile:
+    handler: src/handlers/agentAssignments.getAssignmentFile
+    events:
+      - httpApi:
+          path: /agent/assignments/{campaign}/file
+          method: get
+          authorizer:
+            name: cognitoAgentJwt
+
+  agentPublishAssignments:
+    handler: src/handlers/agentAssignments.publishAssignments
+    timeout: 29
+    events:
+      - httpApi:
+          path: /agent/assignments/{campaign}/publish
+          method: post
+          authorizer:
+            name: cognitoAgentJwt
+
+  agentListPublications:
+    handler: src/handlers/agentAssignments.listPublications
+    events:
+      - httpApi:
+          path: /agent/assignments/{campaign}/publications
+          method: get
+          authorizer:
+            name: cognitoAgentJwt
+
   # add-cli-remote-settings
   adminGetCliSettings:
     handler: src/handlers/cliSettings.getCliSettings
