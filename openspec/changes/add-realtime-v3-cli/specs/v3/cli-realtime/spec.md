@@ -7,7 +7,7 @@ Mantener al CLI v3 conectado al canal realtime de ANA para que empiece una asign
 ## ADDED Requirements
 
 ### Requirement: Conexión del CLI al canal
-Tras iniciar sesión con Cognito y con el canal habilitado, el proceso principal del CLI SHALL conectarse a `ANA_REALTIME_URL` (por defecto la URL de prod) con `client=cli`, su versión y el ID token de la sesión como subprotocolo, y MUST cerrar la conexión con Ctrl+C o al cerrar la sesión. El token MUST NOT imprimirse ni escribirse en disco.
+Tras iniciar sesión con Cognito, con el canal habilitado y una URL configurada (`ANA_REALTIME_URL` del entorno o la URL execute-api de prod fijada para el release), el proceso principal del CLI SHALL conectarse a ella con `client=cli`, su versión y el ID token de la sesión como subprotocolo, y MUST cerrar la conexión con Ctrl+C o al cerrar la sesión. El token MUST NOT imprimirse ni escribirse en disco.
 
 #### Scenario: Arranque con sesión
 - **WHEN** el agente inicia sesión en el CLI
@@ -90,3 +90,18 @@ Con `ANA_REALTIME=off`, el CLI MUST NOT conectarse al canal y SHALL esperar 30 s
 #### Scenario: Equipo con realtime desactivado
 - **WHEN** el CLI arranca con `ANA_REALTIME=off`
 - **THEN** no abre conexión WebSocket y consulta asignaciones cada 30 segundos
+
+#### Scenario: Build sin URL del canal
+- **WHEN** el CLI arranca sin `ANA_REALTIME_URL` y sin URL fijada en su configuración
+- **THEN** no abre conexión WebSocket, consulta asignaciones cada 30 segundos y la configuración cada 5 minutos
+
+### Requirement: Actualización de acceso forzada en el CLI
+Al recibir `session.refresh`, el CLI SHALL cerrar la conexión con código 4001, volver a leer `GET /agent/campaigns` para revalidar que la campaña de la sesión sigue permitida (actualizando el aviso de autorización), leer `GET /agent/settings`, terminar la espera del poll si está esperando, y reconectar tras una espera aleatoria de 0 a 10 s que MUST NOT contar como fallo de conexión. Durante un ciclo de envío o la pausa por lote MUST NOT interrumpirlos: el poll se hace al terminar.
+
+#### Scenario: Agente quitado de su campaña
+- **WHEN** el CLI de `jperez` en `prueba` recibe `session.refresh` y `GET /agent/campaigns` ya no incluye `prueba`
+- **THEN** el CLI muestra "Tu usuario no está habilitado en esta campaña" y no consume contactos
+
+#### Scenario: Configuración del CLI cambiada
+- **WHEN** el CLI recibe `session.refresh` con `reason: "settings"`
+- **THEN** lee `GET /agent/settings`, aplica el valor nuevo y reconecta en máximo 10 s
