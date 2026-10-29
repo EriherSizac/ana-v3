@@ -1,4 +1,5 @@
 import { contactSources, PHONE_ALIASES, UPLOAD_ID_COLUMN, type ParsedAssignment } from './assignmentCsv';
+import { creditKeyOf } from './contactsCsv';
 import { renderTemplateDetailed } from './templateRender';
 
 /**
@@ -58,11 +59,15 @@ export function buildPublication(
         if (h) record[h] = row.values[i] ?? '';
       });
       const uploadId = Object.entries(record).find(([h]) => h.toLowerCase() === UPLOAD_ID_COLUMN)?.[1] ?? '';
+      // "Publicación por crédito": un teléfono una vez por crédito (sin crédito,
+      // una vez entre las filas sin crédito); créditos distintos sí se repiten.
+      const credit = creditKeyOf(record);
       for (const col of phoneColumns) {
         const phone = record[col] ?? '';
         const digits = digitsOf(phone);
-        if (digits.length < 10 || seenPhones.has(digits)) continue;
-        seenPhones.add(digits);
+        const key = `${credit}|${digits}`;
+        if (digits.length < 10 || seenPhones.has(key)) continue;
+        seenPhones.add(key);
         const sources = contactSources(
           renderHeader,
           renderHeader.map((h) => record[h] ?? ''),

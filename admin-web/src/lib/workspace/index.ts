@@ -67,17 +67,36 @@ export function defaultPhoneColumn(header: readonly string[]): string | null {
 
 export const digitsOf = (s: string): string => s.replace(/\D/g, '');
 
-/** Teléfonos de cada fila seleccionada (≥ 10 dígitos, sin repetir en toda la selección, en orden). */
+/** Columnas de crédito del CLI (mismo orden que `v3/ana-backend/src/lib/publication.ts`). */
+const CREDIT_COLUMNS = ['credit', 'credito', 'credit_id', 'id_credito'] as const;
+
+/** Crédito normalizado de la fila (sin espacios, minúsculas; '' si no hay). */
+export function creditKeyOf(record: Readonly<Record<string, string>>): string {
+  for (const c of CREDIT_COLUMNS) {
+    const v = (record[c] ?? '').replace(/\s+/g, '').toLowerCase();
+    if (v) return v;
+  }
+  return '';
+}
+
+/**
+ * Teléfonos de cada fila seleccionada (≥ 10 dígitos, en orden), sin repetir
+ * un teléfono para el mismo crédito ("Publicación por crédito"): créditos
+ * distintos con el mismo teléfono reciben un mensaje cada uno; las filas sin
+ * crédito no repiten teléfono entre ellas.
+ */
 export function phonesFor(rows: readonly MergedRow[], phoneColumns: readonly string[]): Map<string, string[]> {
   const seen = new Set<string>();
   const out = new Map<string, string[]>();
   for (const r of rows) {
     const mine: string[] = [];
+    const credit = creditKeyOf(r.record);
     for (const c of phoneColumns) {
       const v = r.record[c] ?? '';
       const d = digitsOf(v);
-      if (d.length < 10 || seen.has(d)) continue;
-      seen.add(d);
+      const key = `${credit}|${d}`;
+      if (d.length < 10 || seen.has(key)) continue;
+      seen.add(key);
       mine.push(v);
     }
     out.set(r.id, mine);

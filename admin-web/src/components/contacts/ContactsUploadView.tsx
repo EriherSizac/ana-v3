@@ -515,6 +515,9 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
               <Badge variant={validation.invalid.length ? 'error' : 'muted'}>{validation.invalid.length} inválidas</Badge>
               <Badge variant="outline">{validation.total} filas</Badge>
             </div>
+            <p className="mt-2 text-xs text-text-light">
+              Los duplicados se detectan por crédito (id_credito): un mismo teléfono con créditos distintos se conserva. Las filas sin crédito se comparan por teléfono.
+            </p>
             {validation.invalid.length > 0 && (
               <TableContainer className="mt-3 max-h-64 overflow-y-auto">
                 <table className="w-full min-w-[400px] text-left text-sm">

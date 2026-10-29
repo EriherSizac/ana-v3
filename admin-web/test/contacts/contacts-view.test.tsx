@@ -103,6 +103,18 @@ describe('/contactos', () => {
     expect(within(summary).getAllByText('Teléfono duplicado')).toHaveLength(2);
   });
 
+  it('duplicados por crédito: "Crédito duplicado" y mismo teléfono con otro crédito válido', async () => {
+    setApi({ 'didi_vip:v3': ['ana'] });
+    await setup();
+    await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
+    await userEvent.upload(screen.getByLabelText('Archivo CSV'), csvFile('id_credito,phone\n1,5215500000001\n2,5215500000001\n1,5215500000002'));
+    const summary = await screen.findByTestId('validation-summary');
+    expect(summary).toHaveTextContent('2 válidas');
+    expect(summary).toHaveTextContent('1 inválidas');
+    expect(within(summary).getByText('Crédito duplicado')).toBeInTheDocument();
+    expect(summary).toHaveTextContent('Los duplicados se detectan por crédito (id_credito)');
+  });
+
   it('base CRM tal cual (v3): telefono_1/2/3, salto de línea unido y entrega con todas las columnas', async () => {
     let sent: any = null;
     setApi({ 'didi_vip:v3': ['ana'] }, (_url, init) => {
