@@ -68,6 +68,10 @@ export interface PublishInput {
   template: string;
   phoneColumns: string[];
   sources: Array<{ key: string; etag: string; rows: number[] }>;
+  /** `first` | `all` (v3 asume `all` si falta). */
+  phoneMode?: 'first' | 'all';
+  /** `<key del archivo>#<índice de fila>` → teléfono elegido. */
+  overrides?: Record<string, string>;
 }
 
 /** Publica con un `publishId` por confirmación; un reintento con el mismo id ante error de red o 5xx. */
@@ -95,5 +99,18 @@ export function parsePublishInput(body: unknown): PublishInput {
     if (typeof s?.key !== 'string' || typeof s?.etag !== 'string' || !Array.isArray(s?.rows)) throw new HttpError('invalid_request', 'Selección inválida');
     return { key: s.key, etag: s.etag, rows: s.rows as number[] };
   });
-  return { template: b.template, phoneColumns: b.phoneColumns as string[], sources };
+  const out: PublishInput = { template: b.template, phoneColumns: b.phoneColumns as string[], sources };
+  // v3 valida el modo y que cada teléfono elegido sea de su fila (400 si no).
+  if (b.phoneMode !== undefined) {
+    if (b.phoneMode !== 'first' && b.phoneMode !== 'all') throw new HttpError('invalid_request', 'Modo de teléfono inválido');
+    out.phoneMode = b.phoneMode;
+  }
+  if (b.overrides !== undefined) {
+    const o = b.overrides;
+    if (!o || typeof o !== 'object' || Array.isArray(o) || !Object.values(o).every((v) => typeof v === 'string')) {
+      throw new HttpError('invalid_request', 'Teléfonos elegidos inválidos');
+    }
+    out.overrides = o as Record<string, string>;
+  }
+  return out;
 }
