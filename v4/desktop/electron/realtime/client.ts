@@ -197,6 +197,26 @@ export class RealtimeClient {
   }
 
   /**
+   * Reconexión inmediata tras reanudar el equipo (harden-client-resume): el
+   * socket previo pudo morir sin cierre. Descarta las conexiones actuales,
+   * reinicia el backoff y abre una nueva.
+   */
+  reconnectNow(): void {
+    if (!this.running) return;
+    this.paused = false;
+    this.clearReconnect();
+    this.dispose(this.next, 1000, 'resume');
+    this.dispose(this.current, 1000, 'resume');
+    this.next = null;
+    this.current = null;
+    this.refreshing = false;
+    this.failures = 0;
+    this.rejected = false;
+    this.setActive(false);
+    void this.connect();
+  }
+
+  /**
    * Reconexión planeada (token nuevo o 110 min): abre otra conexión y cierra la
    * actual tras su `pong`. Sin `force`, solo si el token cambió.
    */

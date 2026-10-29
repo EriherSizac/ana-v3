@@ -1,9 +1,9 @@
 // File: main
 // Created: 2026-06-09
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
-import { app, BrowserWindow, ipcMain, Menu, Notification, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, Notification, powerMonitor, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { WaClient } from './whatsapp/client';
@@ -19,6 +19,12 @@ import { RemoteSettings, paceOf } from './settings/remoteSettings';
 import { BypassGuard, type AttemptState } from './update/bypass';
 import { RealtimeClient, type WsLike } from './realtime/client';
 import { createRealtimeWiring, realtimeConfig } from './realtime/wiring';
+import {
+  WA_PROBE_TIMEOUT_MS,
+  createClockJumpDetector,
+  createResumeCoordinator,
+  decideWaAction,
+} from './power/resume';
 import {
   createGuard,
   isAppUrl,
@@ -610,8 +616,42 @@ handle(
   },
 );
 
+// ---- Suspensión / reanudación del equipo (harden-client-resume) ----
+// Al despertar: token, canal realtime nuevo, poll y configuración inmediatos,
+// WhatsApp revisado (reinicializa conservando la sesión si no está CONNECTED)
+// y heartbeat. `resume`, `unlock-screen` y el salto de reloj se agrupan.
+const resumeCoordinator = createResumeCoordinator({
+  hasSession: () => activeOperator !== null && hasSession(),
+  refreshToken: () => broker.getFreshToken(),
+  reconnectRealtime: () => realtime?.reconnectNow(),
+  pollNow: () => poller.pollNow(),
+  settingsRefreshNow: () => remoteSettings.refreshNow(),
+  checkWhatsapp: async () => {
+    const probe = await wa.probe(WA_PROBE_TIMEOUT_MS);
+    const action = decideWaAction({ hasSession: hasSession(), lastStatus: wa.getState().status, probe });
+    console.log(`[resume] WhatsApp: estado ${probe} → ${action}`);
+    if (action !== 'restart') return;
+    // No cortar un envío en curso: espera a que termine (máx 60 s).
+    await poller.waitIdle(60_000);
+    await wa.restartKeepSession();
+  },
+  heartbeat: () => heartbeatIfConnected(),
+  log: (m) => console.log(m),
+});
+// Respaldo de powerMonitor: un hueco > 30 s entre ticks de 5 s = reanudación.
+const clockJump = createClockJumpDetector({
+  onJump: (gap) => {
+    console.log(`[resume] salto de reloj de ${Math.round(gap / 1000)} s`);
+    void resumeCoordinator.signal('clock-jump');
+  },
+});
+
 app.whenReady().then(() => {
   createWindow();
+  powerMonitor.on('suspend', () => resumeCoordinator.onSuspend());
+  powerMonitor.on('resume', () => void resumeCoordinator.signal('resume'));
+  powerMonitor.on('unlock-screen', () => void resumeCoordinator.signal('unlock-screen'));
+  clockJump.start();
   // La reconexión de WhatsApp ocurre tras el login (auth:set-token): la sesión
   // se restaura desde S3 con el token del operador, no antes.
   app.on('second-instance', () => {
@@ -623,6 +663,7 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', async () => {
+  clockJump.stop();
   poller.stop();
   realtime?.stop();
   await wa.stop();

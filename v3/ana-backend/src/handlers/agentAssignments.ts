@@ -1,7 +1,9 @@
 import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { forbidden, requireAgentToken, rosterReason, type AgentAuthEvent, type AgentAuthResponse } from '../lib/agentAuth';
 import { parseAssignmentCsv, serializeCsv } from '../lib/assignmentCsv';
-import { buildPublication, type BuiltPublication } from '../lib/publication';
+import { buildPublication, overridesBySource, parseRowKey, PHONE_MODES, type BuiltPublication, type PhoneMode } from '../lib/publication';
+
+export { overridesBySource, parseRowKey };
 import { parseCampaignParam } from '../lib/identifiers';
 import { bucketName, getText, putJson, s3 } from '../lib/s3Json';
 import { makeTimestampForKey } from './adminContacts';
@@ -79,28 +81,94 @@ const internal = (context: string, e: unknown): Result => {
 
 const fileNameOf = (key: string): string => key.split('/').pop() ?? key;
 
+// ── Antigüedad de los pendientes (asignaciones de más de 3 meses) ─────────
+export const MAX_SOURCE_AGE_DAYS = 90;
+export const MAX_SOURCE_AGE_MS = MAX_SOURCE_AGE_DAYS * 24 * 60 * 60 * 1000;
+export const STALE_MESSAGE = 'Asignación con más de 3 meses';
+/** Sufijo que escribe la carga (`makeTimestampForKey`): `-contacts-2026-10-26T10-00-00-000Z.csv`. */
+const KEY_TS_RE = /-contacts-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z\.csv$/;
+
+/** Fecha de carga del pendiente: la de la llave; si no la trae, `LastModified`. `null` si ninguna. */
+export function sourceTimestamp(key: string, lastModified?: Date | null): number | null {
+  const m = KEY_TS_RE.exec(key);
+  if (m) {
+    const [y, mo, d, h, mi, se, ms] = m.slice(1).map(Number) as [number, number, number, number, number, number, number];
+    const t = Date.UTC(y, mo - 1, d, h, mi, se, ms);
+    const back = new Date(t);
+    // Fecha imposible (p. ej. mes 13) → se ignora la llave.
+    if (back.getUTCMonth() === mo - 1 && back.getUTCDate() === d && h < 24 && mi < 60 && se < 60) return t;
+  }
+  return lastModified ? lastModified.getTime() : null;
+}
+
+/** ¿El pendiente tiene más de 90 días? Sin fecha conocida no se considera vencido. */
+export const isStaleSource = (key: string, lastModified?: Date | null, now: number = Date.now()): boolean => {
+  const t = sourceTimestamp(key, lastModified);
+  return t !== null && now - t > MAX_SOURCE_AGE_MS;
+};
+
+/** Filas válidas e ids de carga de un pendiente (tarjetas del paso 1). */
+function summarizeCsv(text: string): { rows: number; uploadIds: string[] } {
+  const p = parseAssignmentCsv(text);
+  const col = p.header.findIndex((h) => h.toLowerCase() === 'ana_upload_id');
+  const ids = new Set<string>();
+  let rows = 0;
+  for (const r of p.rows) {
+    if (!r.valid) continue;
+    rows++;
+    const id = col >= 0 ? (r.values[col] ?? '').trim() : '';
+    if (id) ids.add(id);
+  }
+  return { rows, uploadIds: [...ids] };
+}
+
 /** GET /agent/assignments/{campaign} */
 export const listAssignments = async (event: AgentEvent): Promise<Result | AgentAuthResponse> => {
   const a = await authorize(event, 'GET /agent/assignments');
   if (!a.ok) return a.response;
   try {
-    const items: Array<{ key: string; fileName: string; lastModified: string | null; size: number | null; etag: string | null }> = [];
+    const items: Array<{
+      key: string;
+      fileName: string;
+      lastModified: string | null;
+      uploadedAt: string | null;
+      size: number | null;
+      etag: string | null;
+      rows: number | null;
+      uploadIds: string[] | null;
+    }> = [];
+    const now = Date.now();
     let token: string | undefined;
     do {
       const res = await s3.send(new ListObjectsV2Command({ Bucket: bucketName(), Prefix: pendingPrefix(a.campaign, a.agent), ContinuationToken: token }));
       for (const o of res.Contents ?? []) {
         if (!isOwnPendingKey(o.Key, a.campaign, a.agent)) continue;
+        // Más de 3 meses: no se ofrece (y `/publish` lo rechaza).
+        if (isStaleSource(o.Key, o.LastModified, now)) continue;
+        const ts = sourceTimestamp(o.Key, o.LastModified);
         items.push({
           key: o.Key,
           fileName: fileNameOf(o.Key),
           lastModified: o.LastModified ? o.LastModified.toISOString() : null,
+          uploadedAt: ts === null ? null : new Date(ts).toISOString(),
           size: typeof o.Size === 'number' ? o.Size : null,
           etag: o.ETag ?? null,
+          rows: null,
+          uploadIds: null,
         });
       }
       token = res.IsTruncated ? res.NextContinuationToken : undefined;
     } while (token);
-    items.sort((x, y) => String(y.lastModified).localeCompare(String(x.lastModified)));
+    items.sort((x, y) => String(y.uploadedAt ?? y.lastModified).localeCompare(String(x.uploadedAt ?? x.lastModified)));
+    // Filas e ids de carga de los más recientes (hasta MAX_SOURCES); el resto queda en null.
+    for (const it of items.slice(0, MAX_SOURCES)) {
+      try {
+        const obj = await readPending(it.key);
+        if (obj) Object.assign(it, summarizeCsv(obj.text));
+      } catch {
+        // Demasiado grande o ilegible: se lista sin conteo.
+      }
+    }
     return ok({ campaign: a.campaign, agent: a.agent, items });
   } catch (e) {
     return internal('listAssignments', e);
@@ -151,7 +219,11 @@ export interface PublishRequest {
   publishId: string;
   template: string;
   phoneColumns: string[];
+  /** Ausente en el body → 'all' (clientes previos). */
+  phoneMode: PhoneMode;
   sources: PublishSource[];
+  /** Teléfono elegido por fila: `rowKey` = `<key de la fuente>#<índice de fila>`. */
+  overrides: Record<string, string>;
 }
 
 /** Valida forma y límites del body (sin propiedad de llaves). */
@@ -188,7 +260,25 @@ export function parsePublishBody(body: unknown): PublishRequest | { error: strin
   }
   if (total === 0) return { error: 'Selecciona al menos una fila' };
   if (total > MAX_ROWS) return { error: `Selecciona como máximo ${MAX_ROWS.toLocaleString('es-MX')} filas` };
-  return { publishId: b.publishId, template: b.template, phoneColumns, sources };
+  let phoneMode: PhoneMode = 'all';
+  if (b.phoneMode !== undefined) {
+    if (typeof b.phoneMode !== 'string' || !(PHONE_MODES as readonly string[]).includes(b.phoneMode)) return { error: 'Modo de teléfono inválido' };
+    phoneMode = b.phoneMode as PhoneMode;
+  }
+  const overrides: Record<string, string> = {};
+  if (b.overrides !== undefined) {
+    if (!b.overrides || typeof b.overrides !== 'object' || Array.isArray(b.overrides)) return { error: 'Teléfonos elegidos inválidos' };
+    const entries = Object.entries(b.overrides as Record<string, unknown>);
+    if (entries.length > total) return { error: 'Teléfonos elegidos inválidos' };
+    for (const [rowKey, phone] of entries) {
+      const rk = parseRowKey(rowKey);
+      if (!rk || typeof phone !== 'string' || !phone.trim() || phone.length > 32) return { error: 'Teléfonos elegidos inválidos' };
+      const src = sources.find((x) => x.key === rk.key);
+      if (!src || !src.rows.includes(rk.index)) return { error: `Teléfono elegido para una fila no seleccionada: ${rk.index + 1}` };
+      overrides[rowKey] = phone.trim();
+    }
+  }
+  return { publishId: b.publishId, template: b.template, phoneColumns, phoneMode, sources, overrides };
 }
 
 export interface PublicationManifest {
@@ -199,6 +289,7 @@ export interface PublicationManifest {
   publishedAt: string;
   template: string;
   phoneColumns: string[];
+  phoneMode?: PhoneMode;
   /** Contactos (filas) del archivo publicado. */
   contacts: number;
   /** Filas seleccionadas de las fuentes. */
@@ -265,6 +356,7 @@ export const publishAssignments = async (event: AgentEvent): Promise<Result | Ag
         throw e;
       }
       if (!obj || obj.etag !== s.etag) return fail(409, CHANGED_MESSAGE);
+      if (isStaleSource(s.key, obj.lastModified)) return fail(400, STALE_MESSAGE);
       originals.push({ key: s.key, text: obj.text, etag: obj.etag });
     }
     const parsed = originals.map((o) => parseAssignmentCsv(o.text));
@@ -277,6 +369,7 @@ export const publishAssignments = async (event: AgentEvent): Promise<Result | Ag
         req.sources.map((s) => s.rows),
         req.template,
         req.phoneColumns,
+        { phoneMode: req.phoneMode, overrides: overridesBySource(req) },
       );
     } catch (e) {
       const err = e as { status?: number; message?: string };
@@ -336,6 +429,7 @@ export const publishAssignments = async (event: AgentEvent): Promise<Result | Ag
       publishedAt: new Date().toISOString(),
       template: req.template,
       phoneColumns: req.phoneColumns,
+      phoneMode: req.phoneMode,
       contacts: built.rows.length,
       rows: req.sources.reduce((n, s) => n + s.rows.length, 0),
       key,

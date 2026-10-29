@@ -49,6 +49,9 @@ const parse = (r: { body: string }) => JSON.parse(r.body);
 const etag = (k: string) => s3.store.get(k)!.etag;
 
 beforeEach(() => {
+  // Reloj fijo: los pendientes de más de 90 días no se listan ni se publican.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-29T12:00:00Z'));
   s3mock.reset();
   process.env.BUCKET_NAME = 'ana-backend-storage-test';
   s3 = installCondS3(s3mock, {}, 2);
@@ -61,7 +64,10 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 const publishBody = (over: Record<string, unknown> = {}) => ({
   publishId: '20261026T120000-abcdef12',

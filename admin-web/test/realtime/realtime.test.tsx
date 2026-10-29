@@ -68,6 +68,7 @@ beforeEach(() => {
   sockets = [];
   resetNavigation();
   apiFetch.mockReset();
+  sessionStorage.clear(); // borrador del asistente "Mi asignación"
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -350,7 +351,7 @@ describe('secciones', () => {
     setPending([FILE]);
     render(inProvider(<MyAssignmentView />));
     await screen.findByTestId('pending-files');
-    await userEvent.click(screen.getByRole('button', { name: /Cargar seleccionados \(1\)/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Siguiente' }));
     await screen.findByTestId('contacts-table');
     await waitFor(() => expect(sockets).toHaveLength(1));
     act(() => last().confirm());

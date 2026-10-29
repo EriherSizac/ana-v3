@@ -69,12 +69,14 @@ export function createPollWaker() {
  * Espera hasta el siguiente poll. Resuelve `'woken'` (aviso) o `'timeout'`.
  * @param {{ isActive: () => boolean, waker: ReturnType<typeof createPollWaker>,
  *   onTick?: (remainingMs: number, active: boolean) => void|Promise<void>,
+ *   onBeat?: () => void,
  *   tickMs?: number, now?: () => number, setTimeoutImpl?: Function, clearTimeoutImpl?: Function }} o
  */
 export function waitForNextPoll({
   isActive,
   waker,
   onTick = () => {},
+  onBeat = () => {},
   tickMs = 1000,
   now = () => Date.now(),
   setTimeoutImpl = (fn, ms) => setTimeout(fn, ms),
@@ -112,6 +114,12 @@ export function waitForNextPoll({
     };
     const tick = () => {
       if (done) return;
+      // Latido síncrono del ciclo (harden-client-resume): no depende del widget.
+      try {
+        onBeat();
+      } catch {
+        /* el latido no debe romper la espera */
+      }
       const act = isActive();
       if (!act) endAt = Math.min(endAt, start + POLL_INTERVAL_MS);
       const remaining = endAt - now();

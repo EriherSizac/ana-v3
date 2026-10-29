@@ -6,6 +6,7 @@ import { renderTemplateDetailed } from './template';
 
 export * from './csv';
 export * from './template';
+export * from './table-filters';
 
 export interface PendingFile {
   key: string;
@@ -13,6 +14,11 @@ export interface PendingFile {
   lastModified: string | null;
   size: number | null;
   etag: string | null;
+  /** Fecha de carga (llave o LastModified) según v3. */
+  uploadedAt?: string | null;
+  /** Filas válidas e ids de carga (v3 los calcula para los más recientes). */
+  rows?: number | null;
+  uploadIds?: string[] | null;
 }
 
 export interface LoadedFile {
@@ -65,6 +71,28 @@ export function defaultPhoneColumn(header: readonly string[]): string | null {
   return header.find((h) => /tel|phone/i.test(h)) ?? null;
 }
 
+/** Columnas por omisión: `telefono_1..3` presentes (en ese orden) o la del CLI. */
+export function defaultPhoneColumns(header: readonly string[]): string[] {
+  const crm = ['telefono_1', 'telefono_2', 'telefono_3'].filter((c) => header.includes(c));
+  if (crm.length) return crm;
+  const def = defaultPhoneColumn(header);
+  return def ? [def] : [];
+}
+
+/** Agrega o quita columnas conservando el orden elegido (las nuevas van al final). */
+export function reorderSelection(current: readonly string[], next: readonly string[], max: number): string[] {
+  return [...current.filter((c) => next.includes(c)), ...next.filter((c) => !current.includes(c))].slice(0, max);
+}
+
+/** Mueve la columna `i` una posición (`-1` arriba, `1` abajo). */
+export function movePhoneColumn(cols: readonly string[], i: number, dir: -1 | 1): string[] {
+  const j = i + dir;
+  if (i < 0 || i >= cols.length || j < 0 || j >= cols.length) return [...cols];
+  const out = [...cols];
+  [out[i], out[j]] = [out[j]!, out[i]!];
+  return out;
+}
+
 export const digitsOf = (s: string): string => s.replace(/\D/g, '');
 
 /** Columnas de crédito del CLI (mismo orden que `v3/ana-backend/src/lib/publication.ts`). */
@@ -80,26 +108,92 @@ export function creditKeyOf(record: Readonly<Record<string, string>>): string {
 }
 
 /**
- * Teléfonos de cada fila seleccionada (≥ 10 dígitos, en orden), sin repetir
- * un teléfono para el mismo crédito ("Publicación por crédito"): créditos
- * distintos con el mismo teléfono reciben un mensaje cada uno; las filas sin
- * crédito no repiten teléfono entre ellas.
+ * Modo de teléfonos de la publicación (misma semántica que
+ * `v3/ana-backend/src/lib/publication.ts`):
+ * - `first`: un mensaje por crédito al primer teléfono válido en el orden de las columnas.
+ * - `all`: un mensaje por teléfono válido (sin repetir teléfono por crédito).
  */
-export function phonesFor(rows: readonly MergedRow[], phoneColumns: readonly string[]): Map<string, string[]> {
+export type PhoneMode = 'first' | 'all';
+
+export interface PhoneCandidate {
+  column: string;
+  phone: string;
+}
+
+/** Teléfonos válidos (≥ 10 dígitos) de la fila en el orden de las columnas, sin repetir dígitos. */
+export function phoneCandidates(record: Readonly<Record<string, string>>, phoneColumns: readonly string[]): PhoneCandidate[] {
+  const out: PhoneCandidate[] = [];
   const seen = new Set<string>();
+  for (const column of phoneColumns) {
+    const phone = record[column] ?? '';
+    const d = digitsOf(phone);
+    if (d.length < 10 || seen.has(d)) continue;
+    seen.add(d);
+    out.push({ column, phone });
+  }
+  return out;
+}
+
+/**
+ * Teléfonos de cada fila seleccionada según el modo y el teléfono elegido por
+ * fila (`overrides`, por `MergedRow.id`). Un teléfono no se repite para
+ * el mismo crédito; en `first` un crédito recibe un solo mensaje. Un override que no
+ * es uno de los teléfonos válidos de la fila se ignora (el backend lo rechaza).
+ */
+export function planPhones(
+  rows: readonly MergedRow[],
+  phoneColumns: readonly string[],
+  mode: PhoneMode,
+  overrides: ReadonlyMap<string, string> = new Map(),
+): Map<string, string[]> {
+  const seen = new Set<string>();
+  const credits = new Set<string>();
   const out = new Map<string, string[]>();
   for (const r of rows) {
-    const mine: string[] = [];
+    const candidates = phoneCandidates(r.record, phoneColumns);
     const credit = creditKeyOf(r.record);
-    for (const c of phoneColumns) {
-      const v = r.record[c] ?? '';
-      const d = digitsOf(v);
-      const key = `${credit}|${d}`;
-      if (d.length < 10 || seen.has(key)) continue;
-      seen.add(key);
-      mine.push(v);
+    const ov = overrides.get(r.id);
+    const match = ov !== undefined ? candidates.find((c) => digitsOf(c.phone) === digitsOf(ov)) : undefined;
+    const list = match ? [match] : candidates;
+    const keyOf = (c: PhoneCandidate) => credit + '|' + digitsOf(c.phone);
+    const mine: string[] = [];
+    if (mode === 'first') {
+      const pick = credit && credits.has(credit) ? undefined : list.find((c) => !seen.has(keyOf(c)));
+      if (pick) {
+        seen.add(keyOf(pick));
+        if (credit) credits.add(credit);
+        mine.push(pick.phone);
+      }
+    } else {
+      for (const c of list) {
+        if (seen.has(keyOf(c))) continue;
+        seen.add(keyOf(c));
+        mine.push(c.phone);
+      }
     }
     out.set(r.id, mine);
+  }
+  return out;
+}
+
+/** Modo `all` sin overrides (comportamiento previo). */
+export const phonesFor = (rows: readonly MergedRow[], phoneColumns: readonly string[]): Map<string, string[]> => planPhones(rows, phoneColumns, 'all');
+
+/** `rowKey` del publish: `<key del archivo>#<índice de fila>`. */
+export const rowKeyOf = (files: readonly LoadedFile[], r: MergedRow): string => (files[r.file]?.key ?? '') + '#' + r.index;
+
+/** `overrides` del publish: solo filas seleccionadas con un teléfono válido elegido. */
+export function publishOverrides(
+  files: readonly LoadedFile[],
+  selected: readonly MergedRow[],
+  phoneColumns: readonly string[],
+  overrides: ReadonlyMap<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of selected) {
+    const ov = overrides.get(r.id);
+    if (ov === undefined) continue;
+    if (phoneCandidates(r.record, phoneColumns).some((c) => digitsOf(c.phone) === digitsOf(ov))) out[rowKeyOf(files, r)] = ov;
   }
   return out;
 }

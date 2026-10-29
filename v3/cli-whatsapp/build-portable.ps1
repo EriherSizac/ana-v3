@@ -120,6 +120,7 @@ $filesToCopy = @(
     "remote-settings.js",
     "realtime.js",
     "poll-wait.js",
+    "liveness.js",
     "package.json",
     "package-lock.json"
 )
