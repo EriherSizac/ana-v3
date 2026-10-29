@@ -277,12 +277,26 @@ functions:
             name: cognitoAdminJwt
 
   # add-contact-upload-console
+  # support-crm-base-upload: las cargas grandes (hasta 50 MB / 200 000 filas)
+  # se leen de S3 y se reparten en memoria. HTTP API corta a 30 s, así que el
+  # timeout se queda en 29 s y se sube la memoria (más CPU).
   adminUploadContacts:
     handler: src/handlers/adminContacts.uploadContacts
     timeout: 29
+    memorySize: 1024
     events:
       - httpApi:
           path: /admin/campaigns/{campaign}/contacts
+          method: post
+          authorizer:
+            name: cognitoAdminJwt
+
+  # URL firmada (PUT, 15 min) para subir el CSV maestro a uploads-incoming/.
+  adminPresignContacts:
+    handler: src/handlers/adminContacts.presignContacts
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/contacts/presign
           method: post
           authorizer:
             name: cognitoAdminJwt
@@ -469,13 +483,29 @@ resources:
         NotificationConfiguration:
           EventBridgeConfiguration:
             EventBridgeEnabled: true
-        # Historial de envíos (add-agent-send-history D10): retención de 180 días.
+        # support-crm-base-upload: el navegador de ANA Admin sube el CSV maestro
+        # de una carga grande con la URL firmada (PUT directo, sin pasar por el BFF).
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - https://ana-admin.pernexium.com.mx
+              AllowedMethods:
+                - PUT
+              AllowedHeaders:
+                - content-type
+              MaxAge: 3600
         LifecycleConfiguration:
           Rules:
+            # Historial de envíos (add-agent-send-history D10): retención de 180 días.
             - Id: ExpireSendResults
               Status: Enabled
               Prefix: results/
               ExpirationInDays: 180
+            # CSV maestros que no se procesaron (carga cancelada o fallida).
+            - Id: expire-uploads-incoming
+              Status: Enabled
+              Prefix: uploads-incoming/
+              ExpirationInDays: 1
 
     # Reenvía, entre regiones, los cambios relevantes al bus realtime de v4
     # (us-east-2). Ningún handler v3 cambia; si la regla falla o se deshabilita,

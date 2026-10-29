@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowDown, ArrowUp, CheckCircle2, X } from 'lucide-react';
 import {
@@ -28,6 +28,10 @@ import {
   amountColumns,
   applyFilters,
   categoryColumns,
+  columnFilterActive,
+  columnFilterKind,
+  columnFilterPills,
+  columnValueCounts,
   defaultPhoneColumns,
   distinctValues,
   emptyFilters,
@@ -41,18 +45,24 @@ import {
   mergeFiles,
   movePhoneColumn,
   nextSort,
+  NO_CUSTOM_FIELD_WARNING,
   parseNumber,
   PHONE_ALIASES,
   phoneCandidates,
   planPhones,
   publishOverrides,
   publishSources,
+  removeColumnFilterPart,
   renderRow,
   reorderSelection,
   saveTableState,
+  setColumnFilter,
   sortRows,
+  suggestedFields,
+  templateHasCustomField,
   unknownMarkers,
   unknownMarkersError,
+  type ColumnFilter,
   type FilterState,
   type LoadedFile,
   type MergedRow,
@@ -71,6 +81,7 @@ import {
   type WizardStep,
 } from '@/lib/workspace/wizard';
 import { AssignmentFilesStep } from './AssignmentFilesStep';
+import { ColumnFilterButton, type ColumnFilterStats } from './ColumnFilterPopover';
 import { WizardNav, WizardStepper } from './WizardStepper';
 import { WizardSummary } from './WizardSummary';
 
@@ -166,6 +177,9 @@ export function MyAssignmentView() {
   const { filters, sort } = table;
   const setFilters = (fn: (f: FilterState) => FilterState) => setTable((t) => ({ ...t, filters: fn(t.filters) }));
   const setSearch = (search: string) => setFilters((f) => ({ ...f, search }));
+  // Columna con el popover de filtro abierto (sus valores se calculan solo entonces).
+  const [openFilter, setOpenFilter] = useState<string | null>(null);
+  const setColumn = (column: string, next: ColumnFilter | undefined) => setFilters((f) => ({ ...f, columns: setColumnFilter(f.columns, column, next) }));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [phoneColumns, setPhoneColumns] = useState<string[]>([]);
   const [phoneMode, setPhoneMode] = useState<PhoneMode>('first');
@@ -310,6 +324,7 @@ export function MyAssignmentView() {
     setPublished(null);
     setPublishError(null);
     setRangeColumn(null);
+    setOpenFilter(null);
     setTable(campaign ? { campaign, ...loadTableState(campaign) } : { campaign: null, filters: emptyFilters(), sort: null });
     if (!campaign) return;
     draftRef.current = loadDraft(campaign);
@@ -367,10 +382,30 @@ export function MyAssignmentView() {
   const activeRangeColumn = rangeColumn && amounts.includes(rangeColumn) ? rangeColumn : (amounts[0] ?? null);
   const filtersActive = isFilterActive(filters, merged.header);
 
+  // Diferido: escribir en un filtro no bloquea el input mientras se refiltran miles de filas.
+  const deferredFilters = useDeferredValue(filters);
   const filtered = useMemo(
-    () => sortRows(applyFilters(merged.rows, merged.header, filters), sort && merged.header.includes(sort.column) ? sort : null),
-    [merged, filters, sort],
+    () => sortRows(applyFilters(merged.rows, merged.header, deferredFilters), sort && merged.header.includes(sort.column) ? sort : null),
+    [merged, deferredFilters, sort],
   );
+
+  // Valores del popover abierto: filas que pasan los demás filtros (estilo Excel).
+  // La clave solo cambia con los demás filtros, no al marcar valores de esta columna.
+  const otherFiltersKey = useMemo(() => {
+    if (!openFilter) return '';
+    const columns = { ...filters.columns };
+    delete columns[openFilter];
+    return JSON.stringify({ ...filters, columns });
+  }, [filters, openFilter]);
+  const openStats = useMemo<ColumnFilterStats | null>(() => {
+    if (!openFilter || !merged.header.includes(openFilter)) return null;
+    const others = JSON.parse(otherFiltersKey) as FilterState;
+    const forceText = phoneColumns.includes(openFilter) || (PHONE_ALIASES as readonly string[]).includes(openFilter) || /tel|phone/i.test(openFilter);
+    return {
+      kind: columnFilterKind(merged.rows, openFilter, forceText),
+      counts: columnValueCounts(applyFilters(merged.rows, merged.header, others), openFilter),
+    };
+  }, [openFilter, otherFiltersKey, merged, phoneColumns]);
 
   const setRange = (column: string, bound: 'min' | 'max', value: string) =>
     setFilters((f) => ({ ...f, ranges: { ...f.ranges, [column]: { min: '', max: '', ...f.ranges[column], [bound]: value } } }));
@@ -397,6 +432,11 @@ export function MyAssignmentView() {
         const label = min !== null && max !== null ? `${c}: ${min} – ${max}` : min !== null ? `${c} ≥ ${min}` : `${c} ≤ ${max}`;
         return { key: `r:${c}`, label, onRemove: () => removeRange(c) };
       }),
+    ...columnFilterPills(filters.columns, merged.header, (c, v) => (isPhoneColumn(c) ? maskPhone(v) : v)).map((p) => ({
+      key: p.key,
+      label: p.label,
+      onRemove: () => setFilters((f) => ({ ...f, columns: removeColumnFilterPart(f.columns, p.column, p.part) })),
+    })),
   ];
 
   const selectedRows = useMemo(() => merged.rows.filter((r) => r.valid && selected.has(r.id)), [merged, selected]);
@@ -407,6 +447,12 @@ export function MyAssignmentView() {
     () => (template.trim() && files.length ? unknownMarkers(template, merged.header, selectedRows.length ? selectedRows : merged.rows.filter((r) => r.valid)) : []),
     [template, files.length, merged, selectedRows],
   );
+  // Aviso no bloqueante: plantilla sin ninguna variable que resuelva a una columna.
+  const noCustomField = useMemo(
+    () => !!template.trim() && files.length > 0 && !templateHasCustomField(template, merged.header, phoneColumns),
+    [template, files.length, merged.header, phoneColumns],
+  );
+  const suggestions = useMemo(() => suggestedFields(merged.header, phoneColumns), [merged.header, phoneColumns]);
 
   /** Teléfonos a los que se enviaría la fila (los de la publicación si está seleccionada). */
   const sendPhonesOf = (r: MergedRow): string[] => phones.get(r.id) ?? planPhones([r], phoneColumns, phoneMode, overrides).get(r.id) ?? [];
@@ -784,15 +830,27 @@ export function MyAssignmentView() {
                         <th className="w-10 px-3 py-2" />
                         {merged.header.map((h) => (
                           <th key={h} className="px-3 py-2" aria-sort={sort?.column === h ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
-                            <button
-                              type="button"
-                              className="flex items-center gap-1 uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary"
-                              onClick={() => setTable((t) => ({ ...t, sort: nextSort(t.sort, h) }))}
-                            >
-                              {h}
-                              {sort?.column === h &&
-                                (sort.dir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /> : <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />)}
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                className="flex items-center gap-1 uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary"
+                                onClick={() => setTable((t) => ({ ...t, sort: nextSort(t.sort, h) }))}
+                              >
+                                {h}
+                                {sort?.column === h &&
+                                  (sort.dir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /> : <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />)}
+                              </button>
+                              <ColumnFilterButton
+                                column={h}
+                                active={columnFilterActive(filters.columns[h])}
+                                open={openFilter === h}
+                                onOpenChange={(o) => setOpenFilter(o ? h : null)}
+                                filter={filters.columns[h]}
+                                onChange={(next) => setColumn(h, next)}
+                                stats={openFilter === h ? openStats : null}
+                                formatValue={isPhoneColumn(h) ? maskPhone : undefined}
+                              />
+                            </div>
                           </th>
                         ))}
                         <th className="px-3 py-2">Teléfono a enviar</th>
@@ -865,6 +923,23 @@ export function MyAssignmentView() {
                       </span>
                     </div>
                     {markers.length > 0 && <InlineMessage className="mt-2">{unknownMarkersError(markers)}</InlineMessage>}
+                    {noCustomField && (
+                      <div className="mt-2" data-testid="no-custom-field-warning">
+                        <InlineMessage kind="warning">
+                          <p>{NO_CUSTOM_FIELD_WARNING}</p>
+                          {suggestions.length > 0 && (
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className="text-xs text-text-light">Insertar:</span>
+                              {suggestions.map((c) => (
+                                <Button key={c} variant="outline" size="sm" className="font-mono" aria-label={`Insertar {{${c}}}`} onClick={() => insertVariable(c)}>
+                                  {`{{${c}}}`}
+                                </Button>
+                              ))}
+                            </div>
+                          )}
+                        </InlineMessage>
+                      </div>
+                    )}
                   </div>
                   <div className="lg:col-span-2">
                     <h3 className="text-sm font-semibold">Vista previa</h3>
@@ -896,6 +971,11 @@ export function MyAssignmentView() {
                   summary={summary}
                   samples={samples}
                 />
+                {noCustomField && (
+                  <div className="mt-4" data-testid="summary-no-custom-field">
+                    <InlineMessage kind="warning">{NO_CUSTOM_FIELD_WARNING}</InlineMessage>
+                  </div>
+                )}
                 {publishError && <InlineMessage className="mt-4">{publishError}</InlineMessage>}
                 <WizardNav step={4} block={publishBlock} loading={publishing} onBack={() => setStep(3)} onNext={() => setConfirmOpen(true)} nextLabel="Enviar" />
               </>
@@ -957,11 +1037,16 @@ export function MyAssignmentView() {
           open={confirmOpen}
           title="Enviar asignación"
           description={`${campaign} · ${selectedRows.length} fila(s) · ${contactCount} mensaje(s). Tu CLI enviará el mensaje por WhatsApp en su siguiente consulta.`}
-          confirmLabel="Enviar"
+          confirmLabel={noCustomField ? 'Enviar de todos modos' : 'Enviar'}
           loading={publishing}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={publish}
         >
+          {noCustomField && (
+            <InlineMessage kind="warning" className="mb-3">
+              Todos los contactos recibirán exactamente el mismo mensaje: tu plantilla no tiene ningún campo personalizado.
+            </InlineMessage>
+          )}
           {samples[0] && <p className="whitespace-pre-wrap rounded-xl bg-neutral-30 p-3 text-sm text-text-muted">{samples[0].text}</p>}
         </ConfirmDialog>
       )}

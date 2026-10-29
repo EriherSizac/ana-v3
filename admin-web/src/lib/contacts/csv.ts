@@ -1,4 +1,5 @@
 import Papa from 'papaparse';
+import { convertExcelRow, excelDateColumns } from './excelDates';
 
 // Lectura y validación de CSV de contactos (isomórfico: navegador y BFF).
 // add-contact-upload-console D1/D2 y spec admin-web/contact-upload.
@@ -6,9 +7,20 @@ import Papa from 'papaparse';
 export type Fleet = 'v3' | 'v4';
 
 export const LIMITS: Record<Fleet, { maxBytes: number; maxRows: number; label: string }> = {
-  v3: { maxBytes: 4 * 1024 * 1024, maxRows: 20_000, label: '4 MB' },
+  // support-crm-base-upload "Carga v3 grande por S3": hasta 4 MB viaja en la
+  // solicitud; de 4 a 50 MB el CSV maestro se sube a S3 con URL firmada.
+  v3: { maxBytes: 50 * 1024 * 1024, maxRows: 200_000, label: '50 MB' },
+  // v4: el trigger CSV procesa hasta 50 000 filas; el BFF sube hasta 10 MB.
   v4: { maxBytes: 10 * 1024 * 1024, maxRows: 50_000, label: '10 MB' },
 };
+
+/** v3: tamaño máximo (UTF-8) que viaja dentro de la solicitud; arriba se usa S3. */
+export const V3_INLINE_MAX_BYTES = 4 * 1024 * 1024;
+
+/** Progreso de lectura, validación o reparto (filas procesadas de `total`). */
+export type ProgressFn = (done: number, total: number) => void;
+/** Cada cuántas filas se reporta progreso. */
+export const PROGRESS_EVERY = 2_000;
 
 /** Alias de teléfono que entiende el parser del CLI v3. */
 export const V3_PHONE_COLUMNS = ['phone_number', 'contact_phone', 'contact_pho', 'phone'] as const;
@@ -42,6 +54,8 @@ export interface ParsedCsv {
   renamed: string[];
   /** Campos con saltos de línea que se unieron en una línea. */
   joinedFields: number;
+  /** Números de serie de Excel convertidos a fecha u hora (support-crm-base-upload "Fechas de Excel"). */
+  convertedDates: number;
 }
 
 export const stripBom = (text: string): string => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
@@ -108,7 +122,7 @@ function dedupeHeader(header: string[]): { header: string[]; renamed: string[] }
  * salta filas vacías, une saltos de línea dentro de campos y recorta cada
  * campo (mismas reglas que `csv-parse` con `trim` + `skip_empty_lines` de v4).
  */
-export function parseCsvText(text: string, fleet: Fleet): ParsedCsv | { error: string } {
+export function parseCsvText(text: string, fleet: Fleet, onProgress?: ProgressFn): ParsedCsv | { error: string } {
   const clean = stripBom(text);
   if (!clean.trim()) return { error: 'El archivo está vacío' };
   const delimiter = detectDelimiter(clean);
@@ -118,19 +132,27 @@ export function parseCsvText(text: string, fleet: Fleet): ParsedCsv | { error: s
   const rawHeader = (data[0] ?? []).map((h) => joinLines(h));
   if (rawHeader.length === 0 || rawHeader.every((h) => !h)) return { error: 'El archivo no tiene encabezado' };
   const { header, renamed } = dedupeHeader(rawHeader);
-  let joinedFields = 0;
-  const rows: RawRow[] = data.slice(1).map((values, i) => ({
-    rowNumber: i + 2,
-    values: values.map((v) => {
-      if (/[\r\n]/.test(v.trim())) joinedFields++;
-      return joinLines(v);
-    }),
-  }));
-  if (rows.length === 0) return { error: 'El archivo no tiene filas de contactos' };
-  if (rows.length > LIMITS[fleet].maxRows) {
+  const total = data.length - 1;
+  if (total <= 0) return { error: 'El archivo no tiene filas de contactos' };
+  if (total > LIMITS[fleet].maxRows) {
     return { error: `El archivo supera ${LIMITS[fleet].maxRows.toLocaleString('es-MX')} filas para ${fleet}` };
   }
-  return { header, rows, delimiter, renamed, joinedFields };
+  let joinedFields = 0;
+  let convertedDates = 0;
+  const dateCols = excelDateColumns(header);
+  const rows: RawRow[] = new Array<RawRow>(total);
+  for (let i = 0; i < total; i++) {
+    const values = data[i + 1]!.map((v) => {
+      if (/[\r\n]/.test(v.trim())) joinedFields++;
+      return joinLines(v);
+    });
+    // Números de serie de Excel en columnas de fecha/hora → dd/mm/yyyy, HH:MM:SS.
+    if (dateCols.length) convertedDates += convertExcelRow(header, values, dateCols);
+    rows[i] = { rowNumber: i + 2, values };
+    if (onProgress && (i + 1) % PROGRESS_EVERY === 0) onProgress(i + 1, total);
+  }
+  onProgress?.(total, total);
+  return { header, rows, delimiter, renamed, joinedFields, convertedDates };
 }
 
 /**
@@ -198,7 +220,29 @@ export interface ValidRow {
   values: string[];
   phone: string;
   digits: string;
-  record: Record<string, string>;
+  /** Columna → valor; se arma al leerla (200 000 filas × 76 columnas no caben como objetos). */
+  readonly record: Record<string, string>;
+}
+
+class LazyRow implements ValidRow {
+  #record: Record<string, string> | undefined;
+  constructor(
+    private readonly header: readonly string[],
+    public rowNumber: number,
+    public values: string[],
+    public phone: string,
+    public digits: string,
+  ) {}
+  get record(): Record<string, string> {
+    if (!this.#record) {
+      const r: Record<string, string> = {};
+      this.header.forEach((h, i) => {
+        r[h] = this.values[i] ?? '';
+      });
+      this.#record = r;
+    }
+    return this.#record;
+  }
 }
 
 export interface Validation {
@@ -215,14 +259,23 @@ export interface Validation {
  * distintos es válido); sin crédito, por teléfono solo entre filas sin
  * crédito. Solo las válidas se entregan.
  */
-export function validateRows(parsed: ParsedCsv, fleet: Fleet, phoneColumn: string, candidates?: readonly string[]): Validation {
+export function validateRows(
+  parsed: ParsedCsv,
+  fleet: Fleet,
+  phoneColumn: string,
+  candidates?: readonly string[],
+  onProgress?: ProgressFn,
+): Validation {
   const cols = (candidates ?? phoneCandidates(parsed.header, fleet, phoneColumn)).map((c) => parsed.header.indexOf(c)).filter((i) => i >= 0);
   const creditCols = CREDIT_COLUMNS.map((c) => parsed.header.indexOf(c)).filter((i) => i >= 0);
   const seenCredits = new Set<string>();
   const seenPhones = new Set<string>();
   const valid: ValidRow[] = [];
   const invalid: Validation['invalid'] = [];
-  for (const row of parsed.rows) {
+  const total = parsed.rows.length;
+  for (let n = 0; n < total; n++) {
+    const row = parsed.rows[n]!;
+    if (onProgress && n > 0 && n % PROGRESS_EVERY === 0) onProgress(n, total);
     let reason: InvalidReason | null = null;
     if (row.values.length < parsed.header.length) reason = 'Columnas incompletas';
     // csv-parse (v4) rechaza el archivo completo con columnas de más.
@@ -243,12 +296,9 @@ export function validateRows(parsed: ParsedCsv, fleet: Fleet, phoneColumn: strin
     }
     if (credit) seenCredits.add(credit);
     else seenPhones.add(digits);
-    const record: Record<string, string> = {};
-    parsed.header.forEach((h, i) => {
-      record[h] = row.values[i] ?? '';
-    });
-    valid.push({ rowNumber: row.rowNumber, values: row.values, phone, digits, record });
+    valid.push(new LazyRow(parsed.header, row.rowNumber, row.values, phone, digits));
   }
+  onProgress?.(total, total);
   return { total: parsed.rows.length, valid, invalid };
 }
 

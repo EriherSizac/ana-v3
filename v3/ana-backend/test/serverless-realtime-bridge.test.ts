@@ -13,15 +13,19 @@ const file = join(__dirname, '..', 'serverless.yml');
 const cfg = parse(readFileSync(file, 'utf8'));
 
 describe('serverless.yml: puente realtime', () => {
-  it('StorageBucket solo agrega EventBridgeConfiguration y la retención de results/', () => {
-    expect(cfg.resources.Resources.StorageBucket).toEqual({
+  it('StorageBucket solo agrega EventBridge, retención de results/ y CORS/ciclo de vida de support-crm-base-upload', () => {
+    const { CorsConfiguration: _cors, ...props } = cfg.resources.Resources.StorageBucket.Properties;
+    expect({ ...cfg.resources.Resources.StorageBucket, Properties: props }).toEqual({
       Type: 'AWS::S3::Bucket',
       Properties: {
         BucketName: '${self:service}-storage-${sls:stage}',
         NotificationConfiguration: { EventBridgeConfiguration: { EventBridgeEnabled: true } },
         // add-agent-send-history D10: retención de resultados.
         LifecycleConfiguration: {
-          Rules: [{ Id: 'ExpireSendResults', Status: 'Enabled', Prefix: 'results/', ExpirationInDays: 180 }],
+          Rules: [
+            { Id: 'ExpireSendResults', Status: 'Enabled', Prefix: 'results/', ExpirationInDays: 180 },
+            { Id: 'expire-uploads-incoming', Status: 'Enabled', Prefix: 'uploads-incoming/', ExpirationInDays: 1 },
+          ],
         },
       },
     });
@@ -66,10 +70,12 @@ describe('serverless.yml: puente realtime', () => {
     } catch {
       return; // sin git/rama base disponible: se omite la comparación
     }
-    // Funciones nuevas (add-agent-send-history) y variables de entorno nuevas
+    // Funciones nuevas (add-agent-send-history, presign de support-crm-base-upload),
+    // memoria de adminUploadContacts y variables de entorno nuevas
     // (crm-interactions-agent-identity) no cuentan; lo existente no cambia.
+    const withoutMem = (f: any) => { const { memorySize: _mem, ...rest } = f ?? {}; return rest; };
     const baseFns = parse(base).functions as Record<string, unknown>;
-    for (const [name, fn] of Object.entries(baseFns)) expect(cfg.functions[name], name).toEqual(fn);
+    for (const [name, fn] of Object.entries(baseFns)) expect(withoutMem(cfg.functions[name]), name).toEqual(withoutMem(fn));
     const ADDED_ENV = ['ROLES_API_BASE', 'ROLES_API_KEY'];
     const withoutAdded = (p: any) => ({
       ...p,

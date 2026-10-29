@@ -1,8 +1,10 @@
-import { DeleteObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { requireAdminAccess } from '../lib/adminAccess';
 import { adminError, adminInternal, adminOk, parseJsonBody, type AdminEvent, type AdminResult } from '../lib/adminHttp';
 import { duplicateCredit, headerColumns, isPhoneColumnName, singleLineRows, stripBom } from '../lib/contactsCsv';
 import { parseCampaignParam, parseUsername } from '../lib/identifiers';
+import { convertDateRows, incomingKey, MAX_SOURCE_BYTES, splitMaster } from '../lib/contactsSource';
 import { getEnabledAgents, RosterError } from '../lib/roster';
 import { bucketName, getText, putJson, s3 } from '../lib/s3Json';
 
@@ -71,7 +73,8 @@ export function appendUploadIdColumn(csv: string, uploadId: string): string {
  */
 export function normalizeRows(csv: string): { csv: string; contactCount: number } {
   // Filas lógicas: saltos de línea dentro de comillas → espacio (support-crm-base-upload).
-  const out = singleLineRows(csv);
+  // Números de serie de Excel en columnas de fecha → dd/mm/yyyy (support-crm-base-upload "Fechas de Excel").
+  const out = convertDateRows(singleLineRows(csv));
   if (out.length === 0) out.push('');
   return { csv: out.join('\n') + '\n', contactCount: out.length - 1 };
 }
@@ -118,6 +121,29 @@ interface ParsedUpload {
   mode: 'distribute' | 'single';
   files: Array<{ agent: string; csv: string }>;
   source?: ReviewSource;
+  /** Carga grande (support-crm-base-upload): CSV maestro en S3 y plan a verificar. */
+  sourceKey?: string;
+  plan?: { agents: string[]; counts: Record<string, number>; hash: string };
+}
+
+/** Plan del body de una carga por S3: agentes en orden, conteos y hash. */
+function parsePlan(raw: unknown): NonNullable<ParsedUpload['plan']> | { error: string } {
+  const p = raw as { agents?: unknown; counts?: unknown; hash?: unknown } | null;
+  if (!p || typeof p !== 'object' || !Array.isArray(p.agents) || p.agents.length === 0 || p.agents.length > MAX_FILES) return { error: 'plan inválido' };
+  const agents: string[] = [];
+  for (const a of p.agents) {
+    const u = parseUsername(a);
+    if (!u || agents.includes(u)) return { error: 'plan.agents inválido' };
+    agents.push(u);
+  }
+  if (typeof p.hash !== 'string' || !/^[0-9a-f]{64}$/.test(p.hash)) return { error: 'plan.hash inválido' };
+  if (!p.counts || typeof p.counts !== 'object' || Array.isArray(p.counts)) return { error: 'plan.counts inválido' };
+  const counts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(p.counts as Record<string, unknown>)) {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) return { error: 'plan.counts inválido' };
+    counts[k] = v;
+  }
+  return { agents, counts, hash: p.hash };
 }
 
 /** Valida el body de la carga. Devuelve los datos o el mensaje de error (400). */
@@ -128,6 +154,22 @@ export function parseUploadBody(body: unknown): ParsedUpload | { error: string }
   if (typeof b.fileName !== 'string' || !b.fileName.trim() || b.fileName.length > 255) return { error: 'fileName inválido' };
   if (b.mode !== 'distribute' && b.mode !== 'single') return { error: 'mode inválido' };
   // `message` se ignora (clientes anteriores lo enviaban): el agente escribe el mensaje.
+  let source: ReviewSource | undefined;
+  if (b.source !== undefined && b.source !== null) {
+    const parsedSource = parseSource(b.source);
+    if ('error' in parsedSource) return { error: parsedSource.error };
+    if (b.mode !== 'single') return { error: 'source requiere mode single' };
+    source = parsedSource;
+  }
+  if (b.sourceKey !== undefined) {
+    // Carga grande: los archivos por agente salen del CSV maestro en S3.
+    if (typeof b.sourceKey !== 'string' || !b.sourceKey) return { error: 'sourceKey inválido' };
+    if (b.files !== undefined) return { error: 'files y sourceKey son excluyentes' };
+    const plan = parsePlan(b.plan);
+    if ('error' in plan) return { error: plan.error };
+    if (b.mode === 'single' && plan.agents.length !== 1) return { error: 'plan.agents inválido' };
+    return { uploadId: b.uploadId, fileName: b.fileName.trim(), mode: b.mode, files: [], sourceKey: b.sourceKey, plan, ...(source ? { source } : {}) };
+  }
   if (!Array.isArray(b.files) || b.files.length === 0) return { error: 'files debe tener al menos un archivo' };
   if (b.files.length > MAX_FILES) return { error: `files admite como máximo ${MAX_FILES} archivos` };
   const seen = new Set<string>();
@@ -141,13 +183,6 @@ export function parseUploadBody(body: unknown): ParsedUpload | { error: string }
     if (seen.has(agent)) return { error: `Agente repetido: ${agent}` };
     seen.add(agent);
     files.push({ agent, csv: stripBom(csv) });
-  }
-  let source: ReviewSource | undefined;
-  if (b.source !== undefined && b.source !== null) {
-    const parsedSource = parseSource(b.source);
-    if ('error' in parsedSource) return { error: parsedSource.error };
-    if (b.mode !== 'single') return { error: 'source requiere mode single' };
-    source = parsedSource;
   }
   return {
     uploadId: b.uploadId,
@@ -194,8 +229,12 @@ export const uploadContacts = async (event: AdminEvent): Promise<AdminResult> =>
   if (body === undefined) return adminError(400, 'Body inválido');
   const parsed = parseUploadBody(body);
   if ('error' in parsed) return adminError(400, parsed.error);
-  const invalid = validateFiles(parsed);
-  if (invalid) return adminError(400, invalid);
+  if (parsed.sourceKey !== undefined) {
+    if (parsed.sourceKey !== incomingKey(campaign, parsed.uploadId)) return adminError(400, 'sourceKey no corresponde a la carga');
+  } else {
+    const invalid = validateFiles(parsed);
+    if (invalid) return adminError(400, invalid);
+  }
 
   const ctx = { evt: 'admin_contacts_upload', campaign, uploadId: parsed.uploadId, by: auth.username };
   try {
@@ -215,6 +254,11 @@ export const uploadContacts = async (event: AdminEvent): Promise<AdminResult> =>
         return adminError(500, 'Roster ilegible');
       }
       throw e;
+    }
+    if (parsed.sourceKey !== undefined) {
+      const loaded = await loadFromSource(parsed, ctx);
+      if ('response' in loaded) return loaded.response;
+      parsed.files = loaded.files;
     }
     const notEnabled = parsed.files.map((f) => f.agent).filter((a) => !enabled.includes(a));
     if (notEnabled.length > 0) return adminError(409, 'Agentes no habilitados', { agents: notEnabled });
@@ -277,10 +321,88 @@ export const uploadContacts = async (event: AdminEvent): Promise<AdminResult> =>
     }
 
     await putJson(manifestKey(campaign, parsed.uploadId), manifest);
-    console.log(JSON.stringify({ ...ctx, status: 'completed', files: perAgent.length, totalRows: manifest.totalRows }));
+    if (parsed.sourceKey !== undefined) {
+      // El CSV maestro ya no se necesita (la regla de ciclo de vida limpia los que queden).
+      try {
+        await s3.send(new DeleteObjectCommand({ Bucket: bucketName(), Key: parsed.sourceKey }));
+      } catch {
+        console.error(JSON.stringify({ ...ctx, status: 'incoming_not_deleted' }));
+      }
+    }
+    console.log(JSON.stringify({ ...ctx, status: 'completed', files: perAgent.length, totalRows: manifest.totalRows, viaS3: parsed.sourceKey !== undefined }));
     return adminOk(manifest);
   } catch (e) {
     return adminInternal('uploadContacts', e);
+  }
+};
+
+const isNotFound = (e: unknown): boolean => {
+  const err = e as { name?: string; $metadata?: { httpStatusCode?: number } } | null;
+  return err?.name === 'NoSuchKey' || err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404;
+};
+
+/**
+ * Lee el CSV maestro de `uploads-incoming/`, lo reparte según el plan y aplica
+ * las mismas validaciones que la carga en línea. El plan (conteos y hash) debe
+ * coincidir con el archivo; si no, 409 (la vista previa ya no corresponde).
+ */
+async function loadFromSource(parsed: ParsedUpload, ctx: Record<string, unknown>): Promise<{ files: ParsedUpload['files'] } | { response: AdminResult }> {
+  const plan = parsed.plan!;
+  let text: string;
+  try {
+    const out = await s3.send(new GetObjectCommand({ Bucket: bucketName(), Key: parsed.sourceKey! }));
+    if ((out.ContentLength ?? 0) > MAX_SOURCE_BYTES) return { response: adminError(413, 'Archivo demasiado grande') };
+    text = stripBom((await out.Body?.transformToString('utf-8')) ?? '');
+  } catch (e) {
+    if (isNotFound(e)) return { response: adminError(400, 'No se encontró el archivo subido; vuelve a cargarlo') };
+    throw e;
+  }
+  if (Buffer.byteLength(text, 'utf8') > MAX_SOURCE_BYTES) return { response: adminError(413, 'Archivo demasiado grande') };
+  const split = splitMaster(text, plan.agents, parsed.mode);
+  if ('error' in split) return { response: adminError(400, split.error) };
+  const files = split.files;
+  const invalid = validateFiles({ files });
+  if (invalid) return { response: adminError(400, invalid) };
+  const expected = Object.entries(plan.counts).filter(([, n]) => n > 0);
+  const actual = Object.entries(split.counts).filter(([, n]) => n > 0);
+  const sameCounts = expected.length === actual.length && actual.every(([a, n]) => plan.counts[a] === n);
+  if (!sameCounts || split.hash !== plan.hash) {
+    console.error(JSON.stringify({ ...ctx, status: 'plan_mismatch', rows: split.rows }));
+    return { response: adminError(409, 'El plan no coincide con el archivo') };
+  }
+  return { files };
+}
+
+/**
+ * POST /admin/campaigns/{campaign}/contacts/presign — URL firmada (PUT, 15 min)
+ * para subir el CSV maestro de una carga grande a
+ * `uploads-incoming/{campaign}/{uploadId}.csv`. El tamaño declarado se firma
+ * (Content-Length) y no puede superar 50 MB.
+ */
+export const PRESIGN_TTL_SECONDS = 900;
+
+export const presignContacts = async (event: AdminEvent): Promise<AdminResult> => {
+  const campaign = parseCampaignParam(event.pathParameters?.campaign);
+  if (!campaign) return adminError(400, 'Campaña inválida');
+  const auth = await requireAdminAccess(event, { permissions: [CONTACTS_UPLOAD, CONTACTS_DISTRIBUTE], campaign });
+  if (!auth.ok) return auth.response;
+  const body = parseJsonBody(event) as { uploadId?: unknown; bytes?: unknown } | undefined;
+  if (!body || typeof body !== 'object') return adminError(400, 'Body inválido');
+  if (typeof body.uploadId !== 'string' || !UPLOAD_ID_RE.test(body.uploadId)) return adminError(400, 'uploadId inválido');
+  const bytes = body.bytes;
+  if (typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes <= 0) return adminError(400, 'bytes inválido');
+  if (bytes > MAX_SOURCE_BYTES) return adminError(413, 'El archivo supera 50 MB para v3');
+  try {
+    const sourceKey = incomingKey(campaign, body.uploadId);
+    const url = await getSignedUrl(
+      s3,
+      new PutObjectCommand({ Bucket: bucketName(), Key: sourceKey, ContentType: 'text/csv', ContentLength: bytes }),
+      { expiresIn: PRESIGN_TTL_SECONDS, signableHeaders: new Set(['content-type', 'content-length']) },
+    );
+    console.log(JSON.stringify({ evt: 'admin_contacts_presign', campaign, uploadId: body.uploadId, by: auth.username, bytes }));
+    return adminOk({ uploadId: body.uploadId, sourceKey, url, expiresIn: PRESIGN_TTL_SECONDS, headers: { 'Content-Type': 'text/csv' }, maxBytes: MAX_SOURCE_BYTES });
+  } catch (e) {
+    return adminInternal('presignContacts', e);
   }
 };
 

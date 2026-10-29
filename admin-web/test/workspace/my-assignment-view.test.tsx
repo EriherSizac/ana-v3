@@ -364,7 +364,7 @@ describe('/mi-asignacion', () => {
       },
     });
     await loadAll();
-    await writeMessage('Hola');
+    await writeMessage('Hola {{{{first_name}}');
     await next();
     await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Enviar' }));
@@ -382,7 +382,7 @@ describe('/mi-asignacion', () => {
       },
     });
     await loadAll();
-    await writeMessage('Hola');
+    await writeMessage('Hola {{{{first_name}}');
     await next();
     await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Enviar' }));
@@ -398,7 +398,7 @@ describe('/mi-asignacion', () => {
       },
     });
     await loadAll();
-    await writeMessage('Hola');
+    await writeMessage('Hola {{{{first_name}}');
     await next();
     await userEvent.click(screen.getByRole('button', { name: 'Enviar' }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Enviar' }));

@@ -2,6 +2,8 @@
 // Mismo algoritmo que `v3/ana-backend/src/lib/assignmentCsv.ts` (el backend
 // vuelve a parsear al publicar); pruebas de equivalencia en test/workspace.
 
+import { convertExcelRow, excelDateColumns } from '../contacts/excelDates';
+
 export const FIELD_MAPPING: Readonly<Record<string, string>> = {
   phone_number: 'phone',
   contact_phone: 'phone',
@@ -87,10 +89,13 @@ export function parseAssignmentCsv(text: string): ParsedAssignment {
   const lines = splitCsvRows(clean.trim());
   if (lines.length === 0) return { header: [], rows: [] };
   const header = parseCsvLine(lines[0]!);
+  // Cargas anteriores con números de serie de Excel en columnas de fecha: se muestran como fecha.
+  const dateCols = excelDateColumns(header);
   return {
     header,
     rows: lines.slice(1).map((raw, index) => {
       const values = parseCsvLine(raw);
+      if (dateCols.length) convertExcelRow(header, values, dateCols);
       return { index, values, valid: values.length >= header.length };
     }),
   };

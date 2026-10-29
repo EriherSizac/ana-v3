@@ -1,6 +1,6 @@
 import { PERMISSIONS } from '@/lib/access';
 import { withAccess } from '@/server/access/withAccess';
-import { deliverV3, deliverV4, newUploadId, parseUploadRequest, verifyPlan } from '@/server/contacts/delivery';
+import { deliverV3, deliverV3Large, deliverV4, newUploadId, parseUploadRequest, verifyLargePlan, verifyPlan } from '@/server/contacts/delivery';
 import { v3History, v4History } from '@/server/contacts/history';
 import { HttpError, jsonResponse } from '@/server/errors';
 
@@ -31,6 +31,20 @@ export const POST = withAccess<{ campaign: string }>(
       throw new HttpError('invalid_request', 'Solicitud inválida');
     }
     const upload = parseUploadRequest(body);
+    if (upload.large) {
+      // Carga v3 grande (support-crm-base-upload): el CSV maestro ya está en S3.
+      const { rows, agents } = await verifyLargePlan(upload, identity.token, campaign);
+      const uploadId = upload.large.uploadId;
+      const log = { evt: 'contacts_upload', campaign, fleet: 'v3', by: identity.username, rows, agents: agents.length, uploadId, viaS3: true };
+      try {
+        const manifest = await deliverV3Large(upload, identity.token, campaign);
+        console.log(JSON.stringify({ ...log, status: manifest.status }));
+        return jsonResponse({ fleet: 'v3', status: 'completed', uploadId, manifest });
+      } catch (e) {
+        console.error(JSON.stringify({ ...log, status: 'failed', code: e instanceof HttpError ? e.code : 'internal' }));
+        throw e;
+      }
+    }
     const names = { v3: campaign, v4: campaignRaw };
     const verified = await verifyPlan(upload, identity.token, names);
     const log = { evt: 'contacts_upload', campaign, fleet: upload.fleet, by: identity.username, rows: verified.valid.length, agents: verified.plan.agents.length };

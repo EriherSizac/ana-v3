@@ -5,6 +5,8 @@
  * reescribir los pendientes sin re-serializar (add-agent-workspace D3).
  */
 
+import { convertExcelRow, excelDateColumns } from './excelDates';
+
 /** Mapeo de columnas del CLI (`FIELD_MAPPING` de assignment-csv.js). */
 export const FIELD_MAPPING: Readonly<Record<string, string>> = {
   phone_number: 'phone',
@@ -101,8 +103,12 @@ export function parseAssignmentCsv(text: string): ParsedAssignment {
   const lines = splitCsvRows(stripBom(String(text ?? '')).trim());
   if (lines.length === 0) return { header: [], headerRaw: '', rows: [] };
   const header = parseCsvLine(lines[0]!);
+  // Números de serie de Excel en columnas de fecha (cargas anteriores): se
+  // muestran y renderizan como fecha; `raw` conserva el texto original.
+  const dateCols = excelDateColumns(header);
   const rows = lines.slice(1).map((raw, index) => {
     const values = parseCsvLine(raw);
+    if (dateCols.length) convertExcelRow(header, values, dateCols);
     return { index, raw, values, valid: values.length >= header.length };
   });
   return { header, headerRaw: lines[0]!, rows };
