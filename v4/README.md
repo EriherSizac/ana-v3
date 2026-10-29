@@ -77,11 +77,21 @@ cd desktop
 npm run publish   # build + electron-builder --win --publish always (sube .exe + latest.yml a S3)
 ```
 
+### Aviso en vivo de versión nueva (una vez por bucket)
+La regla `AnaDesktopReleaseRule` (stack v4, bus por defecto de us-east-2) avisa `release.available` a las apps conectadas cuando se crea `updates/latest.yml`. El bucket no está en IaC: hay que habilitarle las notificaciones a EventBridge **una vez** (revisa antes que no tenga otras notificaciones, porque el comando reemplaza la configuración):
+```bash
+aws s3api get-bucket-notification-configuration --bucket ana-desktop-updates --profile pernexium
+aws s3api put-bucket-notification-configuration --bucket ana-desktop-updates --profile pernexium \
+  --notification-configuration '{"EventBridgeConfiguration":{}}'
+```
+Sin este paso todo funciona igual, pero las apps tardan hasta 30 min (chequeo periódico) en ver la versión.
+
 ### Comportamiento en el cliente
 - **Instalación**: el `.exe` oneClick instala solo (sin "siguiente, siguiente"), crea accesos y abre la app.
 - **Update obligatorio**: al abrir, la app revisa S3. Si hay versión nueva → pantalla **bloqueante** mientras descarga; si hay un envío en curso, espera a que termine (máx 3 min, overlay "Terminando el envío en curso…") y luego reinstala y reinicia. No se puede usar hasta estar al día. Si el chequeo falla (sin red o feed caído, salvo 404 = canal sin publicar) la pantalla muestra "No se pudo verificar la actualización", **Reintentar** y reintenta sola cada 60 s; **no** hay botón para continuar sin actualizar.
 - **Acceso de emergencia (Sistemas)**: solo si el build se compiló con `ANA_UPDATE_BYPASS_HASH`. Sistemas genera el hash con `npm run hash-bypass` (`scripts/hash-bypass-password.mjs`, imprime `scrypt$<sal>$<hash>`; la contraseña nunca se guarda) y compila con `$env:ANA_UPDATE_BYPASS_HASH="scrypt$..."; npm run dist`. En la pantalla de error aparece "Acceso de emergencia (Sistemas)": pide la contraseña maestra (máx 5 intentos, luego bloqueo de 15 min), desbloquea solo hasta cerrar la app, muestra el banner "Sin actualizar — acceso de emergencia" y registra el uso en `%APPDATA%/ana/update-bypass.log`.
-- Mass deploy: distribuye el primer `.exe` por GPO/Intune/script; las siguientes versiones llegan solas.
+- **Update a media sesión** (`add-in-session-updates`): después de la pantalla de arranque, la app revisa el feed cada 30 min, al reanudar el equipo y con `release.available` (0–30 s aleatorios). Con versión nueva muestra un aviso **no bloqueante** bajo el encabezado ("Nueva versión X — se actualizará automáticamente"; sin "Más tarde"), deja de tomar jobs (el que se está enviando termina), descarga con porcentaje, espera el job en curso (máx 3 min), muestra "Reiniciando para actualizar en N s" (60 s) e instala en silencio reabriendo la app (`quitAndInstall(true, true)`). La sesión de WhatsApp se conserva. Si la descarga falla, los jobs se reanudan y se reintenta en 30 min; un lote aprobado que se cortó se vuelve a aprobar.
+- Mass deploy: distribuye el primer `.exe` por GPO/Intune/script; las siguientes versiones llegan solas. El primer release con el update a media sesión llega por la pantalla de arranque (o el overlay anterior); desde ahí aplica el aviso no bloqueante.
 
 > Para evitar SmartScreen en Windows conviene **firmar** el `.exe` (cert code-signing). Funciona sin firmar, con advertencia la primera vez.
 

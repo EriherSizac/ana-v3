@@ -27,4 +27,4 @@
 
 ## 5. Documentación
 
-- [ ] 5.1 README del CLI y README de v4: cómo publicar (sha256 en `latest.json`, evento realtime, habilitar EventBridge en `ana-desktop-updates`, primer release por el camino de arranque)
+- [x] 5.1 README del CLI y README de v4: cómo publicar (sha256 en `latest.json`, evento realtime, habilitar EventBridge en `ana-desktop-updates`, primer release por el camino de arranque)

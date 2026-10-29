@@ -330,6 +330,32 @@ Desde la versión siguiente a 1.0.47 (`add-realtime-v3-cli`), tras el login el p
 - `settings.changed` (`scope: cli`) relee la configuración en ≤ 1 s.
 - Actualización forzada (`session.refresh`, al cambiar roster, permisos o configuración, o desde "Forzar actualización" en ANA Admin): revalida tu campaña con `GET /agent/campaigns`, relee la configuración, consulta asignaciones y reconecta en ≤ 10 s.
 - Variables: `ANA_REALTIME_URL` (URL `wss://…execute-api…/prod`; por defecto `CONFIG.realtimeUrl` de `config.js`, que se fija en el release) y `ANA_REALTIME=off` (desactiva el canal en este equipo). Sin URL, el CLI funciona como antes.
+- `release.available` (`scope: cli`, al publicarse `versions/latest.json`) dispara el chequeo de actualización tras 0–30 s aleatorios (ver abajo).
+
+## ⬆️ Actualización automática durante la sesión
+
+Desde la versión siguiente a 1.0.49 (`add-in-session-updates`), la instalación portable (`ANA.bat`) se actualiza **sola y sin que el agente cierre ANA**. Es obligatoria: no hay "Más tarde".
+
+1. **Detección**: lee `versions/latest.json` cada 30 min, al reanudar el equipo (suspensión) y con el aviso realtime `release.available`. Solo una versión estrictamente mayor cuenta (nunca downgrade).
+2. **Aviso** fijo en la ventana manual: "Nueva versión X — se actualizará automáticamente" con el estado. No bloquea: se puede seguir respondiendo chats.
+3. **Pausa ordenada**: termina el contacto que se está enviando y no inicia el siguiente; lo pendiente queda en el registro local y se reanuda al reabrir.
+4. **Descarga** a `%TEMP%\ANA-<v>.exe` con porcentaje; verifica `size` (o `Content-Length`) y `sha256` si el manifiesto lo trae. Si no cuadra, se borra y los envíos continúan.
+5. **"Reiniciando para actualizar en N s"** (60 s, sin cancelar). ANA cierra sus navegadores (las sesiones de WhatsApp se conservan), un ayudante PowerShell oculto espera a que termine el proceso, corre `ANA-<v>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS` y reabre `ANA.bat` con los mismos indicadores.
+6. **Registro**: `%APPDATA%\ANA\update.log` (pasos del CLI y del ayudante) y `%TEMP%\ANA-<v>-install.log` (log de Inno). Si el instalador falla, se reabre la versión anterior y al arrancar se muestra "No se pudo instalar la versión X" en consola y en la ventana manual.
+
+`--no-self-update` desactiva también la actualización en sesión. En desarrollo (`npm start`) o en el `.exe` pkg no corre.
+
+### Publicar una versión para que los clientes la tomen
+
+1. `.\build-completo.ps1` (sube el patch de `package.json`, compila el instalador y llama a `setup-and-upload.ps1`). Muestra tamaño y SHA-256 del instalador.
+2. `upload-to-s3.py` sube **primero** `versions/ANA-<v>.exe` y **después** `versions/latest.json`, que regenera siempre con `version`, `url`, `sha256` y `size` del instalador subido. Ejemplo:
+   ```json
+   { "version": "1.0.51", "url": "https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-1.0.51.exe", "sha256": "<64 hex>", "size": 152345678 }
+   ```
+3. La creación de `versions/latest.json` dispara `release.available` (regla `RealtimeBridgeRule` de v3 → `notify` de v4): los CLIs conectados actualizan en segundos; el resto en ≤ 30 min.
+4. Si subes `latest.json` a mano, **incluye `sha256` y `size`** (`Get-FileHash -Algorithm SHA256`, `(Get-Item ANA-<v>.exe).Length`) y súbelo después del `.exe`. Un manifiesto sin ellos se acepta verificando solo `Content-Length`.
+
+> El **primer** release con esta función llega a la flota por el camino anterior (actualización al arrancar, con el asistente del instalador). A partir de ese release, las siguientes versiones se instalan a media sesión.
 
 ## ⚠️ Notas Importantes
 
