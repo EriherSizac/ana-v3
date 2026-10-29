@@ -2,9 +2,9 @@
 
 ## 1. Backend v3
 
-- [ ] 1.1 `serverless.yml`: tabla `WaStatusTable` (PAY_PER_REQUEST, PITR, Retain), `WA_STATUS_TABLE`, permisos DynamoDB en el rol, funciones `agentPostWaStatus`, `agentLookupWaStatus`, `adminPostWaStatus`, `adminLookupWaStatus`; dependencias `@aws-sdk/client-dynamodb` y `@aws-sdk/lib-dynamodb`; prueba estática de serverless
-- [ ] 1.2 `src/lib/waStatus.ts`: normalización (D2), escritura ordenada (D3), marca manual (D5) y consulta por lote con reintentos (D6); vitest con DynamoDB mockeado (orden, reintento, bloques de 100, `UnprocessedKeys`)
-- [ ] 1.3 `src/handlers/waStatus.ts` y llamada de mejor esfuerzo en `agentResults.postResults` (D4); vitest de autorización (401/403 sin tocar DynamoDB), 400 por > 2000 teléfonos y lote aceptado aunque falle el registro
+- [x] 1.1 `serverless.yml`: tabla `WaStatusTable` (PAY_PER_REQUEST, PITR, Retain), `WA_STATUS_TABLE`, permisos DynamoDB en el rol, funciones `agentPostWaStatus`, `agentLookupWaStatus`, `adminPostWaStatus`, `adminLookupWaStatus`; dependencias `@aws-sdk/client-dynamodb` y `@aws-sdk/lib-dynamodb`; prueba estática de serverless
+- [x] 1.2 `src/lib/waStatus.ts`: normalización (D2), escritura ordenada (D3), marca manual (D5) y consulta por lote con reintentos (D6); vitest con DynamoDB mockeado (orden, reintento, bloques de 100, `UnprocessedKeys`)
+- [x] 1.3 `src/handlers/waStatus.ts` y llamada de mejor esfuerzo en `agentResults.postResults` (D4); vitest de autorización (401/403 sin tocar DynamoDB), 400 por > 2000 teléfonos y lote aceptado aunque falle el registro
 
 ## 2. ANA Admin
 

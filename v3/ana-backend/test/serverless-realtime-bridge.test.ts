@@ -70,11 +70,17 @@ describe('serverless.yml: puente realtime', () => {
     // (crm-interactions-agent-identity) no cuentan; lo existente no cambia.
     const baseFns = parse(base).functions as Record<string, unknown>;
     for (const [name, fn] of Object.entries(baseFns)) expect(cfg.functions[name], name).toEqual(fn);
-    const ADDED_ENV = ['ROLES_API_BASE', 'ROLES_API_KEY'];
+    // add-whatsapp-status-registry: variable WA_STATUS_TABLE y declaraciones IAM
+    // agregadas al final; las declaraciones existentes no cambian.
+    const ADDED_ENV = ['ROLES_API_BASE', 'ROLES_API_KEY', 'WA_STATUS_TABLE'];
     const withoutAdded = (p: any) => ({
       ...p,
       environment: Object.fromEntries(Object.entries(p.environment ?? {}).filter(([k]) => !ADDED_ENV.includes(k))),
+      iam: undefined,
     });
-    expect(withoutAdded(cfg.provider)).toEqual(withoutAdded(parse(base).provider));
+    const baseProvider = parse(base).provider;
+    expect(withoutAdded(cfg.provider)).toEqual(withoutAdded(baseProvider));
+    const baseStatements = baseProvider.iam.role.statements as unknown[];
+    expect(cfg.provider.iam.role.statements.slice(0, baseStatements.length)).toEqual(baseStatements);
   });
 });

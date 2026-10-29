@@ -80,6 +80,8 @@ provider:
     # (crm-interactions-agent-identity). La key va en .env, NO se commitea.
     ROLES_API_BASE: ${env:ROLES_API_BASE, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}
     ROLES_API_KEY: ${env:ROLES_API_KEY, ''}
+    # Registro de estado de WhatsApp por teléfono (add-whatsapp-status-registry D1).
+    WA_STATUS_TABLE: ${self:service}-wa-status-${sls:stage}
   iam:
     role:
       statements:
@@ -94,6 +96,14 @@ provider:
             - arn:aws:s3:::${self:service}-storage-${sls:stage}
             - arn:aws:s3:::s3-motor-509399624341-prod
             - arn:aws:s3:::s3-motor-509399624341-prod/templates/*
+        # Registro de WhatsApp (add-whatsapp-status-registry D1): solo acceso por llave.
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:BatchGetItem
+          Resource:
+            - Fn::GetAtt: [WaStatusTable, Arn]
 
 functions:
   hello:
@@ -384,6 +394,45 @@ functions:
           authorizer:
             name: cognitoAdminJwt
 
+  # add-whatsapp-status-registry: registro de estado de WhatsApp por teléfono
+  agentPostWaStatus:
+    handler: src/handlers/waStatus.agentMark
+    events:
+      - httpApi:
+          path: /agent/wa-status
+          method: post
+          authorizer:
+            name: cognitoAgentJwt
+
+  agentLookupWaStatus:
+    handler: src/handlers/waStatus.agentLookup
+    timeout: 29
+    events:
+      - httpApi:
+          path: /agent/wa-status/lookup
+          method: post
+          authorizer:
+            name: cognitoAgentJwt
+
+  adminPostWaStatus:
+    handler: src/handlers/waStatus.adminMark
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/wa-status
+          method: post
+          authorizer:
+            name: cognitoAdminJwt
+
+  adminLookupWaStatus:
+    handler: src/handlers/waStatus.adminLookup
+    timeout: 29
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/wa-status/lookup
+          method: post
+          authorizer:
+            name: cognitoAdminJwt
+
   # add-cli-remote-settings
   adminGetCliSettings:
     handler: src/handlers/cliSettings.getCliSettings
@@ -476,6 +525,26 @@ resources:
               Status: Enabled
               Prefix: results/
               ExpirationInDays: 180
+
+    # Registro de estado de WhatsApp por teléfono (add-whatsapp-status-registry D1).
+    # Retain: borrar el stack no borra el historial de marcas.
+    WaStatusTable:
+      Type: AWS::DynamoDB::Table
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        TableName: ${self:service}-wa-status-${sls:stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: phone
+            AttributeType: S
+        KeySchema:
+          - AttributeName: phone
+            KeyType: HASH
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+        SSESpecification:
+          SSEEnabled: true
 
     # Reenvía, entre regiones, los cambios relevantes al bus realtime de v4
     # (us-east-2). Ningún handler v3 cambia; si la regla falla o se deshabilita,

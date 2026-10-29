@@ -3,6 +3,7 @@ import { requireAdminAccess } from '../lib/adminAccess';
 import { adminError, adminInternal, adminOk, type AdminEvent, type AdminResult } from '../lib/adminHttp';
 import { parseCampaign, parseCampaignParam, parseUsername } from '../lib/identifiers';
 import { MAX_BATCH, parseResultItems, parseResultsQuery, queryResults, resultAgents, writeResults } from '../lib/sendResults';
+import { recordResults } from '../lib/waStatus';
 import type { AgentEvent } from './agentAssignments';
 import { CONTACTS_DISTRIBUTE, CONTACTS_UPLOAD } from './adminContacts';
 
@@ -53,6 +54,8 @@ export const postResults = async (event: AgentEvent): Promise<Result | AgentAuth
   const parsed = parseResultItems(body.items, campaign, agent, now.getTime());
   try {
     const { written, duplicates } = parsed.items.length > 0 ? await writeResults(campaign, agent, parsed.items, cliVersionOf(event), now) : { written: [], duplicates: [] };
+    // Registro de WhatsApp (add-whatsapp-status-registry D4): de mejor esfuerzo, nunca falla el lote.
+    await recordResults(parsed.items, campaign, agent);
     console.log(
       JSON.stringify({
         evt: 'send_results_post',
