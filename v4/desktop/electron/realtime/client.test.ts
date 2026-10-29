@@ -286,3 +286,36 @@ describe('helpers', () => {
     expect(isUsableUrl('ws://evil.example')).toBe(false);
   });
 });
+
+describe('RealtimeClient: reconnectNow (harden-client-resume)', () => {
+  it('descarta el socket previo y abre uno nuevo de inmediato, con backoff reiniciado', async () => {
+    const c = make();
+    await connected(c);
+    const old = last();
+    // Rechazo previo a suspender: no debe alargar la reconexión.
+    old.drop({ code: 1006, status: 403 });
+    await flush();
+    c.reconnectNow();
+    await flush();
+    expect(sockets.length).toBe(2);
+    expect(last()).not.toBe(old);
+    expect(c.backoffMsFor(1)).toBeLessThanOrEqual(1000);
+    last().open();
+    last().pong();
+    expect(c.isActive()).toBe(true);
+  });
+
+  it('cierra la conexión viva aunque parezca sana; sin iniciar no hace nada', async () => {
+    const c = make();
+    c.reconnectNow();
+    await flush();
+    expect(sockets.length).toBe(0);
+    await connected(c);
+    const old = last();
+    c.reconnectNow();
+    await flush();
+    expect(old.closedWith?.reason).toBe('resume');
+    expect(sockets.length).toBe(2);
+    expect(states.at(-1)).toBe('inactive');
+  });
+});

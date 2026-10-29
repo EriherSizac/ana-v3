@@ -91,6 +91,41 @@ export class WaClient extends EventEmitter {
     return { status: this.lastState, qr: this.lastQr };
   }
 
+  /**
+   * Estado real de whatsapp-web.js (`client.getState()`), acotado: `absent` sin
+   * cliente, `timeout` si Chromium no responde (p. ej. tras suspender el equipo).
+   */
+  async probe(timeoutMs: number): Promise<string> {
+    const c = this.client;
+    if (!c) return 'absent';
+    if (this.starting) return 'CONNECTED'; // arrancando: no interferir
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const st = await Promise.race([
+        c.getState().then((s) => String(s ?? 'null')),
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), timeoutMs);
+        }),
+      ]);
+      return st;
+    } catch {
+      return 'error';
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Reinicializa el cliente CONSERVANDO la sesión guardada (mismo camino que
+   * tras una desconexión: `reset()` + `start()`, sin borrar el perfil ni S3).
+   */
+  async restartKeepSession() {
+    console.log('[wa] reinicializando tras reanudar (sesión conservada)');
+    await this.reset();
+    this.lastState = 'idle';
+    await this.start(); // emite `loading` y luego `connected` al restaurar
+  }
+
   /** ¿Hay sesión local guardada? (RemoteAuth deja la carpeta del perfil). */
   hasSavedSession(): boolean {
     return existsSync(path.join(AUTH_DIR, `RemoteAuth-${this.operatorId}`));
