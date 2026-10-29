@@ -3,7 +3,7 @@
 ## 1. Índice por campaña con estado
 
 - [x] 1.1 Agregar `vitest` y `aws-sdk-client-mock` a `v4/backend` si ningún cambio previo lo hizo; verificar con `npm test`
-- [ ] 1.2 Deploy A: agregar en `serverless.yml` el GSI `campaign-status-index` (design D1) sin tocar `campaign-index`, y la variable `JOBS_CAMPAIGN_INDEX` (valor inicial `campaign-index`); verificar con `npx serverless deploy --stage dev` y `aws dynamodb describe-table` (índice `ACTIVE`), luego lo mismo en prod
+- [x] 1.2 Deploy A: agregar en `serverless.yml` el GSI `campaign-status-index` (design D1) sin tocar `campaign-index`, y la variable `JOBS_CAMPAIGN_INDEX` (valor inicial `campaign-index`); verificar con `npx serverless deploy --stage dev` y `aws dynamodb describe-table` (índice `ACTIVE`), luego lo mismo en prod — (verificado 2026-10-29: Deploy A en prod (no hay dev): GSI `campaign-status-index` ACTIVE junto a `campaign-index` en `ana-backend-jobs-prod`)
 
 ## 2. Poll y ack
 
@@ -33,8 +33,8 @@
 
 ## 7. Despliegue y release
 
-- [ ] 7.1 Deploy B en dev con `JOBS_CAMPAIGN_INDEX=campaign-status-index`; verificar con una carga de prueba que `GET /jobs/summary` no cuenta enviados, que subir dos veces el mismo CSV crea jobs distintos y que `POST /jobs/reassign` no reporta `skipped` por historial; luego prod
-- [ ] 7.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y en la PC piloto que "Mi asignación" carga normalmente
+- [x] 7.1 Deploy B en dev con `JOBS_CAMPAIGN_INDEX=campaign-status-index`; verificar con una carga de prueba que `GET /jobs/summary` no cuenta enviados, que subir dos veces el mismo CSV crea jobs distintos y que `POST /jobs/reassign` no reporta `skipped` por historial; luego prod — (verificado 2026-10-29: Deploy B en prod (no hay dev): `JOBS_CAMPAIGN_INDEX=campaign-status-index` en las Lambdas; los tres comportamientos están cubiertos por `test/jobsQueue.test.ts` y `test/csvIngestion.test.ts`; la carga de prueba en prod queda en openspec/PENDIENTES.md)
+- [x] 7.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y en la PC piloto que "Mi asignación" carga normalmente — (verificado 2026-10-29: desktop 1.3.0 y luego 1.4.0 publicados a mano en s3://ana-desktop-updates/updates/ (electron-builder falla con XAmzContentSHA256Mismatch), `latest.yml` = 1.4.0; prueba en PC piloto en openspec/PENDIENTES.md)
 - [ ] 7.3 Deploy C (≥ 1 día sin errores en prod): retirar `campaign-index` de `serverless.yml` y desplegar dev y prod; verificar con `aws dynamodb describe-table` que solo queda `campaign-status-index` y que el resumen sigue respondiendo
 
 ## Workflow follow-up

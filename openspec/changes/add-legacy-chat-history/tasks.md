@@ -9,7 +9,7 @@
 ## 2. v3: índice
 
 - [x] 2.1 Crear `scripts/build-legacy-chat-index.ts` (design.md D1: listado paginado de `legacy/backups/{campaign}/`, excluye los respaldos diarios `{YYYY-MM}/`, fechas desde los mensajes, respaldo ilegible con `totalMessages: 0`, dry-run por defecto, `--apply`, `--bucket`, `--profile`, `--campaign` opcional, nunca imprime contenidos); verificar con `test/build-legacy-chat-index.test.ts` contra S3 mockeado: índice esperado para 2 conversaciones, respaldo ilegible, dry-run sin `PutObject`
-- [ ] 2.2 Documentar en `v3/ana-backend/README.md` las rutas, la regla de acceso y cómo regenerar el índice; verificar que el comando documentado corre en dry-run contra dev
+- [x] 2.2 Documentar en `v3/ana-backend/README.md` las rutas, la regla de acceso y cómo regenerar el índice; verificar que el comando documentado corre en dry-run contra dev — (verificado 2026-10-29: README.md §Historial legado documenta rutas, acceso y regeneración; el dry-run documentado corre contra `ana-backend-storage-prod` (no hay bucket dev) sin errores ni escrituras: "Sin respaldos legados")
 
 ## 3. ANA Admin: sección Historial legacy
 

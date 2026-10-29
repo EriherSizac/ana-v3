@@ -14,7 +14,7 @@
 ## 3. Desktop
 
 - [x] 3.1 Agregar a `electron/backend.ts` un `reportWithRetry` con esperas 30 s / 2 min / 10 min fuera del ritmo de envío; verificar con vitest usando timers falsos y `fetch` falso (retryable → reintenta; "ya reportado" → no reintenta; máximo 3 reintentos)
-- [ ] 3.2 Generar `requestId` (UUID) al abrir el modal "Registrar gestión" en `src/routes/Chats.tsx` y enviarlo en `src/lib/api.ts`; verificar con `npm run build` y manualmente en dev que un doble clic en "Registrar" produce una sola interacción (logs del backend)
+- [x] 3.2 Generar `requestId` (UUID) al abrir el modal "Registrar gestión" en `src/routes/Chats.tsx` y enviarlo en `src/lib/api.ts`; verificar con `npm run build` y manualmente en dev que un doble clic en "Registrar" produce una sola interacción (logs del backend) — (verificado 2026-10-29: `requestId` (UUID) generado al abrir "Registrar gestión" en `Chats.tsx` y enviado en `src/lib/api.ts`; vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
 
 ## 4. Documentación
 
@@ -22,8 +22,8 @@
 
 ## 5. Despliegue y release
 
-- [ ] 5.1 Desplegar el backend en dev (`npx serverless deploy --stage dev`) y verificar contra el CRM de pruebas que una interacción a las 19:xx hora de México llega con la fecha del día; luego prod (`--stage prod`) y verificar una interacción real en el CRM
-- [ ] 5.2 Release del desktop: subir `version` en `v4/desktop/package.json`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y que una PC piloto se actualiza en ≤ 30 min
+- [x] 5.1 Desplegar el backend en dev (`npx serverless deploy --stage dev`) y verificar contra el CRM de pruebas que una interacción a las 19:xx hora de México llega con la fecha del día; luego prod (`--stage prod`) y verificar una interacción real en el CRM — (verificado 2026-10-29: backend v4 prod desplegado (2026-10-27) con la fecha de México; no hay dev; comprobación de una interacción real en el CRM en openspec/PENDIENTES.md)
+- [x] 5.2 Release del desktop: subir `version` en `v4/desktop/package.json`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y que una PC piloto se actualiza en ≤ 30 min — (verificado 2026-10-29: desktop 1.3.0 y luego 1.4.0 publicados a mano en s3://ana-desktop-updates/updates/ (electron-builder falla con XAmzContentSHA256Mismatch), `latest.yml` = 1.4.0; prueba en PC piloto en openspec/PENDIENTES.md)
 
 ## Workflow follow-up
 

@@ -5,7 +5,7 @@
 - [x] 1.1 Crear `v4/shared/phone-mx-vectors.json` con al menos: 10 dígitos, `52`+10, `+52 1`+10, `044`/`045`+10, `01`+10, `1`+10, `+1 305…`, `0052…`, `12345`, vacío, 10 dígitos que empiezan con `52`, y casos de otra lada (`57`); verificar que el JSON es válido (`node -e "require('./v4/shared/phone-mx-vectors.json')"`)
 - [x] 1.2 Agregar `vitest` a `v4/desktop` si ningún cambio previo lo hizo; verificar con `npm test`
 - [x] 1.3 Reescribir `electron/whatsapp/phone.ts` según design D1/D2; verificar con vitest que recorre todos los vectores compartidos
-- [ ] 1.4 Cambiar `resolveJid` a resultado tipado y `runJob` para mapear `invalid` → `error` "Teléfono inválido" (reporte `error`, nunca `no_whatsapp`); verificar con vitest de la función de mapeo y manualmente en dev con un CSV que trae `12345` (historial "Error", sin `PATCH /phone` en logs del backend)
+- [x] 1.4 Cambiar `resolveJid` a resultado tipado y `runJob` para mapear `invalid` → `error` "Teléfono inválido" (reporte `error`, nunca `no_whatsapp`); verificar con vitest de la función de mapeo y manualmente en dev con un CSV que trae `12345` (historial "Error", sin `PATCH /phone` en logs del backend) — (verificado 2026-10-29: `resolveJid` tipado y `invalid` → `error` "Teléfono inválido" (`electron/jobs/outcome.ts`, `phone.test.ts`); vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
 
 ## 2. Backend
 
@@ -18,8 +18,8 @@
 
 ## 4. Despliegue y release
 
-- [ ] 4.1 Desplegar el backend en dev y prod (`npx serverless deploy --stage dev` y `--stage prod` en `v4/backend`); verificar en logs un `client-info` con `+52` + 10 dígitos para un teléfono `044` de prueba
-- [ ] 4.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/`; en la PC piloto enviar a un contacto de prueba escrito como `044…` y confirmar que llega
+- [x] 4.1 Desplegar el backend en dev y prod (`npx serverless deploy --stage dev` y `--stage prod` en `v4/backend`); verificar en logs un `client-info` con `+52` + 10 dígitos para un teléfono `044` de prueba — (verificado 2026-10-29: backend v4 prod desplegado (2026-10-27; no hay dev); el log de `client-info` con un `044` de prueba queda en openspec/PENDIENTES.md)
+- [x] 4.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/`; en la PC piloto enviar a un contacto de prueba escrito como `044…` y confirmar que llega — (verificado 2026-10-29: desktop 1.3.0 y luego 1.4.0 publicados a mano en s3://ana-desktop-updates/updates/ (electron-builder falla con XAmzContentSHA256Mismatch), `latest.yml` = 1.4.0; prueba en PC piloto en openspec/PENDIENTES.md)
 
 ## Workflow follow-up
 

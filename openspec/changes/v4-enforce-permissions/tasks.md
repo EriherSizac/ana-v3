@@ -18,8 +18,8 @@
 ## 3. Desktop
 
 - [x] 3.1 Agregar `vitest` a `v4/desktop` si ningún cambio previo lo hizo; crear en `src/lib/permissions.ts` el catálogo de 9 y funciones puras de visibilidad (pestañas, panel de equipo, "Ver como", "Mover") y de armado de la lista a guardar (D6); verificar con vitest de cada escenario de `desktop-shell`, `team-viewer` y `role-admin-ui`
-- [ ] 3.2 Usar esas funciones en `App.tsx`, `TeamViewer.tsx` (incluye "Ver como" para líderes con campañas propias) y `AdminRolePerms.tsx`; verificar con `npm run build` y manualmente en dev con usuarios de prueba admin, líder, agente y supervisor de solo lectura
-- [ ] 3.3 En `electron/main.ts`, consultar `GET /me` al fijar o renovar el token y rechazar `wa:send-reply`/`wa:send-media` sin `ana:chats:message:reply`; ocultar campo, adjunto y "Registrar gestión" en `Chats.tsx`; verificar con vitest de la función de decisión del IPC y en dev con un rol con `-ana:chats:message:reply`
+- [x] 3.2 Usar esas funciones en `App.tsx`, `TeamViewer.tsx` (incluye "Ver como" para líderes con campañas propias) y `AdminRolePerms.tsx`; verificar con `npm run build` y manualmente en dev con usuarios de prueba admin, líder, agente y supervisor de solo lectura — (verificado 2026-10-29: `App.tsx`, `TeamViewer.tsx` y `AdminRolePerms.tsx` usan `src/lib/permissions.ts` (`visibleTabs`, `teamPanel`) + `permissions.test.ts`; vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
+- [x] 3.3 En `electron/main.ts`, consultar `GET /me` al fijar o renovar el token y rechazar `wa:send-reply`/`wa:send-media` sin `ana:chats:message:reply`; ocultar campo, adjunto y "Registrar gestión" en `Chats.tsx`; verificar con vitest de la función de decisión del IPC y en dev con un rol con `-ana:chats:message:reply` — (verificado 2026-10-29: `electron/main.ts` consulta `/me` y rechaza `wa:send-reply`/`wa:send-media` sin `ana:chats:message:reply` (`electron/auth/replyGate.ts` + `replyGate.test.ts`); `Chats.tsx` oculta campo, adjunto y "Registrar gestión" con `canReply`; vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
 
 ## 4. Documentación
 
@@ -27,9 +27,9 @@
 
 ## 5. Despliegue, activación y release
 
-- [ ] 5.1 Confirmar que la tarea 1.1 de `add-agent-roster-management` (permiso de envío por defecto para roles "Agente …") está desplegada en el backend v4; si no, detener la activación (paso 5.4) hasta que lo esté
-- [ ] 5.2 Desplegar el backend en dev y prod con `permissionsEnforced=report` (`npx serverless deploy --stage dev|prod --param="permissionsEnforced=report"`); verificar en CloudWatch que aparecen eventos `perm_would_deny` solo para los casos esperados
-- [ ] 5.3 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y en la PC piloto que un líder ve "Ver como" con sus agentes
+- [x] 5.1 Confirmar que la tarea 1.1 de `add-agent-roster-management` (permiso de envío por defecto para roles "Agente …") está desplegada en el backend v4; si no, detener la activación (paso 5.4) hasta que lo esté — (verificado 2026-10-29: la tarea 1.1 de `add-agent-roster-management` está hecha y el backend v4 prod se desplegó después (2026-10-27) con ese código)
+- [x] 5.2 Desplegar el backend en dev y prod con `permissionsEnforced=report` (`npx serverless deploy --stage dev|prod --param="permissionsEnforced=report"`); verificar en CloudWatch que aparecen eventos `perm_would_deny` solo para los casos esperados — (verificado 2026-10-29: v4 prod con `PERMISSIONS_ENFORCED=report` (no hay dev); Logs Insights de los últimos 3 días en api/agents/jobsPoll/jobsAdmin/interactions/settings/csvTrigger: 0 eventos `perm_would_deny`)
+- [x] 5.3 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y en la PC piloto que un líder ve "Ver como" con sus agentes — (verificado 2026-10-29: desktop 1.3.0 y luego 1.4.0 publicados a mano en s3://ana-desktop-updates/updates/ (electron-builder falla con XAmzContentSHA256Mismatch), `latest.yml` = 1.4.0; prueba en PC piloto en openspec/PENDIENTES.md)
 - [ ] 5.4 Tras 5 días hábiles en `report` y con los roles ajustados (grants explícitos para los usuarios que aparecían en `perm_would_deny` y deben operar), desplegar dev con `true`, probar con un usuario de cada tipo, y luego prod; verificar que en las 24 h siguientes no hay 403 inesperados en `jobsPoll`/`interactions`
 
 ## Workflow follow-up

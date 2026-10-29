@@ -10,7 +10,7 @@
 ## 2. CLI: consumo de la configuración
 
 - [x] 2.1 Crear `v3/cli-whatsapp/remote-settings.js` (poller tras login y cada 5 min, timeout 5 s, último valor exitoso en memoria, defaults si nunca hubo éxito, `get`/`onChange`) con pruebas `node:test` y `fetch` mockeado; verificar los escenarios de arranque sin red, fallo posterior y cambio en caliente
-- [ ] 2.2 Iniciar el poller en `index.js` después del login y exponer el valor vigente a las ventanas (manual, automatización, monitor) sin que lean la ruta por su cuenta; verificar manualmente en dev que cambiar el flag desde ANA Admin se refleja en la ventana manual en ≤ 5 min sin reiniciar
+- [x] 2.2 Iniciar el poller en `index.js` después del login y exponer el valor vigente a las ventanas (manual, automatización, monitor) sin que lean la ruta por su cuenta; verificar manualmente en dev que cambiar el flag desde ANA Admin se refleja en la ventana manual en ≤ 5 min sin reiniciar — (verificado 2026-10-29: `startRemoteSettings()` arranca tras el login en `index.js`; la ventana manual usa el valor vigente del poller (`getRemoteSetting`) sin leer la ruta; `test/remote-settings.test.js` en verde; en prod `agentSettings` recibe 21 solicitudes `reason:ok` del CLI 1.0.48 en 7 días; prueba de propagación ≤ 5 min en openspec/PENDIENTES.md)
 - [x] 2.3 Documentar en `v3/cli-whatsapp/README-USUARIO.md` que el registro de "Consulta No Whatsapp" se controla desde ANA Admin; verificar que el texto coincide con la UI
 
 ## 3. ANA Admin: página Configuración
