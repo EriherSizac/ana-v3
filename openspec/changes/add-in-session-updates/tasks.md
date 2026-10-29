@@ -14,10 +14,10 @@
 
 ## 3. CLI: pausa, ayudante y orquestador
 
-- [ ] 3.1 `update-pause.js` (request/park/resume/sleep interrumpible) e integración en `index.js` (puntos seguros, esperas interrumpibles, pausa por lote); pruebas `test/update-pause.test.js` con ciclo falso
-- [ ] 3.2 `update-helper.js` (disposición de la instalación, script PowerShell con literales escapados, resultado previo); pruebas `test/update-helper.test.js` (comillas, inyección, indicadores)
-- [ ] 3.3 `update-banner.js` (aviso en la ventana manual, `textContent`) y `in-session-update.js` (chequeo 30 min, reanudación, realtime con jitter, pausa → descarga → 60 s → instalar; error → reanudar); pruebas `test/in-session-update.test.js` con reloj falso
-- [ ] 3.4 `realtime.js`: `release.available` (scope cli) → evento `release`; cableado en `index.js` (reanudación, realtime, resultado previo al arrancar); `node --test`, `node --check` y bundle esbuild verdes
+- [x] 3.1 `update-pause.js` (request/park/resume/sleep interrumpible) e integración en `index.js` (puntos seguros, esperas interrumpibles, pausa por lote); pruebas `test/update-pause.test.js` con ciclo falso
+- [x] 3.2 `update-helper.js` (disposición de la instalación, script PowerShell con literales escapados, resultado previo); pruebas `test/update-helper.test.js` (comillas, inyección, indicadores)
+- [x] 3.3 `update-banner.js` (aviso en la ventana manual, `textContent`) y `in-session-update.js` (chequeo 30 min, reanudación, realtime con jitter, pausa → descarga → 60 s → instalar; error → reanudar); pruebas `test/in-session-update.test.js` con reloj falso
+- [x] 3.4 `realtime.js`: `release.available` (scope cli) → evento `release`; cableado en `index.js` (reanudación, realtime, resultado previo al arrancar); `node --test`, `node --check` y bundle esbuild verdes
 
 ## 4. Desktop: actualización en sesión
 

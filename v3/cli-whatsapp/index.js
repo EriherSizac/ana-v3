@@ -117,14 +117,20 @@ const setPauseBlocker = async (page, enabled) => {
     // ignore
   }
 };
-const sleepWithCountdown = async (totalMs, label, pages = []) => {
+const sleepWithCountdown = async (totalMs, label, pages = [], shouldStop = () => false) => {
   const endAt = Date.now() + totalMs;
+  let stopped = false;
   // En ambientes no-interactivos, evitar spam: log cada minuto
   const isInteractive = Boolean(process.stdout && process.stdout.isTTY);
   let lastLoggedMinute = null;
   while (true) {
     const remaining = endAt - Date.now();
     if (remaining <= 0) break;
+    // Pausa por actualización (add-in-session-updates): la espera se corta.
+    if (shouldStop()) {
+      stopped = true;
+      break;
+    }
     const uiText = `${label}: ${formatMsAsHms(remaining)}`;
     const pagesToUpdate = Array.isArray(pages) ? pages.filter(Boolean) : [];
     if (pagesToUpdate.length) {
@@ -148,6 +154,7 @@ const sleepWithCountdown = async (totalMs, label, pages = []) => {
   if (pagesToClear.length) {
     await Promise.all(pagesToClear.map((p) => setStatusWidgetText(p, "")));
   }
+  return stopped ? "stopped" : "done";
 };
 const writeCrashLog = (title, err) => {
   try {
@@ -259,6 +266,23 @@ import {
   insertInteractions,
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
+import { spawn as spawnProcess } from "child_process";
+import os from "os";
+import { cleanVersion, fetchManifest, DEFAULT_MANIFEST_URL } from "./update-manifest.js";
+import { downloadVerified } from "./update-download.js";
+import { createPauseGate } from "./update-pause.js";
+import {
+  appendUpdateLog,
+  buildHelperScript,
+  readPreviousResult,
+  resolveInstallLayout,
+  spawnHelper,
+  writeHelperScript,
+  UPDATE_LOG,
+  UPDATE_RESULT,
+} from "./update-helper.js";
+import { bannerView, showUpdateBanner } from "./update-banner.js";
+import { createInSessionUpdater } from "./in-session-update.js";
 import { remoteSettings, startRemoteSettings, POLL_INTERVAL_MS as SETTINGS_INTERVAL_MS, BACKUP_INTERVAL_MS as SETTINGS_BACKUP_INTERVAL_MS } from "./remote-settings.js";
 import { agentSession, backend, sessionStore, getIdToken, CLI_VERSION } from "./agent-runtime.js";
 import { createRealtime, wsSocketFactory } from "./realtime.js";
@@ -299,6 +323,17 @@ async function main() {
     await agentSession.logout();
     console.log("Sesión cerrada");
     return;
+  }
+
+  // Resultado de una actualización en sesión anterior (add-in-session-updates D6):
+  // si falló, se avisa en consola y, cuando abra, en la ventana manual.
+  const previousUpdate = readPreviousResult(DATA_DIR);
+  if (previousUpdate && !previousUpdate.ok) {
+    console.error(
+      `⚠️  No se pudo instalar la versión ${previousUpdate.version} (código ${previousUpdate.exitCode ?? "?"}). Sigues en la versión ${CLI_VERSION}. Detalle en ${path.join(DATA_DIR, UPDATE_LOG)}`,
+    );
+  } else if (previousUpdate?.ok) {
+    console.log(`✅ Actualización a ${previousUpdate.version} instalada (versión actual ${CLI_VERSION}).`);
   }
 
   // Auto-update (solo EXE/pkg). Se desactiva con --no-self-update
@@ -520,6 +555,15 @@ async function main() {
         manualWindowStarted = true;
         manualWindowPromise = initManualWhatsApp([])
           .then(() => {
+            if (previousUpdate && !previousUpdate.ok) {
+              void showUpdateBanner(
+                getManualPage(),
+                bannerView({ phase: "previous-failed", version: previousUpdate.version, exitCode: previousUpdate.exitCode, current: CLI_VERSION }),
+              );
+              const t = setTimeout(() => void showUpdateBanner(getManualPage(), null), 2 * 60 * 1000);
+              t.unref?.();
+            }
+
             console.log("\n💬 Ventana manual lista para responder");
             console.log("⚠️  Esta ventana permanecerá abierta\n");
           })
@@ -602,6 +646,8 @@ async function main() {
           realtime?.reconnectNow("resume");
           remoteSettings.refreshNow();
           waker.wake();
+          // Al despertar también se revisa si hay versión nueva (add-in-session-updates).
+          void inSessionUpdater?.checkNow("resume");
           if (resumeBusy) return;
           resumeBusy = true;
           void (async () => {
@@ -621,6 +667,84 @@ async function main() {
           })();
         },
       });
+      // Actualización obligatoria en sesión (add-in-session-updates): chequeo cada
+      // 30 min, al reanudar y con release.available; pausa ordenada del ciclo
+      // (compuerta), descarga verificada, 60 s y ayudante que instala y reabre.
+      const updateGate = createPauseGate({ onRequest: () => waker.wake({ pendingIfIdle: false }) });
+      let inSessionUpdater = null;
+      {
+        const layout = resolveInstallLayout({ execPath: process.execPath, isPkg });
+        if (process.argv.includes("--no-self-update")) {
+          console.log("ℹ️  Actualización en sesión deshabilitada (--no-self-update)");
+        } else if (!layout) {
+          console.log("ℹ️  Actualización en sesión no disponible (no es la instalación portable de ANA)");
+        } else if (!cleanVersion(CLI_VERSION)) {
+          console.log("ℹ️  Actualización en sesión no disponible (versión local desconocida)");
+        } else {
+          let lastView = null;
+          const render = () => showUpdateBanner(getManualPage() || getMonitorPage(), lastView);
+          // Si la ventana se recarga (F5), el aviso vuelve a dibujarse.
+          const refresher = setInterval(() => {
+            if (lastView) void render();
+          }, 5000);
+          refresher.unref?.();
+          const manifestUrl = String(process.env.ANA_UPDATE_MANIFEST_URL || DEFAULT_MANIFEST_URL).trim();
+          inSessionUpdater = createInSessionUpdater({
+            currentVersion: CLI_VERSION,
+            fetchManifest: () => fetchManifest(manifestUrl),
+            requestPause: () => updateGate.request(),
+            resumeLoop: () => updateGate.resume(),
+            download: async (m, onProgress) => {
+              const dest = path.join(os.tmpdir(), `ANA-${m.version}.exe`);
+              appendUpdateLog(DATA_DIR, `Descargando ${m.version} desde ${m.url}`);
+              const r = await downloadVerified({
+                url: m.url,
+                dest,
+                expectedSize: m.size,
+                expectedSha256: m.sha256,
+                onProgress: ({ pct }) => onProgress(pct),
+              });
+              appendUpdateLog(DATA_DIR, `Descarga verificada: ${r.size} bytes, sha256 ${r.sha256}`);
+              return r.path;
+            },
+            install: async (file, m) => {
+              const script = buildHelperScript({
+                pid: process.pid,
+                installer: file,
+                launcher: layout.launcher,
+                appDir: layout.appDir,
+                args: process.argv.slice(2),
+                logPath: path.join(DATA_DIR, UPDATE_LOG),
+                resultPath: path.join(DATA_DIR, UPDATE_RESULT),
+                installLogPath: path.join(os.tmpdir(), `ANA-${m.version}-install.log`),
+                version: m.version,
+                fromVersion: CLI_VERSION,
+              });
+              // Primero el ayudante: si no arranca, nada se cerró y el ciclo se reanuda.
+              await spawnHelper(writeHelperScript(script), { spawn: spawnProcess });
+              appendUpdateLog(DATA_DIR, `Ayudante lanzado; se cierra ANA ${CLI_VERSION} para instalar ${m.version}`);
+              shuttingDown = true;
+              inSessionUpdater?.stop();
+              clearInterval(refresher);
+              resumeDetector.stop();
+              heartbeat.stop();
+              activeRealtime?.stop();
+              // Cierre ordenado de los perfiles persistentes (sesiones de WhatsApp intactas).
+              const close = (fn) => withTimeout(Promise.resolve().then(fn), 20_000, "cerrar navegador").catch(() => {});
+              await Promise.all([close(closeBrowser), close(closeManualBrowser), close(closeMonitorBrowser)]);
+              process.exit(0);
+            },
+            onState: (st) => {
+              lastView = bannerView(st);
+              void render();
+            },
+          });
+          inSessionUpdater.start();
+          realtime?.on("release", () => inSessionUpdater?.onRelease());
+          console.log("🔄 Actualización en sesión activa: chequeo cada 30 min, al reanudar y con aviso en vivo.");
+        }
+      }
+
       heartbeat.start();
       resumeDetector.start();
       const PAUSE_AFTER_MESSAGES = CONSTANTS.PAUSE_AFTER_MESSAGES;
@@ -677,9 +801,31 @@ async function main() {
         }
       }
 
+      // Pausa por lote. Se corta si se pide una actualización; en ese caso el
+      // contador no se reinicia y la pausa se repite al reanudar.
+      const runBatchPause = async (pages) => {
+        const [p, m, mon] = pages;
+        await Promise.all([setPauseBlocker(p, true), setPauseBlocker(mon, true)]);
+        const r = await sleepWithCountdown(PAUSE_DURATION_MS, "Fin de pausa", [p, m, mon], () => updateGate.requested);
+        await Promise.all([setPauseBlocker(p, false), setPauseBlocker(mon, false)]);
+        if (r === "done") sentSinceLastPause = 0;
+        else console.log("⏸️  Pausa por lote interrumpida por la actualización.");
+      };
+
       while (true) {
         const outcome = await supervisor.run(async (gen) => {
         heartbeat.beat();
+        // Actualización en curso (add-in-session-updates D3): el ciclo se
+        // estaciona aquí (sin consultar ni enviar) hasta que ANA se reinicia o
+        // la actualización falla y se reanuda.
+        if (updateGate.requested) {
+          console.log("⏸️  Envíos automáticos en pausa: actualización de ANA en curso.");
+          const pauseText = "Actualización en curso: envíos en pausa";
+          await Promise.all([setStatusWidgetText(page, pauseText), setStatusWidgetText(getMonitorPage(), pauseText)]);
+          await updateGate.park({ onBeat: () => heartbeat.beat() });
+          console.log("▶️  Se reanudan los envíos automáticos.");
+          return;
+        }
         cycle++;
         const manualPage = getManualPage();
         const monitorPage = getMonitorPage();
@@ -778,6 +924,7 @@ async function main() {
         }
 
         // Envío en curso: el latido no reinicia el ciclo hasta terminar la asignación.
+        let pausedForUpdate = false;
         heartbeat.setBusy(true);
         try {
 
@@ -790,6 +937,18 @@ async function main() {
         for (let i = 0; i < contacts.length; i++) {
           const contact = contacts[i];
           const idx = i + 1;
+          // Pausa por lote pendiente (cortada antes por una actualización que falló).
+          if (sentSinceLastPause >= PAUSE_AFTER_MESSAGES && !updateGate.requested) {
+            console.log(`⏸️  Límite alcanzado (${PAUSE_AFTER_MESSAGES} mensajes). Pausando antes de continuar...`);
+            await runBatchPause([page, manualPage, monitorPage]);
+          }
+          // Actualización pedida: el contacto anterior ya terminó y este no se inicia;
+          // queda pendiente en el registro local y se reanuda tras reabrir ANA.
+          if (updateGate.requested) {
+            pausedForUpdate = true;
+            console.log(`⏸️  Actualización pendiente: se detiene antes de ${contact.name}; queda pendiente en el registro local.`);
+            break;
+          }
           console.log(
             `\n[${idx}/${contacts.length}] Procesando: ${contact.name}`,
           );
@@ -951,30 +1110,21 @@ async function main() {
               `⏳ Esperando ${delaySec}s antes del siguiente contacto (aleatorio entre 30-120s, pico en 60-80s)...`,
             );
             // Temporizador de Node (no depende de que la ventana responda).
-            await new Promise((r) => setTimeout(r, delayMs));
+            // Interrumpible por una actualización (add-in-session-updates).
+            await updateGate.sleep(delayMs);
           }
 
           if (sentSinceLastPause >= PAUSE_AFTER_MESSAGES) {
             console.log(
               `\n⏸️  Límite alcanzado (${PAUSE_AFTER_MESSAGES} mensajes). Pausando 20 minutos...`,
             );
-            await Promise.all([
-              setPauseBlocker(page, true),
-              setPauseBlocker(monitorPage, true),
-            ]);
-            await sleepWithCountdown(PAUSE_DURATION_MS, "Fin de pausa", [
-              page,
-              manualPage,
-              monitorPage,
-            ]);
-            await Promise.all([
-              setPauseBlocker(page, false),
-              setPauseBlocker(monitorPage, false),
-            ]);
-            sentSinceLastPause = 0;
+            await runBatchPause([page, manualPage, monitorPage]);
           }
         }
 
+        // Pausa por actualización: la asignación NO terminó; el registro local
+        // conserva los pendientes y el servidor ya tiene el progreso por contacto.
+        if (!pausedForUpdate) {
         console.log(
           `\n☁️  Marcando contactos como procesados en el servidor...`,
         );
@@ -997,12 +1147,15 @@ async function main() {
             );
           }
         }
+        }
 
         await saveResults(results);
         await saveResponses(results);
         } finally {
           heartbeat.setBusy(false);
         }
+        // La siguiente iteración se estaciona en la compuerta de actualización.
+        if (pausedForUpdate) return;
 
         const sent = results.filter((r) => r.status === "sent").length;
         const errors = results.filter((r) => r.status === "error").length;

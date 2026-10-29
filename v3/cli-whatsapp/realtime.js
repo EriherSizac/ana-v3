@@ -38,6 +38,8 @@ export const KNOWN_EVENTS = Object.freeze([
   'review.changed',
   'roster.changed',
   'settings.changed',
+  // add-in-session-updates: versión publicada (el CLI lee su manifiesto).
+  'release.available',
 ]);
 
 /** Sobre del catálogo, `{type:'pong'}`, `{type:'session.refresh', reason}` o null. */
@@ -90,6 +92,9 @@ export function isAssignmentFor(evt, sessionCampaign) {
 /** ¿`settings.changed` para el CLI? */
 export const isCliSettings = (evt) => !!evt && evt.type === 'settings.changed' && evt.ref?.scope === 'cli';
 
+/** ¿`release.available` del CLI? (add-in-session-updates) */
+export const isCliRelease = (evt) => !!evt && evt.type === 'release.available' && evt.ref?.scope === 'cli';
+
 /**
  * Adaptador de `ws` (Node 18, sin WebSocket global) a la forma mínima que usa
  * el cliente. Un rechazo del handshake llega como cierre con `status` (403…).
@@ -136,7 +141,7 @@ export function createRealtime(opts) {
   const now = opts.now || (() => Date.now());
   const logger = opts.logger || console;
   const client = opts.client || 'cli';
-  const listeners = { assignment: new Set(), settings: new Set(), active: new Set(), inactive: new Set(), refresh: new Set(), event: new Set() };
+  const listeners = { assignment: new Set(), settings: new Set(), release: new Set(), active: new Set(), inactive: new Set(), refresh: new Set(), event: new Set() };
 
   let current = null;
   let next = null;
@@ -266,6 +271,7 @@ export function createRealtime(opts) {
     emit('event', msg);
     if (isAssignmentFor(msg, sessionCampaign)) emit('assignment', msg);
     else if (isCliSettings(msg)) emit('settings', msg);
+    else if (isCliRelease(msg)) emit('release', msg);
   }
 
   function confirm(conn) {

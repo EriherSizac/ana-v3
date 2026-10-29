@@ -325,3 +325,15 @@ test('sin pong en 2 latidos (reloj saltó) se reconecta en el siguiente ping', a
   await s2.clock.advance(1000);
   assert.equal(s2.sockets.length, 2);
 });
+
+test('release.available: solo scope cli emite `release` (add-in-session-updates)', async () => {
+  const s = setup();
+  const releases = [];
+  s.rt.on('release', (e) => releases.push(e.id));
+  await s.connected();
+  s.last().push({ v: 1, type: 'release.available', id: 'r1', at: 1, ref: { scope: 'desktop' } });
+  s.last().push({ v: 1, type: 'release.available', id: 'r2', at: 1, ref: { scope: 'cli', source: 'v3' } });
+  assert.deepEqual(releases, ['r2']);
+  assert.deepEqual(s.seen.settings, []);
+  assert.equal(s.last().closedWith, null);
+});
