@@ -8,9 +8,9 @@
 
 ## 2. CLI: manifiesto, descarga y publicación
 
-- [ ] 2.1 `update-manifest.js` (BOM, HTML, `sha256`/`size` opcionales, `https:`, comparación) y uso en `self-update.js`; pruebas `test/update-manifest.test.js`
-- [ ] 2.2 `update-download.js` (progreso, tamaño, SHA-256 en flujo, borra parcial); pruebas con servidor local en `test/update-download.test.js`
-- [ ] 2.3 `upload-to-s3.py` reescribe `latest.json` con `sha256`/`size`; `build-completo.ps1` los muestra; nuevos módulos en `$filesToCopy` de `build-portable.ps1`
+- [x] 2.1 `update-manifest.js` (BOM, HTML, `sha256`/`size` opcionales, `https:`, comparación) y uso en `self-update.js`; pruebas `test/update-manifest.test.js`
+- [x] 2.2 `update-download.js` (progreso, tamaño, SHA-256 en flujo, borra parcial); pruebas con servidor local en `test/update-download.test.js`
+- [x] 2.3 `upload-to-s3.py` reescribe `latest.json` con `sha256`/`size`; `build-completo.ps1` los muestra; nuevos módulos en `$filesToCopy` de `build-portable.ps1`
 
 ## 3. CLI: pausa, ayudante y orquestador
 

@@ -4,6 +4,7 @@ Script para subir ANA.exe a S3 después del build
 Requiere: pip install boto3 python-dotenv
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -59,6 +60,28 @@ def read_version():
     with open(package_json_path, 'r', encoding='utf-8-sig') as f:
         data = json.load(f)
         return data.get('version')
+
+def file_sha256(path):
+    """SHA-256 (hex en minúsculas) del archivo, leído por bloques"""
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+def write_latest_json(latest_json_path, version, exe_path):
+    """latest.json SIEMPRE con los datos del instalador que se sube
+    (add-in-session-updates): version, url, sha256 y size. Los clientes
+    verifican tamaño y hash antes de instalar."""
+    latest_data = {
+        "version": version,
+        "url": f"https://{BUCKET_NAME}.s3.{REGION}.amazonaws.com/versions/ANA-{version}.exe",
+        "sha256": file_sha256(exe_path),
+        "size": os.path.getsize(exe_path),
+    }
+    with open(latest_json_path, 'w', encoding='utf-8') as f:
+        json.dump(latest_data, f, indent=2)
+    return latest_data
 
 def upload_file_to_s3(s3_client, local_path, s3_key, content_type=None):
     """Sube un archivo a S3 con barra de progreso"""
@@ -126,17 +149,12 @@ def main():
         print("Ejecuta el build completo primero: .\\build-completo.ps1")
         sys.exit(1)
     
-    # Crear latest.json si no existe
+    # latest.json se regenera siempre desde el instalador que se sube (versión,
+    # url, sha256 y size); nunca se sube uno viejo o sin hash.
     latest_json_path = Path("dist-portable/latest.json")
-    if not latest_json_path.exists():
-        print(f"[INFO] Creando latest.json...")
-        latest_data = {
-            "version": version,
-            "url": f"https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-{version}.exe"
-        }
-        with open(latest_json_path, 'w', encoding='utf-8') as f:
-            json.dump(latest_data, f, indent=2)
-        print(f"[OK] latest.json creado")
+    print(f"[INFO] Generando latest.json (sha256 + size)...")
+    latest_data = write_latest_json(latest_json_path, version, exe_path)
+    print(f"[OK] latest.json: version={latest_data['version']} size={latest_data['size']} sha256={latest_data['sha256']}")
     
     # Crear cliente S3
     try:
@@ -161,6 +179,8 @@ def main():
     print(f"✅ Subido: {s3_exe_key}")
     
     print(f"\n[2/3] Subiendo latest.json a S3...")
+    # El manifiesto va DESPUES del instalador: su creacion dispara el aviso
+    # realtime release.available (puente v3) y los clientes ya encuentran el .exe.
     s3_json_key = "versions/latest.json"
     if not upload_file_to_s3(s3_client, latest_json_path, s3_json_key, content_type='application/json'):
         sys.exit(1)

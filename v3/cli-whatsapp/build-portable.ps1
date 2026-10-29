@@ -121,6 +121,12 @@ $filesToCopy = @(
     "realtime.js",
     "poll-wait.js",
     "liveness.js",
+    "update-manifest.js",
+    "update-download.js",
+    "update-pause.js",
+    "update-helper.js",
+    "update-banner.js",
+    "in-session-update.js",
     "package.json",
     "package-lock.json"
 )
@@ -232,6 +238,8 @@ endlocal
 Set-Content -Path "$DIST_DIR\ANA-con-imagen.bat" -Value $launcherScriptImage -Encoding ASCII
 Write-Host "    [OK] Script de inicio con imagen creado" -ForegroundColor Green
 
+# Manifiesto provisional: upload-to-s3.py lo regenera con sha256 y size del
+# instalador compilado (aqui aun no existe).
 $latest = [ordered]@{
     version = $anaVersion
     url = "https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/ANA-$anaVersion.exe"

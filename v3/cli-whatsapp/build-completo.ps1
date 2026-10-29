@@ -91,6 +91,10 @@ if (Test-Path -Path $installerPath) {
     }
 
     $installerSize = (Get-Item $installerPath).Length / 1MB
+    # Integridad (add-in-session-updates): upload-to-s3.py escribe sha256 y size
+    # del instalador en latest.json; aqui solo se muestran para el registro del release.
+    $installerSha256 = (Get-FileHash -Algorithm SHA256 -Path $installerPath).Hash.ToLower()
+    $installerBytes = (Get-Item $installerPath).Length
     
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
@@ -99,7 +103,8 @@ if (Test-Path -Path $installerPath) {
     Write-Host ""
     Write-Host "Instalador generado:" -ForegroundColor Cyan
     Write-Host "  Archivo: $installerPath" -ForegroundColor White
-    Write-Host "  Tamano: $([math]::Round($installerSize, 2)) MB" -ForegroundColor White
+    Write-Host "  Tamano: $([math]::Round($installerSize, 2)) MB ($installerBytes bytes)" -ForegroundColor White
+    Write-Host "  SHA-256: $installerSha256" -ForegroundColor White
     Write-Host ""
     Write-Host "Contenido incluido:" -ForegroundColor Cyan
     Write-Host "  [OK] Node.js v18.20.2 portable" -ForegroundColor Green
