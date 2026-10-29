@@ -308,10 +308,15 @@ import {
   reviewRows,
   removeJournal,
   listOtherJournals,
+  computeAssignmentId,
+  sha256,
 } from "./assignment-journal.js";
+import { createResultsOutbox, backendPoster, buildResultItem } from "./results-outbox.js";
 
 // Canal realtime activo (add-realtime-v3-cli); se cierra con Ctrl+C.
 let activeRealtime = null;
+// Bandeja de resultados del historial de envíos (add-agent-send-history).
+let resultsOutbox = null;
 
 const REVIEW_ERROR =
   "Envío interrumpido por cierre del CLI; revisar antes de reenviar";
@@ -465,6 +470,15 @@ async function main() {
       // autenticado con el ID token de la sesión (nunca se persiste).
       remoteSettings.setTokenProvider(getIdToken);
       startRemoteSettings();
+
+      // Historial de envíos (add-agent-send-history): bandeja persistente de
+      // resultados por contacto; envía lo pendiente de ejecuciones anteriores.
+      try {
+        resultsOutbox = createResultsOutbox({ dir: DATA_DIR, agentId: identity.agent_id, post: backendPoster(backend) });
+        resultsOutbox.start();
+      } catch (e) {
+        console.error("⚠️  Historial de envíos no disponible:", e?.message || e);
+      }
 
       // Canal realtime (add-realtime-v3-cli): avisa asignaciones publicadas y
       // cambios de configuración; con el canal activo los polls son de respaldo
@@ -768,6 +782,19 @@ async function main() {
         }
       };
 
+      // Resultado por contacto para el historial (add-agent-send-history): solo
+      // encola en disco; el envío al backend nunca bloquea ni detiene el ciclo.
+      const reportResult = (contact, meta, { result = null, status, rowIndex } = {}) => {
+        if (!resultsOutbox || !meta) return;
+        try {
+          resultsOutbox.enqueue(
+            buildResultItem({ contact, result, status, rowIndex, assignmentId: meta.assignmentId, sourceKey: meta.sourceKey, campaign: meta.campaign }),
+          );
+        } catch (e) {
+          console.error("⚠️  No se pudo registrar el resultado para el historial:", e?.message || e);
+        }
+      };
+
       // Reporte a /contacts/pending: filas originales de los pendientes (o [] al final)
       // y, si hay, los contactos por revisar en `review`
       const reportAssignmentProgress = async (
@@ -851,6 +878,7 @@ async function main() {
         let journal = null;
         let assignmentContacts = [];
         let contacts = [];
+        let assignmentMeta = null;
         const resumed = loadJournal({
           dir: DATA_DIR,
           agentId: journalCfg.agent_id,
@@ -863,6 +891,11 @@ async function main() {
         } else if (resumed.status === "ok") {
           journal = resumed.journal;
           assignmentContacts = resumed.contacts;
+          assignmentMeta = {
+            assignmentId: journal.assignment_id,
+            sourceKey: journal.source_key || null,
+            campaign: journalCfg.campaign,
+          };
           // Contactos "en curso" al cerrar: no se reenvían, quedan por revisar
           for (const row of inFlightRows(journal)) {
             journalStep(markForReview, journal, row.index);
@@ -877,6 +910,7 @@ async function main() {
               sent_at: new Date().toISOString(),
               response: "",
             });
+            reportResult(c, assignmentMeta, { status: "por_revisar", rowIndex: row.index, result: { error: REVIEW_ERROR } });
           }
           contacts = pendingRows(journal).map((r) => assignmentContacts[r.index]);
           console.log(
@@ -901,6 +935,7 @@ async function main() {
                   index,
                   phone: c.phone,
                 })),
+                sourceKey: fetched.sourceKey,
               });
             } catch (e) {
               console.error(
@@ -908,6 +943,13 @@ async function main() {
                 e?.message || e,
               );
             }
+            assignmentMeta = journal
+              ? { assignmentId: journal.assignment_id, sourceKey: journal.source_key || null, campaign: journalCfg.campaign }
+              : {
+                  assignmentId: computeAssignmentId(new Date().toISOString(), sha256(fetched.csvText)),
+                  sourceKey: fetched.sourceKey || null,
+                  campaign: journalCfg.campaign,
+                };
           }
         }
         // Iteración abandonada por el latido: lo recibido queda en el registro
@@ -955,6 +997,9 @@ async function main() {
 
           journalStep(markInFlight, journal, contact.__rowIndex);
           const result = await sendMessage(contact, contact.message);
+          // Primero el resultado (deduplicado por id): si ANA se cierra antes de
+          // marcarlo procesado, el "por revisar" de la reanudación no lo pisa.
+          reportResult(contact, assignmentMeta, { result });
           journalStep(markDone, journal, contact.__rowIndex);
           results.push(result);
           sentSinceLastPause += 1;
