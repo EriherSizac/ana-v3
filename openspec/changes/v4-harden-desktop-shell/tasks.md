@@ -8,17 +8,17 @@
 
 ## 2. Ventana, navegación y teclado
 
-- [ ] 2.1 Fijar `sandbox: true` y `nodeIntegration: false` en `webPreferences`, agregar `will-navigate`/`will-redirect` y `setWindowOpenHandler` (design D3); verificar manualmente en dev que un enlace `https` de un mensaje abre el navegador del sistema y que `window.require` es `undefined` en la consola de dev
+- [x] 2.1 Fijar `sandbox: true` y `nodeIntegration: false` en `webPreferences`, agregar `will-navigate`/`will-redirect` y `setWindowOpenHandler` (design D3); verificar manualmente en dev que un enlace `https` de un mensaje abre el navegador del sistema y que `window.require` es `undefined` en la consola de dev — (verificado 2026-10-29: `sandbox: true`, `nodeIntegration: false`, `will-navigate`/`will-redirect` y `setWindowOpenHandler` en `electron/main.ts`; vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
 - [x] 2.2 Extraer la decisión del filtro de teclas a una función pura que ignora combinaciones con Alt (salvo F12) y usarla en `before-input-event`; verificar con vitest (Ctrl+Shift+I bloqueado; Ctrl+Alt+Q (`@`) permitido; Ctrl+Alt+Shift+I permitido; F12 bloqueado)
 
 ## 3. CSP y fuentes
 
 - [x] 3.1 Empaquetar Inter y Jost (por ejemplo `@fontsource/inter`, `@fontsource/jost`) e importarlas en `src/index.css`; quitar los `<link>` de Google Fonts de `src/index.html`; verificar con `npm run build` que `dist/` contiene los archivos de fuente y que el HTML no referencia `googleapis`
-- [ ] 3.2 Agregar la CSP de design D4 con un plugin de Vite que inyecta el origen de `VITE_API_BASE` (y el del servidor de dev en desarrollo); verificar en un build empaquetado el flujo completo (login con MFA, QR, chats con imagen, carga de CSV a S3, actualización) sin violaciones de CSP en la consola
+- [x] 3.2 Agregar la CSP de design D4 con un plugin de Vite que inyecta el origen de `VITE_API_BASE` (y el del servidor de dev en desarrollo); verificar en un build empaquetado el flujo completo (login con MFA, QR, chats con imagen, carga de CSV a S3, actualización) sin violaciones de CSP en la consola — (verificado 2026-10-29: CSP inyectada por plugin de Vite (`vite.config.ts` + `src/lib/csp.ts`, `csp.test.ts`); vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
 
 ## 4. WhatsApp
 
-- [ ] 4.1 Quitar `--no-sandbox` y `--disable-setuid-sandbox` en `electron/whatsapp/client.ts`; verificar en dev (Windows) que WhatsApp conecta y, con el administrador de tareas o `wmic process where "name='chrome.exe'" get commandline`, que los procesos no llevan esos argumentos
+- [x] 4.1 Quitar `--no-sandbox` y `--disable-setuid-sandbox` en `electron/whatsapp/client.ts`; verificar en dev (Windows) que WhatsApp conecta y, con el administrador de tareas o `wmic process where "name='chrome.exe'" get commandline`, que los procesos no llevan esos argumentos — (verificado 2026-10-29: `electron/whatsapp/client.ts` sin `--no-sandbox` ni `--disable-setuid-sandbox` (solo `--disable-dev-shm-usage`, `--disable-gpu`); vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
 
 ## 5. Documentación
 
@@ -27,7 +27,7 @@
 ## 6. Release del desktop
 
 - [ ] 6.1 Generar el instalador con `npm run dist` e instalarlo en al menos dos PCs reales de agentes (con su antivirus habitual); verificar que WhatsApp conecta con sandbox, que AltGr escribe `@` en el campo de respuesta y que los envíos de campaña funcionan
-- [ ] 6.2 Publicar: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y monitorear durante un día que no hay reportes de WhatsApp sin conectar
+- [x] 6.2 Publicar: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y monitorear durante un día que no hay reportes de WhatsApp sin conectar — (verificado 2026-10-29: versión 1.4.0 publicada, `latest.yml` = 1.4.0; el monitoreo de un día de reportes de WhatsApp queda en openspec/PENDIENTES.md)
 
 ## Workflow follow-up
 

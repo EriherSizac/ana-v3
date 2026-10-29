@@ -9,7 +9,7 @@
 ## 2. Integración en la ventana manual
 
 - [x] 2.1 En `initManualWhatsApp`, reemplazar el `addInitScript` de teclado/menú contextual (~538–564) por `manualPage.addInitScript({ content: manualKeyPolicyInitScript() })`; verificar con `npx esbuild index.js --bundle --platform=node --format=cjs --outfile=dist/app.cjs --external:playwright` que el bundle se genera y que `dist/app.cjs` contiene el cuerpo de `classifyKeyEvent` sin renombres que rompan referencias internas
-- [ ] 2.2 Quitar los `keydown` y `contextmenu` duplicados de los `manualPage.evaluate` posteriores a la conexión (~688) y del handler `on('load')` (~763), conservando `window.applyManualUIRestrictions()`; verificar tras F5 que el menú contextual sigue bloqueado y que F12 no abre DevTools
+- [x] 2.2 Quitar los `keydown` y `contextmenu` duplicados de los `manualPage.evaluate` posteriores a la conexión (~688) y del handler `on('load')` (~763), conservando `window.applyManualUIRestrictions()`; verificar tras F5 que el menú contextual sigue bloqueado y que F12 no abre DevTools — (verificado 2026-10-29: el `evaluate` post-conexión y el `on('load')` solo llaman `window.applyManualUIRestrictions()`; la política vive en el init script `manualKeyPolicyInitScript()` (`test/manual-key-policy.test.js`); el `keydown` restante es el bloqueo de Delete/Backspace fuera de editables, no un duplicado; prueba F5/F12 en 3.5)
 - [x] 2.3 Actualizar el comentario del init script para describir la política (denegación por defecto + excepciones); verificar con `node --check whatsapp-manual.js`
 
 ## 3. Verificación manual en WhatsApp Web real (Windows)
@@ -24,5 +24,5 @@
 ## 4. Documentación y release
 
 - [x] 4.1 Agregar a `v3/cli-whatsapp/README-USUARIO.md` una nota "Teclado en la ventana manual" (AltGr y códigos Alt funcionan; copiar/pegar/deshacer solo dentro del cuadro de mensaje; atajos de WhatsApp desactivados); verificar con `grep -n "AltGr" README-USUARIO.md`
-- [ ] 4.2 Desde `v3/cli-whatsapp`, ejecutar `npm run build` (bump patch, `dist/ANA.exe`, `dist/latest.json`, `setup-and-upload.ps1`); verificar que `https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/latest.json` muestra la nueva versión
+- [x] 4.2 Desde `v3/cli-whatsapp`, ejecutar `npm run build` (bump patch, `dist/ANA.exe`, `dist/latest.json`, `setup-and-upload.ps1`); verificar que `https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/latest.json` muestra la nueva versión — (verificado 2026-10-29: CLI 1.0.47 y luego 1.0.48 publicados; `versions/latest.json` = 1.0.48 y GET público 200 de `ANA-1.0.48.exe`/`ANA-latest.exe` (antes 403))
 - [ ] 4.3 En un equipo de agente con teclado latinoamericano y la versión anterior, reiniciar ANA y verificar que se autoactualiza y que puede escribir `@` en la ventana manual

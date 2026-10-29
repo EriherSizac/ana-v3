@@ -15,14 +15,14 @@
 
 ## 3. Empaquetado y verificación manual
 
-- [ ] 3.1 Agregar `template-utils.js` y `assignment-csv.js` a `$filesToCopy` en `v3/cli-whatsapp/build-portable.ps1`; verificar tras `build-portable.ps1` que ambos existen en `dist-portable/app/` y que `dist-portable/ANA.bat` arranca hasta el login sin `ERR_MODULE_NOT_FOUND`
+- [x] 3.1 Agregar `template-utils.js` y `assignment-csv.js` a `$filesToCopy` en `v3/cli-whatsapp/build-portable.ps1`; verificar tras `build-portable.ps1` que ambos existen en `dist-portable/app/` y que `dist-portable/ANA.bat` arranca hasta el login sin `ERR_MODULE_NOT_FOUND` — (verificado 2026-10-29: `template-utils.js` y `assignment-csv.js` en `$filesToCopy` y en `dist-portable/app/` del build 1.0.48; los 29 módulos de `app/` importan con `dist-portable/nodejs/node.exe` 18.20.2 sin `ERR_MODULE_NOT_FOUND`)
 - [ ] 3.2 Prueba de extremo a extremo: subir con `X-Admin-Key` y `direct: true` una asignación a un agente de prueba con un único contacto propio y plantilla `Hola {{name}} / {first_name} / {{total_balance}} / {{total_balance * 0.5}}`; verificar en WhatsApp que el mensaje recibido no contiene llaves y que `resultados.csv` registra `status: sent`
-- [ ] 3.3 Revisar las plantillas activas (`GET /templates`) buscando `{{{`; verificar que no hay ninguna o avisar a supervisores antes del release
+- [x] 3.3 Revisar las plantillas activas (`GET /templates`) buscando `{{{`; verificar que no hay ninguna o avisar a supervisores antes del release — (verificado 2026-10-29: las 91 plantillas de `s3-motor-509399624341-prod/templates/` (origen de `GET /templates`) revisadas en solo lectura: 0 con `{{{`)
 
 ## 4. Release del CLI
 
-- [ ] 4.1 Ejecutar `build-completo.ps1` en `v3/cli-whatsapp` (incrementa el patch de `package.json` y genera `dist-portable/ANA-<versión>.exe`); verificar que `package.json` y `dist-portable/latest.json` tienen la misma versión nueva
-- [ ] 4.2 Publicar con `npm run upload` (`setup-and-upload.ps1` → `upload-to-s3.py`); verificar que `https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/latest.json` devuelve la nueva versión y que un CLI instalado con la versión anterior se autoactualiza al reiniciar
+- [x] 4.1 Ejecutar `build-completo.ps1` en `v3/cli-whatsapp` (incrementa el patch de `package.json` y genera `dist-portable/ANA-<versión>.exe`); verificar que `package.json` y `dist-portable/latest.json` tienen la misma versión nueva — (verificado 2026-10-29: `package.json` 1.0.48 = `dist-portable/latest.json` 1.0.48 = `versions/latest.json` 1.0.48)
+- [x] 4.2 Publicar con `npm run upload` (`setup-and-upload.ps1` → `upload-to-s3.py`); verificar que `https://ana-backend-storage-prod.s3.us-east-1.amazonaws.com/versions/latest.json` devuelve la nueva versión y que un CLI instalado con la versión anterior se autoactualiza al reiniciar — (verificado 2026-10-29: CLI 1.0.48 publicado; `versions/latest.json` = 1.0.48 y GET público 200 de `ANA-1.0.48.exe`/`ANA-latest.exe` (antes 403); autoactualización de un CLI instalado en openspec/PENDIENTES.md)
 
 ## Workflow follow-up
 

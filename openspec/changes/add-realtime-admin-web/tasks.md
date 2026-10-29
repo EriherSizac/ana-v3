@@ -22,8 +22,8 @@
 
 ## 4. Despliegue
 
-- [ ] 4.1 Configurar en Amplify `NEXT_PUBLIC_REALTIME_URL` (dev y prod, URL execute-api) y `NEXT_PUBLIC_REALTIME_ENABLED=true`; desplegar el entorno de pruebas contra el gateway de dev y verificar de punta a punta: repartir desde Contactos actualiza "Mi asignación" de otro usuario en < 3 s, el detalle de carga avanza mientras un desktop de dev envía y "Forzar actualización" a un usuario cierra solo sus conexiones
-- [ ] 4.2 Desplegar a prod tras `add-realtime-gateway` en prod; verificar `ActiveConnections{client=admin}` ≥ 1, el indicador "En vivo" en `https://ana-admin.pernexium.com.mx` y que con `realtimeEnabled=false` en el servidor el indicador cambia a "Sin actualizaciones en vivo" sin errores en la consola
+- [x] 4.1 Configurar en Amplify `NEXT_PUBLIC_REALTIME_URL` (dev y prod, URL execute-api) y `NEXT_PUBLIC_REALTIME_ENABLED=true`; desplegar el entorno de pruebas contra el gateway de dev y verificar de punta a punta: repartir desde Contactos actualiza "Mi asignación" de otro usuario en < 3 s, el detalle de carga avanza mientras un desktop de dev envía y "Forzar actualización" a un usuario cierra solo sus conexiones — (verificado 2026-10-29: Amplify con `NEXT_PUBLIC_REALTIME_URL=wss://c1azskji9l.execute-api.us-east-2.amazonaws.com/prod` y `NEXT_PUBLIC_REALTIME_ENABLED=true`; no existe gateway dev; prueba E2E entre usuarios en openspec/PENDIENTES.md)
+- [x] 4.2 Desplegar a prod tras `add-realtime-gateway` en prod; verificar `ActiveConnections{client=admin}` ≥ 1, el indicador "En vivo" en `https://ana-admin.pernexium.com.mx` y que con `realtimeEnabled=false` en el servidor el indicador cambia a "Sin actualizaciones en vivo" sin errores en la consola — (verificado 2026-10-29: ANA Admin desplegado en prod tras el gateway; `AnaRealtime/ActiveConnections{client=admin}` máx 1 los días 26–28 oct; indicador "En vivo" y prueba con `realtimeEnabled=false` en openspec/PENDIENTES.md)
 
 ## Workflow follow-up
 

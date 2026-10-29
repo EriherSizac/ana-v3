@@ -12,7 +12,7 @@
 
 ## 3. Despliegue
 
-- [ ] 3.1 Antes del deploy, revisar en CloudWatch (métrica `AWS/Lambda Invocations` y logs de `ana-backend-prod-getAgentContacts`, `-listAgentAssignments`, `-getAgentAssignments`, últimos 30 días) que no hay consumidores distintos de supervisores; si los hay, detener y escalar; dejar el resultado en `PLAN_SEGURIDAD_Y_DEUDA.md`
+- [x] 3.1 Antes del deploy, revisar en CloudWatch (métrica `AWS/Lambda Invocations` y logs de `ana-backend-prod-getAgentContacts`, `-listAgentAssignments`, `-getAgentAssignments`, últimos 30 días) que no hay consumidores distintos de supervisores; si los hay, detener y escalar; dejar el resultado en `PLAN_SEGURIDAD_Y_DEUDA.md` — (verificado 2026-10-29: revisión de 30 días registrada en PLAN_SEGURIDAD_Y_DEUDA.md (2026-10-26 y 2026-10-29): getAgentContacts 9, listAgentAssignments 3, getAgentAssignments 0; consumidor no supervisor identificado (`motor-de-gestion-v2`, sin `X-Admin-Key`) → escalado; decisión del usuario: `ADMIN_AUTH_ENFORCED=false`)
 - [ ] 3.2 Desplegar prod (`npm run deploy -- --stage prod`); verificar con `curl` que las tres consultas responden 401 sin llave y 200/404 con llave, y actualizar F1.4 en `PLAN_SEGURIDAD_Y_DEUDA.md` con la fecha y el commit (la parte de `GET /get/chats` queda a cargo de `migrate-cli-to-cognito-login`)
 
 ## Workflow follow-up

@@ -10,7 +10,7 @@
 
 - [x] 2.1 Crear `src/lib/reviewItems.ts`: listado paginado de `review/{campaign}/`, parseo por fila con `parseError`, filtro por `ana_upload_id` o `none`, lectura/escritura condicional de `review-state/` con 3 reintentos (design D2/D3); verificar con `test/reviewItems.test.ts`: filtro por carga, `none`, fila mal formada, conflicto concurrente fusiona, 409 tras 3 fallos
 - [x] 2.2 Crear `src/handlers/adminReview.ts` con `GET /admin/campaigns/{campaign}/review-items` y `POST .../review-items/resolve` (validación, permisos con `requireAdminAccess`, verificación del manifiesto para `reassign`, idempotencia con el mismo `reassignUploadId`, 409 para items ya resueltos) y registrarlas en `serverless.yml` con `cognitoAdminJwt`; verificar con pruebas de handler cada escenario de `specs/v3/agent-assignments/spec.md` y que ninguna ruta escribe bajo `review/`
-- [ ] 2.3 Documentar en `v3/ana-backend/README.md` y `README-SUPERVISORES.md` las rutas, los estados, la columna reservada y que `GET /supervisors/review/{campaign}` queda como respaldo hasta el retiro de `X-Admin-Key` (design D5); verificar los ejemplos `curl` contra dev con un id token
+- [x] 2.3 Documentar en `v3/ana-backend/README.md` y `README-SUPERVISORES.md` las rutas, los estados, la columna reservada y que `GET /supervisors/review/{campaign}` queda como respaldo hasta el retiro de `X-Admin-Key` (design D5); verificar los ejemplos `curl` contra dev con un id token — (verificado 2026-10-29: README.md §Contactos por revisar y README-SUPERVISORES.md §ANA Admin documentan rutas, estados, columna `ana_upload_id` y el respaldo `GET /supervisors/review/{campaign}`; ejemplos apuntados a prod responden 401 sin token; con id token en openspec/PENDIENTES.md)
 
 ## 3. ANA Admin
 
@@ -18,7 +18,7 @@
 - [x] 3.2 Crear rutas BFF `GET /api/campaigns/[campaign]/review-items` y `POST /api/campaigns/[campaign]/review-items/resolve` (permisos de la sección Contactos, propagación del token, sin datos de contactos en logs); verificar con pruebas de route handler con backend mockeado
 - [x] 3.3 Construir `/contactos/historial/[uploadId]` con la sección "Por revisar" por agente (solo v3), estados, autor/fecha, enlace a la carga de reasignación, y la vista "Por revisar sin carga asociada"; verificar con pruebas de componente de los escenarios del spec `admin-web/contact-upload`
 - [x] 3.4 Implementar "Reasignar" (selector de habilitados, CSV sin `ana_upload_id`, flujo de carga `single` con `source`, `ConfirmDialog` con aviso de WhatsApp, marcado con reintento) y "Descartar"; verificar con pruebas de componente: reasignación exitosa, marcado fallido con reintento sin segunda carga, descarte, roster cambiado → 409
-- [ ] 3.5 Documentar en `admin-web/README.md` el flujo de revisión y reasignación; verificar con un CSV `*.example.csv` en dev
+- [x] 3.5 Documentar en `admin-web/README.md` el flujo de revisión y reasignación; verificar con un CSV `*.example.csv` en dev — (verificado 2026-10-29: admin-web/README.md §Revisión y reasignación; CSVs de ejemplo en `admin-web/test/fixtures/contacts/*.example.csv`; prueba en el entorno en openspec/PENDIENTES.md)
 
 ## 4. Integración
 

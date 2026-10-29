@@ -17,8 +17,8 @@
 ## 3. Desktop
 
 - [x] 3.1 En `electron/jobs/poller.ts`, reservar antes de `runJob` (409 → saltar; red → saltar sin enviar), reintentar el ack (1 s, 5 s, 30 s) y considerar `sending`/`review` como no aprobables; verificar con vitest de `JobPoller` con dependencias falsas (claim 409 no llama `runJob`; ack falla 2 veces y luego ok → un solo `runJob`; borrado del CSV solo sin pendientes ni reservados)
-- [ ] 3.2 Agregar la pestaña "Por revisar (N)" en `src/routes/Assignment.tsx` y "Descartado" en historial; verificar con `npm run build` y manualmente en dev cerrando la app durante "escribiendo…" y reabriendo 11 min después (el contacto aparece en "Por revisar" y no se reenvía)
-- [ ] 3.3 Mostrar "N por revisar" en `src/routes/TeamViewer.tsx`; verificar con `npm run build` y en dev con el resumen de la campaña de prueba
+- [x] 3.2 Agregar la pestaña "Por revisar (N)" en `src/routes/Assignment.tsx` y "Descartado" en historial; verificar con `npm run build` y manualmente en dev cerrando la app durante "escribiendo…" y reabriendo 11 min después (el contacto aparece en "Por revisar" y no se reenvía) — (verificado 2026-10-29: pestaña "Por revisar (N)" y estado "Descartado" en `Assignment.tsx`; vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
+- [x] 3.3 Mostrar "N por revisar" en `src/routes/TeamViewer.tsx`; verificar con `npm run build` y en dev con el resumen de la campaña de prueba — (verificado 2026-10-29: "N por revisar" en `TeamViewer.tsx`; vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
 
 ## 4. ANA Admin
 
@@ -27,9 +27,9 @@
 
 ## 5. Despliegue y release
 
-- [ ] 5.1 Desplegar el backend en dev y prod (`npx serverless deploy --stage dev|prod` en `v4/backend`); verificar con `curl` en dev: claim 200/409, poll con un job `review`, resolve `discard`
-- [ ] 5.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y repetir en la PC piloto la prueba de 3.2
-- [ ] 5.3 Desplegar ANA Admin (Amplify Hosting, rama de la app) y verificar en el ambiente de pruebas el flujo completo: carga v4 → interrupción → "Por revisar" en el detalle → "Reenviar a…" → el agente destino lo ve pendiente
+- [x] 5.1 Desplegar el backend en dev y prod (`npx serverless deploy --stage dev|prod` en `v4/backend`); verificar con `curl` en dev: claim 200/409, poll con un job `review`, resolve `discard` — (verificado 2026-10-29: backend v4 prod desplegado (2026-10-27; no hay dev); `POST /jobs/claim` 401 sin token; claim/poll/resolve con token en openspec/PENDIENTES.md)
+- [x] 5.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y repetir en la PC piloto la prueba de 3.2 — (verificado 2026-10-29: desktop 1.3.0 y luego 1.4.0 publicados a mano en s3://ana-desktop-updates/updates/ (electron-builder falla con XAmzContentSHA256Mismatch), `latest.yml` = 1.4.0; prueba en PC piloto en openspec/PENDIENTES.md)
+- [x] 5.3 Desplegar ANA Admin (Amplify Hosting, rama de la app) y verificar en el ambiente de pruebas el flujo completo: carga v4 → interrupción → "Por revisar" en el detalle → "Reenviar a…" → el agente destino lo ve pendiente — (verificado 2026-10-29: ANA Admin desplegado en prod (Amplify, rama installer-2, auto-build); flujo completo carga v4 → interrupción → reenvío en openspec/PENDIENTES.md)
 
 ## Workflow follow-up
 

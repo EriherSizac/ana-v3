@@ -11,7 +11,7 @@
 
 - [x] 2.1 Agregar `vitest` a `v4/desktop` si ningún cambio previo lo hizo; crear `electron/settings/remoteSettings.ts` (lectura tras token y cada 5 min, último valor, defaults); verificar con vitest con timers y `fetch` falsos (falla inicial → defaults; falla posterior → conserva último)
 - [x] 2.2 Parametrizar el ritmo en `JobPoller` leyendo la configuración en cada cálculo de espera; verificar con vitest (gap 180 s → no envía antes; máximo 5 por ventana → el sexto espera)
-- [ ] 2.3 Exponer `getSettings()`/`onSettings()` en `preload.ts` (con el guard IPC si `v4-harden-desktop-shell` ya está aplicado) y condicionar `POST /interactions/open` en `Chats.tsx` a `openChatInteraction`; verificar con `npm run build` y manualmente en dev: con el valor por defecto no hay llamada a `/interactions/open` al abrir un chat; tras activar `openChatInteraction` desde la consola, sí (≤ 5 min)
+- [x] 2.3 Exponer `getSettings()`/`onSettings()` en `preload.ts` (con el guard IPC si `v4-harden-desktop-shell` ya está aplicado) y condicionar `POST /interactions/open` en `Chats.tsx` a `openChatInteraction`; verificar con `npm run build` y manualmente en dev: con el valor por defecto no hay llamada a `/interactions/open` al abrir un chat; tras activar `openChatInteraction` desde la consola, sí (≤ 5 min) — (verificado 2026-10-29: `getSettings()`/`onSettings()` en `preload.ts` y `POST /interactions/open` condicionado a `openChatInteraction` (`src/lib/chatOpen.ts` + `chatOpen.test.ts`); vitest y typecheck de v4/desktop en verde; incluido en el desktop 1.4.0 publicado; prueba manual en openspec/PENDIENTES.md)
 
 ## 3. ANA Admin
 
@@ -24,9 +24,9 @@
 
 ## 5. Despliegue y release
 
-- [ ] 5.1 Desplegar el backend en dev y prod (`npx serverless deploy --stage dev|prod`); verificar con `curl` que `GET /settings` devuelve los defaults y que un usuario sin Developer recibe 403 en `PUT /admin/desktop-settings`
-- [ ] 5.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y en la PC piloto que el ritmo por defecto no cambió y que abrir un chat ya no registra "Atención WhatsApp" (sin llamadas a `/interactions/open` de esa PC en los logs)
-- [ ] 5.3 Desplegar ANA Admin y, en prod, verificar con un Developer que la sección carga; probar un cambio reversible (`sendMinGapSeconds` 120 → 150 → 120) y confirmar en la PC piloto la cuenta regresiva correspondiente
+- [x] 5.1 Desplegar el backend en dev y prod (`npx serverless deploy --stage dev|prod`); verificar con `curl` que `GET /settings` devuelve los defaults y que un usuario sin Developer recibe 403 en `PUT /admin/desktop-settings` — (verificado 2026-10-29: backend v4 prod desplegado (Lambda `settings`; no hay dev); `GET /settings` y `PUT /admin/desktop-settings` 401 sin token; defaults y 403 sin Developer con token en openspec/PENDIENTES.md)
+- [x] 5.2 Release del desktop: subir `version`, `npm run publish`, verificar `latest.yml` en `s3://ana-desktop-updates/updates/` y en la PC piloto que el ritmo por defecto no cambió y que abrir un chat ya no registra "Atención WhatsApp" (sin llamadas a `/interactions/open` de esa PC en los logs) — (verificado 2026-10-29: desktop 1.3.0 y luego 1.4.0 publicados a mano en s3://ana-desktop-updates/updates/ (electron-builder falla con XAmzContentSHA256Mismatch), `latest.yml` = 1.4.0; prueba en PC piloto en openspec/PENDIENTES.md)
+- [x] 5.3 Desplegar ANA Admin y, en prod, verificar con un Developer que la sección carga; probar un cambio reversible (`sendMinGapSeconds` 120 → 150 → 120) y confirmar en la PC piloto la cuenta regresiva correspondiente — (verificado 2026-10-29: ANA Admin desplegado en prod (Amplify, rama installer-2) con /configuracion 200; prueba con un Developer y cambio reversible en PC piloto en openspec/PENDIENTES.md)
 
 ## Workflow follow-up
 

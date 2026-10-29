@@ -2,6 +2,8 @@
 
 Base URL: **`https://ow24p7ablb.execute-api.us-east-1.amazonaws.com`**
 
+Dominio propio: `https://ana-prod.pernexium.com.mx`. Solo existe el stage `prod` (no hay `ana-backend-dev`): los ejemplos `curl` de este documento apuntan a prod; sin token, las rutas `/agent/*` y `/admin/*` responden 401.
+
 ## **Agente y campaña: insensibles a mayúsculas**
 
 En **todas** las rutas de las tablas de abajo que reciben agente (`{agent}`, `{agentId}`, `agent_id`) o campaña (`{campaign}`, `{campaignId}`, `campaign`), en la ruta o en el body, el backend quita espacios laterales y convierte a minúsculas antes de construir llaves S3: `Erick`/` Prueba ` se guardan y se leen como `erick`/`prueba` (p. ej. `agents/prueba/credentials.csv`, `agents/prueba/erick-contacts-{ts}.csv`, `backups/prueba/erick/…`). Las respuestas devuelven los valores normalizados; un valor vacío tras normalizar responde el 400 de campo requerido de cada ruta. Excepción: `/templates` (bucket del motor) no se normaliza. Los objetos antiguos con mayúsculas se rescatan con `scripts/migrate-campaign-case.ts` (ver [README-SUPERVISORES.md](README-SUPERVISORES.md#migración-de-llaves-con-mayúsculas)).
@@ -142,15 +144,15 @@ consulta guardada `ana-backend-{stage}/agent-auth` en Logs Insights:
 filter evt = "agent_auth" | stats count() by reason, cliVersion, agent
 ```
 
-Ejemplos (dev; `$ID_TOKEN` = ID token de un usuario de prueba emitido para `ana-v3-cli`):
+Ejemplos (prod: no existe stage dev; `$ID_TOKEN` = ID token de un usuario de prueba emitido para el App Client `1r6niimhkl2fmias6kk85n4ou4`):
 
 ```bash
 # /agent/* sin token → 401 (aun en modo reporte)
-curl -i https://ana-dev.pernexium.com.mx/agent/campaigns
+curl -i https://ana-prod.pernexium.com.mx/agent/campaigns
 # con token → 200 {"username":"...","campaigns":[...]}
-curl -H "Authorization: Bearer $ID_TOKEN" -H "X-Ana-Cli-Version: 1.0.47" https://ana-dev.pernexium.com.mx/agent/campaigns
+curl -H "Authorization: Bearer $ID_TOKEN" -H "X-Ana-Cli-Version: 1.0.47" https://ana-prod.pernexium.com.mx/agent/campaigns
 # modo reporte: sin token sigue respondiendo 200/404 y registra reason "missing"
-curl -i https://ana-dev.pernexium.com.mx/get/chats/erick/prueba
+curl -i https://ana-prod.pernexium.com.mx/get/chats/erick/prueba
 ```
 
 **Transición y rollback** (design D6/D11): desplegar con `AGENT_AUTH_ENFORCED=false`,
@@ -218,10 +220,10 @@ ilegibles, de otra versión o vencidos = error (no se habilita a nadie).
 
 ```bash
 TOKEN=<id token de ANA Admin>
-curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/roster
+curl -H "Authorization: Bearer $TOKEN" https://ana-prod.pernexium.com.mx/admin/campaigns/prueba/roster
 curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"agents":[{"username":"ana.lopez","enabled":false}]}' \
-  https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/roster/agents
+  https://ana-prod.pernexium.com.mx/admin/campaigns/prueba/roster/agents
 ```
 
 ### Renombrado de campañas al catálogo de v4
@@ -273,8 +275,8 @@ las retira `migrate-cli-to-cognito-login`.
 ```bash
 curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"uploadId":"20261026T100000-abcdef12","fileName":"cartera.csv","mode":"single","files":[{"agent":"ana.lopez","csv":"contact_phone,first_name\n5215500000001,Ana"}]}' \
-  https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/contacts
-curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/uploads
+  https://ana-prod.pernexium.com.mx/admin/campaigns/prueba/contacts
+curl -H "Authorization: Bearer $TOKEN" https://ana-prod.pernexium.com.mx/admin/campaigns/prueba/uploads
 ```
 
 La ruta de supervisor con `X-Admin-Key` (`/supervisors/agents/{agent}/{campaign}/contacts`)
@@ -307,10 +309,10 @@ revierte lo publicado y restaura las fuentes; el mismo `publishId` devuelve el
 manifiesto sin volver a publicar.
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/agent/assignments/prueba
+curl -H "Authorization: Bearer $TOKEN" https://ana-prod.pernexium.com.mx/agent/assignments/prueba
 curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"publishId":"20261026T120000-abcdef12","template":"Hola {{first_name}}","phoneColumns":["phone_number"],"sources":[{"key":"assignments/agents/prueba/ana.lopez-contacts-2026-10-26T10-00-00-000Z.csv","etag":"\"<etag>\"","rows":[0,1]}]}' \
-  https://ana-dev.pernexium.com.mx/agent/assignments/prueba/publish
+  https://ana-prod.pernexium.com.mx/agent/assignments/prueba/publish
 ```
 
 ### Configuración remota del CLI (`config/cli-settings.json`)
@@ -334,9 +336,9 @@ objeto devuelve todo a los valores por defecto.
 | GET | `/agent/settings` | CLI con ID token (autenticación de `migrate-cli-to-cognito-login`; se registra con su authorizer de agentes) | `{settings, updatedAt}`; objeto ilegible → 500 `{"error":"Configuración no disponible"}` |
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" https://ana-dev.pernexium.com.mx/admin/cli-settings
+curl -H "Authorization: Bearer $TOKEN" https://ana-prod.pernexium.com.mx/admin/cli-settings
 curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"settings":{"noWhatsappConsultRegistration":true}}' https://ana-dev.pernexium.com.mx/admin/cli-settings
+  -d '{"settings":{"noWhatsappConsultRegistration":true}}' https://ana-prod.pernexium.com.mx/admin/cli-settings
 ```
 
 Se edita desde ANA Admin → **Configuración**.
@@ -361,7 +363,7 @@ sin contenido.
 Regenerar el índice (idempotente; repetir tras cualquier movimiento nuevo a `legacy/`):
 
 ```bash
-npx tsx scripts/build-legacy-chat-index.ts --bucket ana-backend-storage-dev --profile pernexium            # dry-run
+npx tsx scripts/build-legacy-chat-index.ts --bucket ana-backend-storage-prod --profile pernexium           # dry-run (solo lectura)
 npx tsx scripts/build-legacy-chat-index.ts --bucket ana-backend-storage-prod --profile pernexium --apply   # escribe legacy/index/*.json
 npx tsx scripts/build-legacy-chat-index.ts --bucket ... --campaign prueba --apply                        # una campaña
 ```
@@ -390,8 +392,8 @@ con la campaña. Los estados viven en `review-state/{campaign}/{agent}/{assignme
 solo lectura hasta el retiro de la llave.
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" "https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/review-items?uploadId=20261026T1530-ab12cd34"
+curl -H "Authorization: Bearer $TOKEN" "https://ana-prod.pernexium.com.mx/admin/campaigns/prueba/review-items?uploadId=20261026T1530-ab12cd34"
 curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"action":"discard","items":[{"agent":"ana.lopez","assignmentId":"20261026T1600-deadbeef","phone":"5215500000001"}]}' \
-  https://ana-dev.pernexium.com.mx/admin/campaigns/prueba/review-items/resolve
+  https://ana-prod.pernexium.com.mx/admin/campaigns/prueba/review-items/resolve
 ```
