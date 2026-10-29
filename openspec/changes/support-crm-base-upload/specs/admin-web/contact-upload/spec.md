@@ -92,3 +92,122 @@ Al publicar desde "Mi asignación" (v3), un teléfono SHALL omitirse solo si ya 
 #### Scenario: Mismo crédito en dos archivos
 - **WHEN** el agente publica dos filas con `id_credito=123` y el mismo teléfono
 - **THEN** el archivo publicado tiene una sola fila para ese teléfono
+
+### Requirement: Pegado sin congelar la página
+El área "Pegar desde Excel" MUST NOT guardar el texto pegado en el estado de React ni pintarlo completo: el texto se toma del evento de pegado (`text/plain` del portapapeles) y la página muestra solo un resumen (líneas, tamaño) y las primeras 3 líneas recortadas; si se escribió a mano, el texto se lee del área una sola vez al pulsar "Usar datos pegados". "Quitar datos pegados" descarta el texto.
+
+#### Scenario: Rango grande pegado
+- **WHEN** el líder pega un rango de 30 000 filas
+- **THEN** el área de texto queda vacía, la página muestra "Datos pegados: 30,001 líneas · <tamaño>" con 3 líneas de muestra y sigue respondiendo
+
+### Requirement: Procesamiento en segundo plano
+La lectura, validación y reparto de un archivo o texto pegado SHALL ejecutarse en un Web Worker con las mismas funciones puras que usa el BFF (lectura, teléfonos, fechas de Excel, duplicados por crédito, plan y hash). Sin soporte de Worker, el mismo procesamiento corre en el hilo principal. Mientras procesa, los demás controles siguen respondiendo y "Vista previa" queda deshabilitada.
+
+#### Scenario: Página activa durante el proceso
+- **WHEN** el Worker valida un archivo de 100 000 filas
+- **THEN** el líder puede cambiar el modo de reparto y "Vista previa" está deshabilitada hasta terminar
+
+### Requirement: Progreso y cancelación
+La página SHALL mostrar, mientras procesa, una barra de progreso con la fase ("Lectura", "Validación", "Reparto"), el porcentaje y las filas procesadas de un total, y un botón "Cancelar" que detiene el Worker y descarta lo leído.
+
+#### Scenario: Progreso de validación
+- **WHEN** el Worker reporta 75 000 de 100 000 filas en validación
+- **THEN** la página muestra "Validación · 75% (75,000 de 100,000 filas)" y la barra en 75
+
+#### Scenario: Cancelar
+- **WHEN** el líder pulsa "Cancelar" durante la lectura
+- **THEN** el procesamiento se detiene, desaparece la barra y no queda archivo leído
+
+### Requirement: Carga v3 grande por S3
+Los límites de v3 SHALL ser 50 MB (texto en UTF-8) y 200 000 filas (reemplazan 4 MB y 20 000 de "Lectura de la base CRM" y "Pegar desde Excel"). Hasta 4 MB la carga viaja en la solicitud como antes; con más de 4 MB el navegador arma el CSV maestro (encabezado + filas válidas en el orden del plan), lo sube directo a S3 con una URL firmada y entrega `uploadId`, `sourceKey` y el plan sin `csv`.
+
+#### Scenario: Base de 120 000 filas
+- **WHEN** el líder carga para v3 un CSV de 30 MB y 120 000 filas y confirma
+- **THEN** el archivo se sube a S3 con la URL firmada, cada agente recibe sus filas igual que en una carga en línea y el objeto de `uploads-incoming/` se borra
+
+#### Scenario: Más de 50 MB
+- **WHEN** el archivo para v3 supera 50 MB
+- **THEN** la página muestra "El archivo supera 50 MB para v3" y no lo procesa
+
+### Requirement: URL firmada para la carga v3
+`POST /api/campaigns/{campaign}/uploads/presign` SHALL pedir a `POST /admin/campaigns/{campaign}/contacts/presign` de v3 (`cognitoAdminJwt`, permisos de la carga), con un `uploadId` nuevo, una URL de PUT de 15 minutos a `uploads-incoming/{campaign}/{uploadId}.csv` con `text/csv` y el tamaño firmados; más de 50 MB es 413. El bucket permite PUT por CORS desde `https://ana-admin.pernexium.com.mx` y expira `uploads-incoming/` en 1 día.
+
+#### Scenario: Tamaño firmado
+- **WHEN** el navegador pide la URL para 6 MB
+- **THEN** la URL firma `content-length` y `content-type` y vence en 900 segundos
+
+### Requirement: Entrega v3 desde S3
+Con `sourceKey`, el BFF SHALL verificar el roster contra el orden de agentes y los conteos del plan (409 si difiere) y reenviar `{uploadId, fileName, mode, sourceKey, plan}` a la carga de v3. La Lambda exige el `sourceKey` de ese `uploadId`, lee el objeto, reparte la fila i al agente i mod n, verifica conteos y hash, escribe lo mismo que la carga en línea y borra el objeto al completar.
+
+#### Scenario: Equivalencia con la carga en línea
+- **WHEN** el mismo archivo se entrega por S3 y en línea
+- **THEN** los archivos por agente son idénticos (salvo `ana_upload_id`)
+
+#### Scenario: Archivo subido inexistente
+- **WHEN** la carga por S3 llega sin que exista el objeto `uploads-incoming/{campaign}/{uploadId}.csv`
+- **THEN** v3 responde 400 "No se encontró el archivo subido; vuelve a cargarlo" y no escribe archivos
+
+#### Scenario: Plan distinto del archivo
+- **WHEN** los conteos o el hash del plan no coinciden con el CSV maestro
+- **THEN** v3 responde 409 y la página pide revisar la nueva vista previa
+
+### Requirement: Límites de v4
+v4 SHALL mantener 10 MB y 50 000 filas (máximo del trigger CSV); la página muestra ambos límites y aclara que el de filas es el del procesador de v4.
+
+#### Scenario: Pegado demasiado grande para v4
+- **WHEN** el texto pegado supera 10 MB con flota `v4`
+- **THEN** la página muestra "El texto pegado supera 10 MB para v4" y no lo procesa
+
+### Requirement: Fechas de Excel
+Al leer un archivo o pegado y al escribir la carga de v3, un número de serie de Excel de 20 000 a 80 000 (entero o decimal) en una columna de fecha (nombre con `fecha` o `date`) SHALL pasar a `dd/mm/aaaa` (sistema 1900 con el 29/02/1900 ficticio; sin hora); en `hora`/`hora_*` una fracción de 0 a 1 pasa a `HH:MM:SS`. Valores formateados, texto y otras columnas (p. ej. `saldo_*`) MUST NOT cambiar. La página indica cuántas fechas convirtió.
+
+#### Scenario: Fecha copiada como número
+- **WHEN** una fila trae `fecha_corte=45961` y `saldo_total=45961`
+- **THEN** se entrega `fecha_corte=31/10/2025` y `saldo_total=45961`
+
+#### Scenario: Día ficticio de Excel
+- **WHEN** se convierte el número de serie 60
+- **THEN** el resultado es `29/02/1900`
+
+### Requirement: Fechas de Excel en asignaciones anteriores
+Los archivos ya cargados con números de serie en columnas de fecha SHALL mostrarse como fecha en "Mi asignación", y la vista previa del mensaje y la publicación de v3 SHALL renderizar `{{fecha_*}}` con la fecha usando la misma conversión; el texto original de los pendientes no se reescribe.
+
+#### Scenario: Asignación anterior
+- **WHEN** un archivo ya cargado tiene `fecha_corte=45961` y la plantilla es `Corte {{fecha_corte}}`
+- **THEN** "Mi asignación" muestra `31/10/2025` y el mensaje publicado dice `Corte 31/10/2025`
+
+### Requirement: Filtros por columna en "Mi asignación"
+La tabla de contactos de "Mi asignación" SHALL conservar la barra de filtros actual y agregar un filtro junto al control de orden de cada encabezado: un panel del sistema de diseño con búsqueda y valores distintos con conteo ("Seleccionar todo", "Limpiar"; los 200 más frecuentes y la búsqueda para el resto), rango mínimo/máximo en columnas numéricas y rango `dd/mm/aaaa` en columnas de fecha. Los valores se calculan al abrir el panel.
+
+#### Scenario: Filtro por valores
+- **WHEN** el agente filtra `estado` por `CDMX` y `Jalisco` desde el encabezado
+- **THEN** la tabla muestra solo esas filas, el icono queda resaltado y aparece el chip "estado: CDMX, Jalisco"
+
+### Requirement: Filtros combinados en "Mi asignación"
+Los filtros de la barra y los de columna SHALL combinarse (Y): cada filtro de columna aparece como chip con ×, "Limpiar filtros" borra ambos, los dos se guardan por campaña y "Seleccionar todo" respeta todos.
+
+#### Scenario: Limpiar filtros
+- **WHEN** hay un filtro de la barra y uno de columna y el agente pulsa "Limpiar filtros"
+- **THEN** se quitan ambos
+
+### Requirement: Aviso de plantilla sin campos personalizados
+En "Mi asignación", si la plantilla no tiene ninguna variable (`{{...}}` o `{var}`) que resuelva a una columna del archivo, el paso Mensaje SHALL mostrar en vivo bajo el editor el aviso "Tu plantilla no tiene ningún campo personalizado. Usar variables como {{nombre_cliente}} o {{saldo_vencido_actual}} hace cada mensaje distinto y reduce la probabilidad de bloqueos de WhatsApp." con 3 columnas sugeridas que se insertan con un clic. No bloquea la publicación.
+
+#### Scenario: Insertar columna sugerida
+- **WHEN** el agente pulsa la columna sugerida `nombre_cliente`
+- **THEN** la plantilla recibe `{{nombre_cliente}}` y el aviso desaparece
+
+### Requirement: Aviso de plantilla en Resumen y confirmación
+Con el aviso de plantilla sin campos personalizados, el paso Resumen SHALL repetirlo y la confirmación de publicación SHALL mencionarlo con el botón "Enviar de todos modos".
+
+#### Scenario: Plantilla fija
+- **WHEN** la plantilla es `Hola, tienes un adeudo pendiente`
+- **THEN** se muestra el aviso y la confirmación dice "Enviar de todos modos"
+
+#### Scenario: Solo variables desconocidas
+- **WHEN** la plantilla es `Hola {{no_existe}}`
+- **THEN** se muestra el aviso
+
+#### Scenario: Con variable
+- **WHEN** la plantilla es `Hola {{nombre_cliente}}` y el archivo tiene esa columna
+- **THEN** no se muestra el aviso
