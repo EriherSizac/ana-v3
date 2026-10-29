@@ -34,14 +34,14 @@ describe('GET /agent/campaigns', () => {
     s3.set('campaign-agents/vieja.json', derivedList('vieja', ['erick'], new Date(Date.now() - 48 * 3600_000).toISOString())); // vencida
     const res = await getAgentCampaigns({ headers: bearer(signIdToken({ 'cognito:username': 'Erick' })) });
     expect(res.statusCode).toBe(200);
-    expect(parse(res)).toEqual({ username: 'erick', campaigns: ['prueba', 'ventas'] });
+    expect(parse(res)).toEqual({ username: 'erick', campaigns: ['prueba', 'ventas'], crmUserId: null, displayName: null });
     expect(s3mock.commandCalls(ListObjectsV2Command).length).toBeGreaterThan(1);
   });
 
   it('agente sin campañas → lista vacía', async () => {
     s3.set('campaign-agents/prueba.json', derivedList('prueba', ['ana']));
     const res = await getAgentCampaigns({ headers: bearer(signIdToken()) });
-    expect(parse(res)).toEqual({ username: 'erick', campaigns: [] });
+    expect(parse(res)).toEqual({ username: 'erick', campaigns: [], crmUserId: null, displayName: null });
   });
 
   it('sin token en modo reporte → 401 sin leer rosters', async () => {

@@ -4,6 +4,7 @@ import { CAMPAIGN_RE } from '../lib/identifiers';
 import { getEnabledAgentsCached } from '../lib/roster';
 import { bucketName, s3 } from '../lib/s3Json';
 import { agentSettingsResponse } from './cliSettings';
+import { getAgentIdentity } from '../lib/agentIdentity';
 
 /**
  * Rutas `/agent/*` del CLI v3 (authorizer `cognitoAgentJwt` + verificación en
@@ -34,7 +35,11 @@ export async function listDerivedCampaigns(): Promise<string[]> {
   return out;
 }
 
-/** GET /agent/campaigns → `{username, campaigns}` habilitadas (minúsculas, orden alfabético). */
+/**
+ * GET /agent/campaigns → `{username, campaigns, crmUserId, displayName}`: campañas
+ * habilitadas (minúsculas, orden alfabético) + identidad CRM del agente desde la
+ * API de Roles (null si no está disponible; crm-interactions-agent-identity).
+ */
 export const getAgentCampaigns = async (event: AgentAuthEvent): Promise<Result> => {
   const auth = await requireAgentToken(event, 'GET /agent/campaigns');
   if (!auth.ok) return auth.response;
@@ -50,7 +55,12 @@ export const getAgentCampaigns = async (event: AgentAuthEvent): Promise<Result> 
       }
     }
     enabled.sort((a, b) => a.localeCompare(b));
-    return { statusCode: 200, headers: JSON_HEADERS, body: JSON.stringify({ username: auth.username, campaigns: enabled }) };
+    const identity = await getAgentIdentity(auth.username);
+    return {
+      statusCode: 200,
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ username: auth.username, campaigns: enabled, ...identity }),
+    };
   } catch (e) {
     console.error(JSON.stringify({ evt: 'agent_campaigns_error', name: (e as Error)?.name ?? 'Error' }));
     return { statusCode: 500, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Internal server error' }) };
