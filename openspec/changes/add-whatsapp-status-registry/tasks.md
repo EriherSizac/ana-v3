@@ -8,7 +8,7 @@
 
 ## 2. ANA Admin
 
-- [ ] 2.1 BFF `/api/agent/wa-status`, `/api/agent/wa-status/lookup` (permiso de envío) y `/api/campaigns/[campaign]/wa-status/lookup` (permiso de subir Contactos); pruebas de rutas
+- [x] 2.1 BFF `/api/agent/wa-status`, `/api/agent/wa-status/lookup` (permiso de envío) y `/api/campaigns/[campaign]/wa-status/lookup` (permiso de subir Contactos); pruebas de rutas
 - [ ] 2.2 `lib/wa-status.ts` y hook `useWaStatus` (D7–D9); pruebas de clasificación, filtro y elección automática, incluida equivalencia con `buildPublication` de v3
 - [ ] 2.3 `WaStatusBadge`, `WaStatusPanel` e integración mínima en `MyAssignmentView`; pruebas de insignias, aviso, filtro, marca por fila y en lote (optimista y reversión)
 - [ ] 2.4 `WaUploadNotice` en la vista previa de `ContactsUploadView`; prueba de conteo no bloqueante
