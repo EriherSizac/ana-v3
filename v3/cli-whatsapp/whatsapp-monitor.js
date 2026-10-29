@@ -9,6 +9,7 @@ import {
   normalizePhoneForBackend,
   searchClientInfoByPhone,
   INTERACTIONS_API_BASE_URL,
+  crmHeaders,
 } from './agent-config.js';
 import { phone } from './phone-utils.js';
 import { interactionDateTime } from './interaction-time.js';
@@ -32,7 +33,7 @@ async function fetchResultCodesFromBackend(campaignName) {
 
   const url = `${INTERACTIONS_API_BASE_URL}/result-codes/${encodeURIComponent(campaignName)}`;
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: crmHeaders() });
     const rawText = await response.text().catch(() => '');
     const data = rawText ? JSON.parse(rawText) : {};
     const resultCodes = Array.isArray(data.result_codes) ? data.result_codes : [];

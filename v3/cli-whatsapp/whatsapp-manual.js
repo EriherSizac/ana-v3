@@ -7,7 +7,7 @@ import path from 'path';
 import { chromium } from 'playwright';
 import { CONFIG } from './config.js';
 import { startBackupMonitor } from './chat-backup.js';
-import { loadAgentConfig, INTERACTIONS_API_BASE_URL, insertInteractions } from './agent-config.js';
+import { loadAgentConfig, INTERACTIONS_API_BASE_URL, insertInteractions, crmHeaders } from './agent-config.js';
 import { backendFetch, sessionIdentity } from './agent-runtime.js';
 import { getRemoteSetting } from './remote-settings.js';
 import { phone, phoneUtilsInitScript } from './phone-utils.js';
@@ -1881,7 +1881,7 @@ async function fetchResultCodesFromBackend(campaignName) {
 
   const url = `${INTERACTIONS_API_BASE_URL}/result-codes/${encodeURIComponent(campaignName)}`;
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: crmHeaders() });
     const rawText = await response.text().catch(() => '');
     const data = rawText ? JSON.parse(rawText) : {};
     const resultCodes = Array.isArray(data.result_codes) ? data.result_codes : [];
@@ -1909,7 +1909,7 @@ async function searchClientInfoByPhone(campaignName, phone) {
       };
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: crmHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
       });
 

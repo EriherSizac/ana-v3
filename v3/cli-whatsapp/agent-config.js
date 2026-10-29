@@ -47,7 +47,7 @@ export async function searchClientInfoByPhone(campaignName, phoneE164) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          "X-Api-Key": "6706bb8ef958b3f12759c471855f9aa50b357f78e2d1eee0c533b94daec11a38"
+          "X-Api-Key": CRM_API_KEY
         },
         body: JSON.stringify(payload),
       });
@@ -114,7 +114,7 @@ export async function insertInteractions(interactions) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          "X-Api-Key": "6706bb8ef958b3f12759c471855f9aa50b357f78e2d1eee0c533b94daec11a38"
+          "X-Api-Key": CRM_API_KEY
         },
         body: JSON.stringify(payloadToSend),
       });
@@ -232,6 +232,10 @@ export function clearAgentConfig() {
  * URL base del API backend
  */
 export const API_BASE_URL = process.env.ANA_API_URL || 'https://ow24p7ablb.execute-api.us-east-1.amazonaws.com';
+// Llave del API del CRM (interactions, client-info, result-codes, phone): el API exige X-Api-Key.
+// ANA_CRM_API_KEY la reemplaza sin recompilar (pendiente: rotarla y sacarla del código).
+export const CRM_API_KEY = process.env.ANA_CRM_API_KEY || '6706bb8ef958b3f12759c471855f9aa50b357f78e2d1eee0c533b94daec11a38';
+export const crmHeaders = (extra = {}) => ({ ...extra, 'X-Api-Key': CRM_API_KEY });
 export const INTERACTIONS_API_BASE_URL = process.env.ANA_INTERACTIONS_API_URL || 'https://7uj0qjoby9.execute-api.us-east-2.amazonaws.com';
 
 /**

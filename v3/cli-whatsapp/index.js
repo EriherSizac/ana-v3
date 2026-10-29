@@ -264,6 +264,7 @@ import {
   updatePendingContacts,
   loadAgentConfig,
   insertInteractions,
+  CRM_API_KEY,
 } from "./agent-config.js";
 import { checkForUpdatesAndApply } from "./self-update.js";
 import { spawn as spawnProcess } from "child_process";
@@ -1060,8 +1061,7 @@ async function main() {
                     method: "PATCH",
                     headers: {
                       "Content-Type": "application/json",
-                      "X-Api-Key":
-                        "6706bb8ef958b3f12759c471855f9aa50b357f78e2d1eee0c533b94daec11a38",
+                      "X-Api-Key": CRM_API_KEY,
                     },
                     body: JSON.stringify({
                       credit_id: creditId,
