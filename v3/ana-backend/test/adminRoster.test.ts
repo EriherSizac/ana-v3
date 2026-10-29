@@ -13,10 +13,14 @@ beforeEach(() => {
   process.env.BUCKET_NAME = 'ana-backend-storage-test';
   s3 = installCondS3(s3mock);
   s3.set('campaign-agents/prueba.json', derivedList('prueba', ['ana.lopez', 'luis'], '2026-10-26T09:55:00.000Z'));
+  // La lista derivada caduca a las 24 h: reloj fijo cerca de su generatedAt.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-26T10:00:00.000Z'));
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
