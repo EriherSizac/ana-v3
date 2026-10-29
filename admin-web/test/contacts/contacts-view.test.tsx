@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -129,6 +129,51 @@ describe('/contactos', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Entregar' }));
     await screen.findByTestId('delivery');
     expect(sent.csv.split(/\r?\n/, 1)[0].split(',')).toHaveLength(76);
+  });
+
+  it('Pegar desde Excel: TSV con celda multilínea → misma validación y entrega', async () => {
+    let sent: any = null;
+    setApi({ 'didi_vip:v3': ['ana'] }, (_url, init) => {
+      if (init?.method === 'POST') {
+        sent = init.json;
+        return { fleet: 'v3', status: 'completed', manifest: { perAgent: [{ agent: 'ana', rows: 2 }] } };
+      }
+      return {};
+    });
+    await setup();
+    await userEvent.click(screen.getByRole('tab', { name: 'Pegar' }));
+    expect(screen.getByRole('tab', { name: 'Pegar' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByLabelText('Archivo CSV')).toBeNull();
+    const area = screen.getByLabelText('Pegar desde Excel');
+    await waitFor(() => expect(area).toBeEnabled());
+    const tsv = 'id_credito\tnombre_cliente\ttelefono_1\ttelefono_2\tcomentario\n1\tAna\t5500000001\t\t"uno\ndos"\n2\tBeto\t\t5500000002\tok\n3\tSin\t\t\tx\n';
+    fireEvent.change(area, { target: { value: tsv } });
+    await userEvent.click(screen.getByRole('button', { name: 'Usar datos pegados' }));
+    const read = await screen.findByTestId('read-summary');
+    expect(read).toHaveTextContent('3 filas · 5 columnas · Delimitador: tabulador');
+    expect(read).toHaveTextContent('Columnas de teléfono: telefono_1, telefono_2');
+    const summary = await screen.findByTestId('validation-summary');
+    expect(summary).toHaveTextContent('2 válidas');
+    expect(summary).toHaveTextContent('1 inválidas');
+    await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }));
+    await screen.findByTestId('preview-ana');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar carga' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Entregar' }));
+    await screen.findByTestId('delivery');
+    expect(sent.fileName).toMatch(/^pegado-excel-\d{8}T\d{4}\.csv$/);
+    expect(sent.csv).toBe(tsv);
+  });
+
+  it('Pegar desde Excel: texto de más de 4 MB para v3 → error inline sin procesar', async () => {
+    setApi({ 'didi_vip:v3': ['ana'] });
+    await setup();
+    await userEvent.click(screen.getByRole('tab', { name: 'Pegar' }));
+    const area = screen.getByLabelText('Pegar desde Excel');
+    await waitFor(() => expect(area).toBeEnabled());
+    fireEvent.change(area, { target: { value: 'telefono_1\n' + '5500000001\n'.repeat(400_000) } });
+    await userEvent.click(screen.getByRole('button', { name: 'Usar datos pegados' }));
+    expect(await screen.findByText('El texto pegado supera 4 MB para v3')).toBeInTheDocument();
+    expect(screen.queryByTestId('read-summary')).toBeNull();
   });
 
   it('exporte en Windows-1252 → muestra la codificación y lee los acentos', async () => {

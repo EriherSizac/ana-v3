@@ -8,7 +8,7 @@
 
 ## 2. Pegar desde Excel (entrega 2)
 
-- [ ] 2.1 Pestañas "Archivo" / "Pegar", "Usar datos pegados", límites sobre el texto pegado; pruebas de componente
+- [x] 2.1 Pestañas "Archivo" / "Pegar", "Usar datos pegados", límites sobre el texto pegado; pruebas de componente
 
 ## 3. Workspace y v4 (entrega 3)
 

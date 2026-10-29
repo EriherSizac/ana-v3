@@ -14,6 +14,7 @@ import {
   SearchableSelect,
   Skeleton,
   TableContainer,
+  Textarea,
   Toggle,
 } from '@/components/ui';
 import { useCampaigns } from '@/components/system/useCampaigns';
@@ -103,6 +104,9 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   const [fileText, setFileText] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileEncoding, setFileEncoding] = useState<Encoding | null>(null);
+  // support-crm-base-upload: "Archivo" o "Pegar desde Excel".
+  const [source, setSource] = useState<'file' | 'paste'>('file');
+  const [pasteText, setPasteText] = useState('');
   const [phoneChoice, setPhoneChoice] = useState<string | null>(null);
   const [countryCode, setCountryCode] = useState('52');
   const [preview, setPreview] = useState<{ plan: Plan; hash: string; validation: Validation; parsed: ParsedCsv } | null>(null);
@@ -189,6 +193,34 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     if (variableError) return variableError;
     return null;
   })();
+
+  const clearData = () => {
+    setFileError(null);
+    setFileText(null);
+    setFileName(null);
+    setFileEncoding(null);
+    setPhoneChoice(null);
+  };
+
+  const switchSource = (next: 'file' | 'paste') => {
+    if (next === source) return;
+    clearData();
+    setSource(next);
+  };
+
+  /** Texto pegado de Excel (TSV): mismas reglas y límites que un archivo. */
+  const applyPasted = () => {
+    clearData();
+    if (!fleet) return;
+    const sizeError = checkFileSize(utf8Bytes(pasteText.trim() ? pasteText : ''), fleet, 'El texto pegado');
+    if (sizeError) {
+      setFileError(sizeError);
+      return;
+    }
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
+    setFileName(`pegado-excel-${stamp}.csv`);
+    setFileText(pasteText);
+  };
 
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -380,18 +412,60 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
         <p className="mt-1 text-sm text-text-light">
           CSV con encabezado (UTF-8 o Windows-1252; coma, punto y coma o tabulador), por ejemplo la base del CRM tal cual. Límites: v3 hasta 4 MB y 20 000 filas; v4 hasta 10 MB y 50 000 filas.
         </p>
-        <div className="mt-4">
-          <Label htmlFor="csv-file">Archivo CSV</Label>
-          <input
-            ref={fileInput}
-            id="csv-file"
-            type="file"
-            accept=".csv,text/csv"
-            disabled={!fleet || noEnabled || enabled === null}
-            onChange={(e) => void onFile(e)}
-            className="block w-full text-sm text-text-muted file:mr-3 file:rounded-xl file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground disabled:opacity-60"
-          />
+        <div className="mt-4 inline-flex rounded-xl border border-neutral-50 p-1" role="tablist" aria-label="Origen de los contactos">
+          {(
+            [
+              ['file', 'Archivo'],
+              ['paste', 'Pegar'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={source === value}
+              onClick={() => switchSource(value)}
+              className={`rounded-lg px-4 py-1.5 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary ${
+                source === value ? 'bg-primary text-primary-foreground' : 'text-text-muted hover:bg-primary-light-90'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
+        {source === 'file' ? (
+          <div className="mt-4" role="tabpanel">
+            <Label htmlFor="csv-file">Archivo CSV</Label>
+            <input
+              ref={fileInput}
+              id="csv-file"
+              type="file"
+              accept=".csv,text/csv"
+              disabled={!fleet || noEnabled || enabled === null}
+              onChange={(e) => void onFile(e)}
+              className="block w-full text-sm text-text-muted file:mr-3 file:rounded-xl file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground disabled:opacity-60"
+            />
+          </div>
+        ) : (
+          <div className="mt-4" role="tabpanel">
+            <Label htmlFor="paste-area">Pegar desde Excel</Label>
+            <Textarea
+              id="paste-area"
+              rows={8}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              disabled={!fleet || noEnabled || enabled === null}
+              placeholder="Copia en Excel el rango con la fila de encabezados y pégalo aquí"
+              className="font-mono text-xs"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <Button variant="outline" onClick={applyPasted} disabled={!pasteText.trim() || !fleet || noEnabled || enabled === null}>
+                Usar datos pegados
+              </Button>
+              <span className="text-xs text-text-light">La primera fila debe ser el encabezado. Mismos límites que un archivo.</span>
+            </div>
+          </div>
+        )}
         {fileError && <InlineMessage className="mt-3">{fileError}</InlineMessage>}
         {parsed && !('error' in parsed) && (
           <div className="mt-3 flex flex-col gap-1 text-xs text-text-light" data-testid="read-summary">
