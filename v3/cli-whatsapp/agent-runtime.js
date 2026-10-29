@@ -4,6 +4,7 @@ import { createDpapiProtector, createSessionStore, unavailableProtector } from '
 import { createAgentSession } from './agent-session.js';
 import { createBackendClient } from './backend-client.js';
 import { getCliVersion } from './self-update.js';
+import { setCrmIdentity } from './crm-identity.js';
 
 /**
  * Instancias únicas del proceso (las tres ventanas corren en el mismo proceso
@@ -20,7 +21,12 @@ export const sessionStore = createSessionStore({
   protector: process.platform === 'win32' ? createDpapiProtector() : unavailableProtector,
 });
 export const agentSession = createAgentSession({ cognito, store: sessionStore });
-export const backend = createBackendClient({ baseUrl: BACKEND_BASE_URL, session: agentSession, cliVersion: CLI_VERSION });
+export const backend = createBackendClient({
+  baseUrl: BACKEND_BASE_URL,
+  session: agentSession,
+  cliVersion: CLI_VERSION,
+  onIdentity: setCrmIdentity,
+});
 
 /** `fetch` autenticado al backend v3 (wrapper único). */
 export const backendFetch = (path, init) => backend.fetch(path, init);

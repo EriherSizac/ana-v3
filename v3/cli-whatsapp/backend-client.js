@@ -17,9 +17,10 @@ const pathOnly = (url) => {
 
 /**
  * @param {{ baseUrl: string, session: ReturnType<import('./agent-session.js').createAgentSession>,
- *           cliVersion?: string, fetchImpl?: typeof fetch, logger?: Console }} deps
+ *           cliVersion?: string, fetchImpl?: typeof fetch, logger?: Console,
+ *           onIdentity?: (id: { username: string, crmUserId: string|null, displayName: string|null }) => void }} deps
  */
-export function createBackendClient({ baseUrl, session, cliVersion = 'unknown', fetchImpl, logger = console } = {}) {
+export function createBackendClient({ baseUrl, session, cliVersion = 'unknown', fetchImpl, logger = console, onIdentity } = {}) {
   const doFetch = fetchImpl || ((...args) => globalThis.fetch(...args));
   const base = String(baseUrl || '').replace(/\/+$/, '');
 
@@ -77,6 +78,16 @@ export function createBackendClient({ baseUrl, session, cliVersion = 'unknown', 
     }
     const body = await res.json();
     const campaigns = Array.isArray(body?.campaigns) ? body.campaigns.filter((c) => typeof c === 'string') : [];
+    // Identidad CRM del agente (crm-interactions-agent-identity), solo en memoria.
+    try {
+      onIdentity?.({
+        username: String(body?.username || ''),
+        crmUserId: typeof body?.crmUserId === 'string' ? body.crmUserId : null,
+        displayName: typeof body?.displayName === 'string' ? body.displayName : null,
+      });
+    } catch {
+      /* nunca corta el listado de campañas */
+    }
     return { username: String(body?.username || ''), campaigns };
   }
 
