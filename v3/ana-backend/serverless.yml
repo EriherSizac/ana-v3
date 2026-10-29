@@ -487,6 +487,8 @@ resources:
                 - prefix: rosters/
                 - prefix: uploads/
                 - config/cli-settings.json
+                # Manifiesto del CLI publicado → release.available (add-in-session-updates).
+                - versions/latest.json
         Targets:
           - Id: ana-realtime-v4
             Arn: '${param:realtimeBusArn, ""}'

@@ -97,6 +97,9 @@ provider:
     # Lista derivada de agentes (add-agent-roster-management): bucket de v3.
     V3_BUCKET: ${self:custom.v3Bucket}
     V3_BUCKET_REGION: ${param:v3BucketRegion, 'us-east-1'}
+    # Bucket del feed del desktop (electron-builder): su latest.yml dispara
+    # release.available (add-in-session-updates D8). No lo gestiona este stack.
+    DESKTOP_UPDATES_BUCKET: ${param:desktopUpdatesBucket, 'ana-desktop-updates'}
     COGNITO_USER_POOL_ID: ${self:custom.userPoolId}
     # Reparto solo a agentes habilitados. 'false' al desplegar (design D6).
     AGENT_ROSTER_FILTER: ${param:agentRosterFilter, 'false'}
@@ -773,6 +776,43 @@ resources:
             RetryPolicy:
               MaximumEventAgeInSeconds: 60
               MaximumRetryAttempts: 1
+
+    # Versión nueva del desktop (add-in-session-updates D8): latest.yml creado en el
+    # bucket de updates (us-east-2, bus por defecto) → notify → release.available.
+    # Requiere habilitar EventBridge en el bucket (paso manual, README).
+    AnaDesktopReleaseRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-desktop-release
+        Description: latest.yml del desktop publicado → release.available (add-in-session-updates)
+        EventBusName: default
+        EventPattern:
+          source:
+            - aws.s3
+          detail-type:
+            - Object Created
+          detail:
+            bucket:
+              name:
+                - ${self:provider.environment.DESKTOP_UPDATES_BUCKET}
+            object:
+              key:
+                - updates/latest.yml
+        State: ENABLED
+        Targets:
+          - Id: notify
+            Arn: !GetAtt NotifyLambdaFunction.Arn
+            RetryPolicy:
+              MaximumEventAgeInSeconds: 60
+              MaximumRetryAttempts: 1
+
+    NotifyDesktopReleaseRulePermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: !GetAtt NotifyLambdaFunction.Arn
+        Principal: events.amazonaws.com
+        SourceArn: !GetAtt AnaDesktopReleaseRule.Arn
 
     NotifyV4RulePermission:
       Type: AWS::Lambda::Permission

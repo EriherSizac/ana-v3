@@ -2,9 +2,9 @@
 
 ## 1. Realtime release.available (backends)
 
-- [ ] 1.1 v4/backend: `release.available` en el catálogo (`ref.scope` cli|desktop → `k#<cliente>`), `translateS3` para `versions/latest.json`, traducción del bucket del desktop y ruta en `notify`; pruebas vitest en `test/realtime.test.ts` (`npm test` verde)
-- [ ] 1.2 v4/backend `serverless.yml`: regla `AnaDesktopReleaseRule` (bus por defecto us-east-2, `updates/latest.yml`) + permiso de invocación + `DESKTOP_UPDATES_BUCKET`; prueba de recursos en `test/realtime.test.ts`
-- [ ] 1.3 v3/ana-backend `serverless.yml`: `versions/latest.json` en el patrón de `RealtimeBridgeRule`; suite de v3/ana-backend verde
+- [x] 1.1 v4/backend: `release.available` en el catálogo (`ref.scope` cli|desktop → `k#<cliente>`), `translateS3` para `versions/latest.json`, traducción del bucket del desktop y ruta en `notify`; pruebas vitest en `test/realtime.test.ts` (`npm test` verde)
+- [x] 1.2 v4/backend `serverless.yml`: regla `AnaDesktopReleaseRule` (bus por defecto us-east-2, `updates/latest.yml`) + permiso de invocación + `DESKTOP_UPDATES_BUCKET`; prueba de recursos en `test/realtime.test.ts`
+- [x] 1.3 v3/ana-backend `serverless.yml`: `versions/latest.json` en el patrón de `RealtimeBridgeRule`; suite de v3/ana-backend verde
 
 ## 2. CLI: manifiesto, descarga y publicación
 

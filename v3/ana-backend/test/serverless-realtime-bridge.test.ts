@@ -41,6 +41,8 @@ describe('serverless.yml: puente realtime', () => {
             { prefix: 'rosters/' },
             { prefix: 'uploads/' },
             'config/cli-settings.json',
+            // add-in-session-updates: manifiesto del CLI → release.available
+            'versions/latest.json',
           ],
         },
       },

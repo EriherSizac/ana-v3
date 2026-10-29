@@ -1,6 +1,6 @@
 // File: Puente v3 → realtime: llave S3 del bucket de v3 → evento del catálogo y/o actualización forzada.
 // Created: 2026-10-26
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 import { campaignKey, canonicalOperatorId } from './identity';
@@ -18,6 +18,11 @@ export interface BridgeResult {
 /** Prefijos que reenvía la regla de us-east-1 (spec v3/realtime-bridge). */
 export const BRIDGE_PREFIXES = ['agents/', 'assignments/agents/', 'agent-publications/', 'review/', 'rosters/', 'uploads/'] as const;
 export const CLI_SETTINGS_KEY = 'config/cli-settings.json';
+/** Manifiesto del CLI v3: su creación = versión publicada (add-in-session-updates D8). */
+export const CLI_RELEASE_KEY = 'versions/latest.json';
+/** Feed del desktop (electron-builder, `path: updates`) en el bucket de updates. */
+export const DESKTOP_RELEASE_KEY = 'updates/latest.yml';
+export const DEFAULT_DESKTOP_UPDATES_BUCKET = 'ana-desktop-updates';
 
 /** Llave de EventBridge → texto (decodifica escapes `%XX` si los trae). */
 export function decodeS3Key(raw: string): string {
@@ -38,6 +43,11 @@ const skipped: BridgeResult = { skipped: true };
  */
 export function translateS3(rawKey: string, change: S3Change): BridgeResult | null {
   const key = decodeS3Key(rawKey);
+
+  if (key === CLI_RELEASE_KEY) {
+    if (change !== 'created') return null;
+    return { emit: { type: 'release.available', ref: { scope: 'cli', source: 'v3' } } };
+  }
 
   if (key === CLI_SETTINGS_KEY) {
     if (change !== 'created') return null;
@@ -100,6 +110,15 @@ export function translateS3(rawKey: string, change: S3Change): BridgeResult | nu
   }
 
   return null;
+}
+
+/**
+ * Cambio de objeto del bucket de updates del desktop (regla del bus por
+ * defecto de us-east-2): solo la creación de `updates/latest.yml` cuenta.
+ */
+export function translateDesktopRelease(rawKey: string, change: S3Change): BridgeResult | null {
+  if (change !== 'created' || decodeS3Key(rawKey) !== DESKTOP_RELEASE_KEY) return null;
+  return { emit: { type: 'release.available', ref: { scope: 'desktop', source: 'desktop-updates' } } };
 }
 
 /** `Object Created` / `Object Deleted` de EventBridge → cambio. */

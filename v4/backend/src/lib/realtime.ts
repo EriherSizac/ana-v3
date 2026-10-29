@@ -1,6 +1,6 @@
 // File: Canal realtime (add-realtime-gateway): temas, sobre de eventos, publicación al bus y métricas.
 // Created: 2026-10-26
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
@@ -15,13 +15,15 @@ export const isClientType = (v: unknown): v is ClientType => CLIENT_TYPES.includ
 export const USER_EVENTS = ['jobs.changed', 'assignment.pending', 'assignment.published', 'publications.changed'] as const;
 export const CAMPAIGN_EVENTS = ['uploads.changed', 'review.changed', 'roster.changed'] as const;
 export const SETTINGS_EVENT = 'settings.changed' as const;
+/** Versión publicada del CLI o del desktop (add-in-session-updates D8): a todas las conexiones del tipo. */
+export const RELEASE_EVENT = 'release.available' as const;
 /** Mensaje de control de la actualización forzada (design D12). */
 export const REFRESH_EVENT = 'session.refresh' as const;
 
 export type UserEventType = (typeof USER_EVENTS)[number];
 export type CampaignEventType = (typeof CAMPAIGN_EVENTS)[number];
-export type EventType = UserEventType | CampaignEventType | typeof SETTINGS_EVENT | typeof REFRESH_EVENT;
-export const EVENT_TYPES: readonly EventType[] = [...USER_EVENTS, ...CAMPAIGN_EVENTS, SETTINGS_EVENT, REFRESH_EVENT];
+export type EventType = UserEventType | CampaignEventType | typeof SETTINGS_EVENT | typeof RELEASE_EVENT | typeof REFRESH_EVENT;
+export const EVENT_TYPES: readonly EventType[] = [...USER_EVENTS, ...CAMPAIGN_EVENTS, SETTINGS_EVENT, RELEASE_EVENT, REFRESH_EVENT];
 
 /** Llaves permitidas en `ref`: solo ids opacos, nunca datos de contacto. */
 export const REF_KEYS = ['uploadId', 'srcKey', 'scope', 'source', 'reason'] as const;
@@ -109,6 +111,11 @@ export function eventTopics(evt: RealtimeEmit): string[] {
     const scope = evt.ref?.scope;
     return scope === 'cli' || scope === 'desktop' ? [topicClient(scope), topicClient('admin')] : [];
   }
+  if (evt.type === RELEASE_EVENT) {
+    // Solo el tipo de cliente publicado (no admins): cada uno lee su manifiesto.
+    const scope = evt.ref?.scope;
+    return scope === 'cli' || scope === 'desktop' ? [topicClient(scope)] : [];
+  }
   return [];
 }
 
@@ -139,7 +146,8 @@ export function validateEmit(evt: RealtimeEmit): string | null {
     if (users.length === 0) return 'missing_users';
   }
   if ((CAMPAIGN_EVENTS as readonly string[]).includes(evt.type) && !campaignKey(evt.campaign)) return 'missing_campaign';
-  if (evt.type === SETTINGS_EVENT && evt.ref?.scope !== 'cli' && evt.ref?.scope !== 'desktop') return 'invalid_scope';
+  if ((evt.type === SETTINGS_EVENT || evt.type === RELEASE_EVENT) && evt.ref?.scope !== 'cli' && evt.ref?.scope !== 'desktop')
+    return 'invalid_scope';
   if (evt.ref !== undefined) {
     if (typeof evt.ref !== 'object' || evt.ref === null) return 'invalid_ref';
     for (const [k, v] of Object.entries(evt.ref)) {

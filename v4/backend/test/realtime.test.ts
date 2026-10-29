@@ -36,7 +36,7 @@ import { authorizer, connect, disconnect, fallback, ping, setVerifierForTests, t
 import { handler as notify, MAX_EVENT_AGE_MS } from '../src/handlers/notify';
 import { handler as stats } from '../src/handlers/realtimeStats';
 import { handler as realtimeAdmin, parseRefreshBody } from '../src/handlers/realtimeAdmin';
-import { translateS3 } from '../src/lib/realtimeBridge';
+import { translateDesktopRelease, translateS3 } from '../src/lib/realtimeBridge';
 import { resetManagementClientsForTests } from '../src/lib/realtimePush';
 
 const ebMock = mockClient(EventBridgeClient);
@@ -340,6 +340,43 @@ describe('notify: reparto', () => {
     expect(posts.map((p) => p.id).sort()).toEqual(['a-root', 'a-sup']);
   });
 
+  it('release.available: solo las conexiones del tipo de cliente (sin admins)', async () => {
+    await open('c-ana', 'ana', 'cli');
+    await notify(busEvent('ana.realtime.event', { type: 'release.available', ref: { scope: 'cli' } }));
+    expect(posts.map((p) => p.id)).toEqual(['c-ana']);
+    expect(posts[0].data).toEqual({ v: 1, type: 'release.available', id: 'evt-1', at: expect.any(Number), ref: { scope: 'cli' } });
+    posts.length = 0;
+    await notify(busEvent('ana.realtime.event', { type: 'release.available', ref: { scope: 'desktop' } }));
+    expect(posts.map((p) => p.id).sort()).toEqual(['d-ana', 'd-beto']);
+  });
+
+  it('release.available con scope inválido no se entrega', async () => {
+    await notify(busEvent('ana.realtime.event', { type: 'release.available', ref: { scope: 'admin' } }));
+    await notify(busEvent('ana.realtime.event', { type: 'release.available' }));
+    expect(posts).toEqual([]);
+  });
+
+  it('latest.yml del bucket del desktop → release.available a los desktops', async () => {
+    await notify({
+      id: 'evt-yml',
+      source: 'aws.s3',
+      'detail-type': 'Object Created',
+      time: new Date().toISOString(),
+      detail: { bucket: { name: 'ana-desktop-updates' }, object: { key: 'updates/latest.yml' } },
+    });
+    expect(posts.map((p) => p.id).sort()).toEqual(['d-ana', 'd-beto']);
+    expect(posts[0].data.type).toBe('release.available');
+    posts.length = 0;
+    await notify({
+      id: 'evt-exe',
+      source: 'aws.s3',
+      'detail-type': 'Object Created',
+      time: new Date().toISOString(),
+      detail: { bucket: { name: 'ana-desktop-updates' }, object: { key: 'updates/ana-Setup-1.5.1.exe' } },
+    });
+    expect(posts).toEqual([]);
+  });
+
   it('settings.changed desktop: desktops y admins', async () => {
     await notify(busEvent('ana.realtime.event', { type: 'settings.changed', ref: { scope: 'desktop' } }));
     expect(posts.map((p) => p.id).sort()).toEqual(['a-otro', 'a-root', 'a-sup', 'd-ana', 'd-beto']);
@@ -436,6 +473,17 @@ describe('puente v3 → v4', () => {
       emit: { type: 'settings.changed', ref: { scope: 'cli', source: 'v3' } },
       force: { reason: 'settings', target: { kind: 'client', client: 'cli' } },
     });
+    expect(translateS3('versions/latest.json', 'created')).toEqual({
+      emit: { type: 'release.available', ref: { scope: 'cli', source: 'v3' } },
+    });
+    expect(translateS3('versions/latest.json', 'deleted')).toBeNull();
+    expect(translateS3('versions/ANA-1.0.51.exe', 'created')).toBeNull();
+    expect(translateDesktopRelease('updates/latest.yml', 'created')?.emit).toEqual({
+      type: 'release.available',
+      ref: { scope: 'desktop', source: 'desktop-updates' },
+    });
+    expect(translateDesktopRelease('updates/latest.yml', 'deleted')).toBeNull();
+    expect(translateDesktopRelease('updates/ana-1.5.1.exe', 'created')).toBeNull();
     expect(translateS3('agents/prueba/notas.txt', 'created')).toEqual({ skipped: true });
     expect(translateS3('backups/prueba/jperez/5512345678/chat_backup.json', 'created')).toBeNull();
     expect(translateS3('agents/banco%20azteca/jperez-contacts-1.csv', 'created')?.emit?.campaign).toBe('banco azteca');
@@ -569,6 +617,9 @@ describe('serverless.yml: recursos realtime', () => {
     expect(r.AnaRealtimeBus.Type).toBe('AWS::Events::EventBus');
     expect(r.AnaRealtimeV4Rule.Properties.EventPattern).toEqual({ source: ['ana.v4'] });
     expect(r.AnaRealtimeS3Rule.Properties.EventPattern).toEqual({ source: ['aws.s3'] });
+    expect(r.AnaDesktopReleaseRule.Properties.EventBusName).toBe('default');
+    expect(r.AnaDesktopReleaseRule.Properties.EventPattern.detail.object.key).toEqual(['updates/latest.yml']);
+    expect(r.NotifyDesktopReleaseRulePermission.Properties.SourceArn).toEqual({ GetAtt: 'AnaDesktopReleaseRule.Arn' });
     expect(r.AnaRealtimeV4Rule.Properties.Targets[0].RetryPolicy).toEqual({ MaximumEventAgeInSeconds: 60, MaximumRetryAttempts: 1 });
     expect(r.RealtimePostFailingAlarm.Properties.AlarmName).toBe('${self:service}-${self:provider.stage}-realtime-post-failing');
     expect(Object.keys(sls.resources.Outputs)).toEqual(['RealtimeWsUrl', 'RealtimeBusArn']);

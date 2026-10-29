@@ -1,6 +1,6 @@
 // File: Reparto realtime (add-realtime-gateway D5/D7/D12): eventos v4, puente S3 de v3 y actualizaciones forzadas.
 // Created: 2026-10-26
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 import { randomUUID } from 'node:crypto';
@@ -21,7 +21,7 @@ import {
 } from '../lib/realtime';
 import { queryTopics } from '../lib/realtimeStore';
 import { deliver, forceClose } from '../lib/realtimePush';
-import { changeOf, translateS3 } from '../lib/realtimeBridge';
+import { DEFAULT_DESKTOP_UPDATES_BUCKET, changeOf, translateDesktopRelease, translateS3 } from '../lib/realtimeBridge';
 
 /** Un aviso con más de 60 s ya no vale nada (design D5). */
 export const MAX_EVENT_AGE_MS = 60_000;
@@ -82,11 +82,18 @@ export async function dispatchForce(f: ForceRequest, id: string, at: number): Pr
 /** Evento S3 reenviado desde us-east-1 (design D7). */
 async function bridge(e: BusEvent, at: number): Promise<void> {
   const bucket = e.detail?.bucket?.name;
-  const v3Bucket = process.env.V3_BUCKET;
-  if (v3Bucket && bucket !== v3Bucket) return;
   const change = changeOf(e['detail-type']);
   const key = e.detail?.object?.key;
   if (!change || typeof key !== 'string') return;
+  // Bucket de updates del desktop (regla AnaDesktopReleaseRule, add-in-session-updates D8).
+  const desktopBucket = process.env.DESKTOP_UPDATES_BUCKET || DEFAULT_DESKTOP_UPDATES_BUCKET;
+  if (bucket === desktopBucket) {
+    const d = translateDesktopRelease(key, change);
+    if (d?.emit) await dispatchEvent(d.emit, e.id ?? randomUUID(), at);
+    return;
+  }
+  const v3Bucket = process.env.V3_BUCKET;
+  if (v3Bucket && bucket !== v3Bucket) return;
   const r = translateS3(key, change);
   if (!r) return;
   if (r.skipped) {
