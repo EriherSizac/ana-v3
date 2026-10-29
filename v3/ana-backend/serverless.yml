@@ -76,6 +76,10 @@ provider:
     COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, 'us-east-2_UepfOyKpd'}
     # App Client(s) del CLI aceptados, separados por coma (id de `ana-v3-cli`).
     COGNITO_AGENT_CLIENT_IDS: ${env:COGNITO_AGENT_CLIENT_IDS, '1r6niimhkl2fmias6kk85n4ou4'}
+    # API de Roles: user_id/nombre CRM del agente en GET /agent/campaigns
+    # (crm-interactions-agent-identity). La key va en .env, NO se commitea.
+    ROLES_API_BASE: ${env:ROLES_API_BASE, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}
+    ROLES_API_KEY: ${env:ROLES_API_KEY, ''}
   iam:
     role:
       statements:

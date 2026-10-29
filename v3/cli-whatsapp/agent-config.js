@@ -3,6 +3,7 @@ import path from 'path';
 import { parseAssignmentCsv } from './assignment-csv.js';
 import { phone } from './phone-utils.js';
 import { backendFetch, sessionIdentity } from './agent-runtime.js';
+import { getCrmIdentity, sendWithAgentIdentity } from './crm-identity.js';
 
 const resolveBaseDir = () => {
   if (process.env.ANA_DATA_DIR) return process.env.ANA_DATA_DIR;
@@ -103,7 +104,18 @@ export function loadAgentConfig() {
   return null;
 }
 
+/**
+ * Inserta interacciones en el CRM con la identidad del agente
+ * (crm-interactions-agent-identity): user_id del agente, marca "vía ANA" en
+ * comments y, si el CRM rechaza el user_id del agente (4xx), un reintento con
+ * el user_id legado + "Agente: …" en comments.
+ */
 export async function insertInteractions(interactions) {
+  const identity = getCrmIdentity(sessionIdentity()?.agent_id);
+  return sendWithAgentIdentity(interactions, identity, postInteractions);
+}
+
+async function postInteractions(interactions) {
   const url = `${INTERACTIONS_API_BASE_URL}/interactions`;
   try {
     const post = async (payloadToSend, label) => {

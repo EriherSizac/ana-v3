@@ -61,6 +61,12 @@ describe('serverless.yml: puente realtime', () => {
       return; // sin git/rama base disponible: se omite la comparación
     }
     expect(cfg.functions).toEqual(parse(base).functions);
-    expect(cfg.provider).toEqual(parse(base).provider);
+    // Variables de entorno agregadas después (crm-interactions-agent-identity) no cuentan.
+    const ADDED_ENV = ['ROLES_API_BASE', 'ROLES_API_KEY'];
+    const withoutAdded = (p: any) => ({
+      ...p,
+      environment: Object.fromEntries(Object.entries(p.environment ?? {}).filter(([k]) => !ADDED_ENV.includes(k))),
+    });
+    expect(withoutAdded(cfg.provider)).toEqual(withoutAdded(parse(base).provider));
   });
 });

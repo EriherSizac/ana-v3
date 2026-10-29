@@ -26,6 +26,14 @@ describe('serverless.yml: autenticación de agente', () => {
     for (const k of ['AGENT_AUTH_ENFORCED', 'COGNITO_USER_POOL_ID', 'COGNITO_AGENT_CLIENT_IDS']) expect(env).toMatch(new RegExp(`^${k}=`, 'm'));
   });
 
+  it('API de Roles (crm-interactions-agent-identity): base con default y key sin valor commiteado', () => {
+    const e = cfg.provider.environment;
+    expect(e.ROLES_API_BASE).toBe("${env:ROLES_API_BASE, 'https://8emg4wx2t8.execute-api.us-east-2.amazonaws.com'}");
+    expect(e.ROLES_API_KEY).toBe("${env:ROLES_API_KEY, ''}");
+    expect(env).toMatch(/^ROLES_API_BASE=/m);
+    expect(env).toMatch(/^ROLES_API_KEY=$/m);
+  });
+
   it('authorizer cognitoAgentJwt con emisor del pool y audiencia del CLI', () => {
     const a = cfg.provider.httpApi.authorizers.cognitoAgentJwt;
     expect(a.type).toBe('jwt');
