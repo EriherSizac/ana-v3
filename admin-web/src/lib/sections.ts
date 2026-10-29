@@ -33,6 +33,12 @@ export const SECTIONS: Section[] = [
     isAllowed: (a) => hasPermission(a, PERMISSIONS.CONTACTS_UPLOAD) && hasPermission(a, PERMISSIONS.CONTACTS_DISTRIBUTE),
   },
   {
+    href: '/historial-envios',
+    label: 'Historial de envíos',
+    description: 'Resultado por contacto de los envíos del CLI v3 en la campaña, por agente y publicación.',
+    isAllowed: (a) => hasPermission(a, PERMISSIONS.CONTACTS_UPLOAD) && hasPermission(a, PERMISSIONS.CONTACTS_DISTRIBUTE),
+  },
+  {
     href: '/configuracion',
     label: 'Configuración',
     description: 'Configuración remota del CLI v3 (solo rol Developer).',

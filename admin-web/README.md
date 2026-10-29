@@ -240,6 +240,25 @@ archivo).
 7. **Historial de publicaciones**: fecha, contactos y archivos origen
    ("Reescrito" con pendientes restantes o "Consumido").
 
+## Historial de envíos (`/mi-asignacion/historial` y `/historial-envios`)
+
+add-agent-send-history. El CLI v3 (≥ 1.0.51) reporta el resultado de cada
+contacto a v3 (`POST /agent/results`); esta vista lo muestra:
+
+- **Agente** (`/mi-asignacion/historial`, enlace "Historial de envíos" en Mi
+  asignación; permiso de envío): BFF `GET /api/agent/results/{campaign}` → v3
+  `GET /agent/results/{campaign}`. Se recarga en vivo con `results.changed`.
+- **Campaña** (`/historial-envios`, sección propia; permisos de Contactos y
+  campaña en alcance): BFF `GET /api/campaigns/{campaign}/results?agent=` → v3
+  `GET /admin/campaigns/{campaign}/results`.
+
+Tarjetas por publicación (avance = reportados / publicados; "parcial" si la
+publicación es anterior al rango), tabla por contacto con teléfono enmascarado
+por v3, fecha en hora de Ciudad de México, filtros (fechas ≤ 31 días, estado,
+publicación, búsqueda por crédito o dígitos del teléfono, agente), orden por
+fecha/estado/crédito en el servidor y "Exportar CSV" de lo filtrado (hasta
+10 000 filas, teléfonos enmascarados).
+
 ## Sección Configuración (`/configuracion`)
 
 Solo rol **Developer** (`isDeveloper`; admin o líder no bastan). Se arma desde

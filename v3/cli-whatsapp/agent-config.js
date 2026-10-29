@@ -302,8 +302,9 @@ export async function sendBackup(data) {
 
 /**
  * Obtiene chats asignados desde el servidor
- * @returns {Promise<{ csvText: string, contacts: Array }|null>} CSV crudo recibido y
- *   contactos parseados, o null si no hay asignación o falla
+ * @returns {Promise<{ csvText: string, contacts: Array, sourceKey: string|null }|null>} CSV crudo
+ *   recibido, contactos parseados y llave del archivo entregado (cabecera
+ *   X-Ana-Assignment-Key, add-agent-send-history), o null si no hay asignación o falla
  */
 export async function fetchAssignedChats() {
   const config = sessionIdentity();
@@ -326,7 +327,8 @@ export async function fetchAssignedChats() {
       console.log(csvText);
       const contacts = parseAssignmentCsv(csvText);
       console.log(`✅ ${contacts.length} contactos parseados del servidor`);
-      return { csvText, contacts };
+      const sourceKey = response.headers?.get?.('x-ana-assignment-key') || null;
+      return { csvText, contacts, sourceKey };
     } else if (response.status === 404) {
       console.log('ℹ️  No hay contactos asignados aún para este agente/campaña');
       return null;

@@ -315,6 +315,29 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
   https://ana-prod.pernexium.com.mx/agent/assignments/prueba/publish
 ```
 
+### Historial de envíos (`/agent/results*`, add-agent-send-history)
+
+| Método | Ruta | Uso |
+|---|---|---|
+| POST | `/agent/results` | el CLI (≥ 1.0.51) reporta `{"campaign","items":[...]}` (1–100); agente del token + roster; responde `{accepted, rejected:[{index,id,reason}]}` |
+| GET | `/agent/results/{campaign}` | historial propio: `from`/`to` (`YYYY-MM-DD` MX, máx. 31 días, por defecto 7), `status=sent,error`, `publicationId` (o `none`), `q` (crédito o ≥ 4 dígitos del teléfono), `sort=sentAt\|status\|credit`, `order`, `cursor`, `limit` ≤ 500 |
+| GET | `/admin/campaigns/{campaign}/results?agent=` | lo mismo para líderes/supervisores/admin (`cognitoAdminJwt`, permisos de Contactos y campaña en alcance) |
+
+Cada lote se guarda inmutable en
+`results/{c}/{agent}/{YYYY-MM-DD}/{sha256(ids)[0..16]}.json` (día MX de
+`sentAt`, `If-None-Match: *`: reenviar el mismo lote no duplica). La lectura
+deduplica por `id` = `assignmentId#rowIndex#attempt` (primero gana) y compacta
+cada día con ≥ 20 lotes en `_compact.json`. Las respuestas solo llevan el
+teléfono enmascarado (`**1234`). El enlace con la publicación es la llave del
+archivo entregado: `GET /get/chats` la responde en `X-Ana-Assignment-Key` y se
+compara con `manifest.key`. Retención: regla de ciclo de vida
+`ExpireSendResults` (180 días) sobre `results/` en `StorageBucket`. El puente
+realtime reenvía `results/` (v4 lo traduce a `results.changed` del agente).
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "https://ana-prod.pernexium.com.mx/agent/results/prueba?status=no_whatsapp"
+```
+
 ### Configuración remota del CLI (`config/cli-settings.json`)
 
 Documento global `{"schemaVersion":1,"settings":{...},"updatedAt","updatedBy"}`

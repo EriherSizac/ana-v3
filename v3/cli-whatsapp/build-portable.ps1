@@ -110,6 +110,7 @@ $filesToCopy = @(
     "no-whatsapp-registry.js",
     "crm-identity.js",
     "assignment-journal.js",
+    "results-outbox.js",
     "agent-config.js",
     "agent-runtime.js",
     "agent-session.js",

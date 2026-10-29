@@ -108,6 +108,9 @@ export const getChats = async (event: APIGatewayProxyEvent): Promise<APIGatewayP
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json',
+        // Llave del archivo entregado (add-agent-send-history D1): el CLI la
+        // guarda para enlazar sus resultados con la publicación.
+        'X-Ana-Assignment-Key': key,
       },
       body: bodyContents,
     };

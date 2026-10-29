@@ -33,6 +33,8 @@ export const KNOWN_EVENTS = [
   'assignment.pending',
   'assignment.published',
   'publications.changed',
+  // Lote de resultados del CLI (add-agent-send-history).
+  'results.changed',
   'uploads.changed',
   'review.changed',
   'roster.changed',

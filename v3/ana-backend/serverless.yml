@@ -354,6 +354,36 @@ functions:
           authorizer:
             name: cognitoAgentJwt
 
+  # add-agent-send-history: resultados por contacto del CLI y su historial
+  agentPostResults:
+    handler: src/handlers/agentResults.postResults
+    events:
+      - httpApi:
+          path: /agent/results
+          method: post
+          authorizer:
+            name: cognitoAgentJwt
+
+  agentGetResults:
+    handler: src/handlers/agentResults.getOwnResults
+    timeout: 29
+    events:
+      - httpApi:
+          path: /agent/results/{campaign}
+          method: get
+          authorizer:
+            name: cognitoAgentJwt
+
+  adminGetCampaignResults:
+    handler: src/handlers/agentResults.getCampaignResults
+    timeout: 29
+    events:
+      - httpApi:
+          path: /admin/campaigns/{campaign}/results
+          method: get
+          authorizer:
+            name: cognitoAdminJwt
+
   # add-cli-remote-settings
   adminGetCliSettings:
     handler: src/handlers/cliSettings.getCliSettings
@@ -439,6 +469,13 @@ resources:
         NotificationConfiguration:
           EventBridgeConfiguration:
             EventBridgeEnabled: true
+        # Historial de envíos (add-agent-send-history D10): retención de 180 días.
+        LifecycleConfiguration:
+          Rules:
+            - Id: ExpireSendResults
+              Status: Enabled
+              Prefix: results/
+              ExpirationInDays: 180
 
     # Reenvía, entre regiones, los cambios relevantes al bus realtime de v4
     # (us-east-2). Ningún handler v3 cambia; si la regla falla o se deshabilita,
@@ -490,6 +527,8 @@ resources:
                 - prefix: review/
                 - prefix: rosters/
                 - prefix: uploads/
+                # Lote de resultados del CLI → results.changed (add-agent-send-history D9).
+                - prefix: results/
                 - config/cli-settings.json
                 # Manifiesto del CLI publicado → release.available (add-in-session-updates).
                 - versions/latest.json

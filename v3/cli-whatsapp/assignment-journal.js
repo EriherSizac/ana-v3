@@ -4,7 +4,9 @@
  *
  * Archivo: <dir>/assignment-journal-<agent>-<campaign>.json
  * { version, agent_id, campaign, received_at, csv_sha256, assignment_id, csv,
- *   rows: [{ index, phone, state }] }   state: pending | in_flight | done | por_revisar
+ *   rows: [{ index, phone, state }], source_key? }   state: pending | in_flight | done | por_revisar
+ *   source_key: llave S3 del archivo entregado (cabecera X-Ana-Assignment-Key,
+ *   add-agent-send-history); null si el backend no la envió.
  *
  * Cada cambio de estado reescribe el archivo completo de forma atómica (*.tmp + rename).
  */
@@ -64,9 +66,9 @@ export function saveJournal(journal) {
 /**
  * Crea y guarda el journal de una asignación recién recibida (todo en `pending`).
  * @param {{ dir: string, agentId: string, campaign: string, csvText: string,
- *           rows: Array<{ index: number, phone: string }>, now?: Date }} params
+ *           rows: Array<{ index: number, phone: string }>, sourceKey?: string|null, now?: Date }} params
  */
-export function createJournal({ dir, agentId, campaign, csvText, rows, now = new Date() }) {
+export function createJournal({ dir, agentId, campaign, csvText, rows, sourceKey = null, now = new Date() }) {
   const receivedAt = now.toISOString();
   const csvSha = sha256(csvText);
   const journal = attachPath(
@@ -79,6 +81,7 @@ export function createJournal({ dir, agentId, campaign, csvText, rows, now = new
       assignment_id: computeAssignmentId(receivedAt, csvSha),
       csv: String(csvText ?? ''),
       rows: (rows || []).map((r) => ({ index: r.index, phone: String(r.phone ?? ''), state: STATES.PENDING })),
+      source_key: sourceKey ? String(sourceKey) : null,
     },
     journalPath(dir, agentId, campaign)
   );
