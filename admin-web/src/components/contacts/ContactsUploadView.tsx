@@ -48,6 +48,7 @@ import {
 } from '@/lib/contacts';
 import type { UploadHistoryItem } from '@/lib/contacts/history';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
+import { WaUploadNotice } from './WaUploadNotice';
 
 const FLEET_OPTIONS = [
   { value: 'v3', label: 'v3 (CLI)' },
@@ -569,6 +570,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           <p className="mt-1 text-sm text-text-light">
             {preview.validation.valid.length} contactos válidos para {preview.plan.agents.length} agente(s). El CLI entrega una carga a la vez por agente, en orden de antigüedad.
           </p>
+          {campaign && <WaUploadNotice campaign={campaign} phones={preview.validation.valid.map((r) => r.phone)} />}
           {tooLong && (
             <InlineMessage className="mt-3">Demasiados agentes para un reparto en v4 (assignments supera 1500 caracteres). Usa menos agentes.</InlineMessage>
           )}
