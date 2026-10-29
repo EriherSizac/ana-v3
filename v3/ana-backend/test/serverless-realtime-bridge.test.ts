@@ -13,12 +13,16 @@ const file = join(__dirname, '..', 'serverless.yml');
 const cfg = parse(readFileSync(file, 'utf8'));
 
 describe('serverless.yml: puente realtime', () => {
-  it('StorageBucket solo agrega EventBridgeConfiguration', () => {
+  it('StorageBucket solo agrega EventBridgeConfiguration y la retención de results/', () => {
     expect(cfg.resources.Resources.StorageBucket).toEqual({
       Type: 'AWS::S3::Bucket',
       Properties: {
         BucketName: '${self:service}-storage-${sls:stage}',
         NotificationConfiguration: { EventBridgeConfiguration: { EventBridgeEnabled: true } },
+        // add-agent-send-history D10: retención de resultados.
+        LifecycleConfiguration: {
+          Rules: [{ Id: 'ExpireSendResults', Status: 'Enabled', Prefix: 'results/', ExpirationInDays: 180 }],
+        },
       },
     });
   });
@@ -40,6 +44,8 @@ describe('serverless.yml: puente realtime', () => {
             { prefix: 'review/' },
             { prefix: 'rosters/' },
             { prefix: 'uploads/' },
+            // add-agent-send-history: lote de resultados → results.changed
+            { prefix: 'results/' },
             'config/cli-settings.json',
             // add-in-session-updates: manifiesto del CLI → release.available
             'versions/latest.json',
@@ -53,14 +59,16 @@ describe('serverless.yml: puente realtime', () => {
     expect(role.Properties.Policies[0].PolicyDocument.Statement[0].Action).toEqual(['events:PutEvents']);
   });
 
-  it('ninguna función ni ruta v3 cambia respecto al commit base', () => {
+  it('ninguna función ni ruta v3 previa cambia respecto al commit base (solo se agregan)', () => {
     let base: string;
     try {
       base = execFileSync('git', ['show', 'installer-2:v3/ana-backend/serverless.yml'], { cwd: join(__dirname, '..'), encoding: 'utf8' });
     } catch {
       return; // sin git/rama base disponible: se omite la comparación
     }
-    expect(cfg.functions).toEqual(parse(base).functions);
+    // add-agent-send-history agrega funciones nuevas; las existentes no cambian.
+    const baseFns = parse(base).functions as Record<string, unknown>;
+    for (const [name, fn] of Object.entries(baseFns)) expect(cfg.functions[name], name).toEqual(fn);
     expect(cfg.provider).toEqual(parse(base).provider);
   });
 });

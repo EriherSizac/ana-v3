@@ -71,7 +71,18 @@ export function installCondS3(stub: AwsStub<any, any, any>, initial: Record<stri
   });
 
   stub.on(ListObjectsV2Command).callsFake((input: any) => {
-    const keys = [...store.keys()].filter((k) => k.startsWith(input.Prefix || '')).sort();
+    const prefix = input.Prefix || '';
+    if (input.Delimiter) {
+      // Subcarpetas inmediatas (sin paginar: suficiente para las pruebas).
+      const subs = new Set<string>();
+      for (const k of store.keys()) {
+        if (!k.startsWith(prefix)) continue;
+        const i = k.indexOf(input.Delimiter, prefix.length);
+        if (i >= 0) subs.add(k.slice(0, i + 1));
+      }
+      return { Contents: [], CommonPrefixes: [...subs].sort().map((Prefix) => ({ Prefix })), IsTruncated: false };
+    }
+    const keys = [...store.keys()].filter((k) => k.startsWith(prefix)).sort();
     const start = input.ContinuationToken ? Number(input.ContinuationToken) : 0;
     const page = keys.slice(start, start + pageSize);
     const next = start + pageSize < keys.length ? String(start + pageSize) : undefined;
