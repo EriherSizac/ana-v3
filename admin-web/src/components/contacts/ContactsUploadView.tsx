@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent } from 'react';
 import Link from 'next/link';
 import {
   Badge,
@@ -20,32 +20,9 @@ import {
 import { useCampaigns } from '@/components/system/useCampaigns';
 import { StaleNotice } from '@/components/system/Realtime';
 import { useRealtimeRefresh } from '@/lib/realtime/RealtimeProvider';
-import {
-  assignmentsTooLong,
-  buildPlan,
-  checkFileSize,
-  decodeBytes,
-  DELIMITER_LABEL,
-  phoneColumnsOf,
-  utf8Bytes,
-  type Encoding,
-  hasReservedColumn,
-  RESERVED_COLUMN_ERROR,
-  sendColumnError,
-  usesSendColumn,
-  V4_SEND_COLUMN,
-  unknownVariableError,
-  variablesResolvingToUploadId,
-  detectPhoneColumn,
-  parseCsvText,
-  planHash,
-  validateRows,
-  type Fleet,
-  type Mode,
-  type ParsedCsv,
-  type Plan,
-  type Validation,
-} from '@/lib/contacts';
+import { assignmentsTooLong, checkFileSize, DELIMITER_LABEL, LIMITS, usesSendColumn, V3_INLINE_MAX_BYTES, V4_SEND_COLUMN, type Fleet, type Mode } from '@/lib/contacts';
+import type { CheckSummary, PlanSummary, Progress, ReadSummary } from '@/lib/contacts/pipeline';
+import { CancelledError, createContactsProcessor, type ContactsProcessor } from '@/lib/contacts/processor';
 import type { UploadHistoryItem } from '@/lib/contacts/history';
 import { ApiError, apiFetch, isRedirecting } from '@/lib/api-client';
 
@@ -59,12 +36,10 @@ const MODE_OPTIONS = [
 ];
 
 const POLL_INTERVAL_MS = 5_000;
-
-/** Nombre visible de una fila (vista previa). */
-const nameOf = (r: Record<string, string>): string =>
-  (r.name || r.nombre || r.contact_name || [r.first_name, r.last_name].filter(Boolean).join(' ') || r.nombre_cliente || '').replace(/ {2,}/g, ' ').trim();
-/** Crédito visible (base CRM: id_credito). */
-const creditOf = (r: Record<string, string>): string => r.credit || r.credito || r.credit_id || r.id_credito || '';
+const POLL_TIMEOUT_MS = 60_000;
+/** Líneas del texto pegado que se muestran como muestra (el texto completo no se pinta). */
+const PASTE_PREVIEW_LINES = 3;
+const PASTE_PREVIEW_CHARS = 160;
 
 const enabledUrl = (campaign: string, fleet: Fleet, includeSupervisors: boolean) =>
   `/api/campaigns/${encodeURIComponent(campaign)}/enabled-agents?fleet=${fleet}${includeSupervisors ? '&includeSupervisors=1' : ''}`;
@@ -80,7 +55,23 @@ function readFileBytes(file: Blob): Promise<Uint8Array> {
     reader.readAsArrayBuffer(file);
   });
 }
-const POLL_TIMEOUT_MS = 60_000;
+
+const formatBytes = (n: number): string => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** Resumen del texto pegado sin guardarlo en el estado de React: líneas, tamaño y primeras líneas. */
+function pasteInfo(text: string): { lines: number; bytes: number; sample: string[] } {
+  let lines = 0;
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) lines++;
+  if (text && !text.endsWith('\n')) lines++;
+  const head = text.slice(0, PASTE_PREVIEW_CHARS * PASTE_PREVIEW_LINES * 2).split(/\r?\n/, PASTE_PREVIEW_LINES);
+  return {
+    lines,
+    bytes: new Blob([text]).size,
+    sample: head.map((l) => (l.length > PASTE_PREVIEW_CHARS ? `${l.slice(0, PASTE_PREVIEW_CHARS)}…` : l).replace(/\t/g, ' │ ')),
+  };
+}
+
+const PHASE_LABEL: Record<Progress['phase'], string> = { lectura: 'Lectura', validación: 'Validación', reparto: 'Reparto' };
 
 type Delivery =
   | { kind: 'v3'; perAgent: Array<{ agent: string; rows: number }> }
@@ -92,9 +83,11 @@ export interface ContactsUploadViewProps {
   /** Solo pruebas: intervalo de sondeo. */
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
+  /** Solo pruebas: procesador (Worker falso). */
+  createProcessor?: () => ContactsProcessor;
 }
 
-export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTimeoutMs = POLL_TIMEOUT_MS }: ContactsUploadViewProps) {
+export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTimeoutMs = POLL_TIMEOUT_MS, createProcessor = createContactsProcessor }: ContactsUploadViewProps) {
   const { campaigns, loading: campaignsLoading, error: campaignsError } = useCampaigns();
   const [campaign, setCampaign] = useState<string | null>(null);
   // add-supervisor-contact-access: v3 preseleccionada.
@@ -106,22 +99,38 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   const [enabled, setEnabled] = useState<string[] | null>(null);
   const [enabledError, setEnabledError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [fileText, setFileText] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
-  const [fileEncoding, setFileEncoding] = useState<Encoding | null>(null);
   // support-crm-base-upload: "Archivo" o "Pegar desde Excel".
   const [source, setSource] = useState<'file' | 'paste'>('file');
-  const [pasteText, setPasteText] = useState('');
+  // El texto pegado no vive en el estado (megabytes): solo su resumen.
+  const [pasted, setPasted] = useState<{ lines: number; bytes: number; sample: string[] } | null>(null);
+  const [typed, setTyped] = useState(false);
+  const pastedText = useRef<string | null>(null);
+  const pasteArea = useRef<HTMLTextAreaElement>(null);
+  const [read, setRead] = useState<ReadSummary | null>(null);
+  const [check, setCheck] = useState<CheckSummary | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [phoneChoice, setPhoneChoice] = useState<string | null>(null);
   const [countryCode, setCountryCode] = useState('52');
-  const [preview, setPreview] = useState<{ plan: Plan; hash: string; validation: Validation; parsed: ParsedCsv } | null>(null);
+  const [preview, setPreview] = useState<PlanSummary | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sendStep, setSendStep] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [delivery, setDelivery] = useState<Delivery | null>(null);
   // Sube al recibir un aviso realtime: vuelve a leer los destinatarios habilitados.
   const [rosterVersion, setRosterVersion] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
+  const processor = useRef<ContactsProcessor | null>(null);
+  const proc = (): ContactsProcessor => (processor.current ??= createProcessor());
+
+  useEffect(
+    () => () => {
+      processor.current?.dispose();
+      processor.current = null;
+    },
+    [],
+  );
 
   // Destinatarios habilitados de la campaña y flota (con supervisores si el toggle está encendido).
   useEffect(() => {
@@ -146,12 +155,19 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     };
   }, [campaign, fleet, includeSupervisors, rosterVersion]);
 
+  const clearData = () => {
+    processor.current?.cancel();
+    setProgress(null);
+    setFileError(null);
+    setRead(null);
+    setCheck(null);
+    setFileName(null);
+    setPhoneChoice(null);
+  };
+
   // Los límites dependen de la flota: al cambiarla se vuelve a elegir el archivo.
   useEffect(() => {
-    setFileText(null);
-    setFileName(null);
-    setFileError(null);
-    setPhoneChoice(null);
+    clearData();
     if (fileInput.current) fileInput.current.value = '';
   }, [fleet]);
 
@@ -160,83 +176,94 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     setPreview(null);
     setDelivery(null);
     setSendError(null);
-  }, [campaign, fleet, mode, agent, fileText, phoneChoice, countryCode, includeSupervisors]);
+  }, [campaign, fleet, mode, agent, read, check, countryCode, includeSupervisors]);
 
-  const parsed = useMemo(() => {
-    if (!fileText || !fleet) return null;
-    return parseCsvText(fileText, fleet);
-  }, [fileText, fleet]);
+  /** Ejecuta una fase en el Worker con progreso; `null` si se canceló. */
+  const runPhase = async <T,>(fn: (p: ContactsProcessor) => Promise<T>): Promise<T | null> => {
+    try {
+      return await fn(proc());
+    } catch (e) {
+      if (e instanceof CancelledError) return null;
+      setFileError(e instanceof Error ? e.message : 'No se pudo procesar el archivo');
+      return null;
+    } finally {
+      setProgress(null);
+    }
+  };
 
-  const phone = useMemo(() => {
-    if (!parsed || 'error' in parsed || !fleet) return null;
-    return detectPhoneColumn(parsed.header, fleet, fleet === 'v4' ? phoneChoice : null);
-  }, [parsed, fleet, phoneChoice]);
+  const validate = async (choice: string | null) => {
+    setCheck(null);
+    setProgress({ phase: 'validación', done: 0, total: 1 });
+    const res = await runPhase((p) => p.check(choice, setProgress));
+    if (!res) return;
+    if ('error' in res) setFileError(res.error);
+    else setCheck(res);
+  };
 
-  const sendColumnBlock = parsed && !('error' in parsed) && phone && 'column' in phone && fleet ? sendColumnError(parsed.header, fleet, phone.column) : null;
+  /** Lee (archivo o texto) y valida en el Worker. */
+  const load = async (input: { bytes?: Uint8Array; text?: string; what: string }, name: string) => {
+    if (!fleet) return;
+    setProgress({ phase: 'lectura', done: 0, total: 1 });
+    const res = await runPhase((p) => p.read({ fleet, ...input }, setProgress));
+    if (!res) return;
+    if ('error' in res) {
+      setFileError(res.error);
+      return;
+    }
+    setFileName(name);
+    setRead(res);
+    await validate(null);
+  };
 
-  const validation = useMemo(() => {
-    if (!parsed || 'error' in parsed || !phone || 'error' in phone || !fleet) return null;
-    return validateRows(parsed, fleet, phone.column);
-  }, [parsed, phone, fleet]);
-
-  // Columna reservada y variables que tomarían el uploadId (solo v3).
-  const reservedError = fleet === 'v3' && parsed && !('error' in parsed) && hasReservedColumn(parsed.header) ? RESERVED_COLUMN_ERROR : null;
-  const variableError = useMemo(() => {
-    if (fleet !== 'v3' || !parsed || 'error' in parsed || reservedError) return null;
-    // Solo la columna message del CSV (quien carga ya no escribe mensaje).
-    const texts = (validation?.valid ?? []).map((r) => r.record.message ?? '');
-    const bad = variablesResolvingToUploadId(texts, parsed.header);
-    return bad.length ? unknownVariableError(bad) : null;
-  }, [fleet, parsed, reservedError, validation]);
-  const noEnabled = enabled !== null && enabled.length === 0;
-
-  const previewBlock: string | null = (() => {
-    if (!campaign || !fleet) return 'Elige campaña y flota';
-    if (noEnabled || enabled === null) return 'Sin agentes habilitados';
-    if (mode === 'single' && !agent) return 'Elige el agente';
-    if (reservedError) return reservedError;
-    if (sendColumnBlock) return sendColumnBlock;
-    if (!validation) return 'Carga un archivo válido';
-    if (validation.valid.length === 0) return 'No hay filas válidas';
-    if (variableError) return variableError;
-    return null;
-  })();
-
-  const clearData = () => {
-    setFileError(null);
-    setFileText(null);
+  const cancelProcessing = () => {
+    processor.current?.cancel();
+    setProgress(null);
+    setRead(null);
+    setCheck(null);
     setFileName(null);
-    setFileEncoding(null);
-    setPhoneChoice(null);
+    if (fileInput.current) fileInput.current.value = '';
   };
 
   const switchSource = (next: 'file' | 'paste') => {
     if (next === source) return;
     clearData();
+    pastedText.current = null;
+    setPasted(null);
+    setTyped(false);
     setSource(next);
+  };
+
+  // Pegado: el texto se toma del portapapeles y no se pinta en el área de texto.
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text) return;
+    e.preventDefault();
+    pastedText.current = text;
+    if (pasteArea.current) pasteArea.current.value = '';
+    setTyped(false);
+    setPasted(pasteInfo(text));
+  };
+
+  const clearPaste = () => {
+    pastedText.current = null;
+    setPasted(null);
+    setTyped(false);
+    if (pasteArea.current) pasteArea.current.value = '';
+    clearData();
   };
 
   /** Texto pegado de Excel (TSV): mismas reglas y límites que un archivo. */
   const applyPasted = () => {
     clearData();
     if (!fleet) return;
-    const sizeError = checkFileSize(utf8Bytes(pasteText.trim() ? pasteText : ''), fleet, 'El texto pegado');
-    if (sizeError) {
-      setFileError(sizeError);
-      return;
-    }
+    const text = pastedText.current ?? pasteArea.current?.value ?? '';
     const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
-    setFileName(`pegado-excel-${stamp}.csv`);
-    setFileText(pasteText);
+    void load({ text, what: 'El texto pegado' }, `pegado-excel-${stamp}.csv`);
   };
 
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    setFileError(null);
-    setFileText(null);
-    setFileName(null);
-    setFileEncoding(null);
-    setPhoneChoice(null);
+    clearData();
     if (!file || !fleet) return;
     if (!file.name.toLowerCase().endsWith('.csv')) {
       setFileError('El archivo debe ser .csv');
@@ -248,26 +275,53 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
       if (fileInput.current) fileInput.current.value = '';
       return;
     }
-    const decoded = decodeBytes(await readFileBytes(file));
-    // El límite se mide sobre el texto en UTF-8 (lo que recibe el servidor).
-    const decodedError = checkFileSize(utf8Bytes(decoded.text), fleet);
-    if (decodedError) {
-      setFileError(decodedError);
+    setProgress({ phase: 'lectura', done: 0, total: 1 });
+    let bytes: Uint8Array;
+    try {
+      bytes = await readFileBytes(file);
+    } catch {
+      setProgress(null);
+      setFileError('No se pudo leer el archivo');
       return;
     }
-    setFileName(file.name);
-    setFileEncoding(decoded.encoding);
-    setFileText(decoded.text);
+    await load({ bytes, what: 'El archivo' }, file.name);
   };
 
+  const onPhoneChoice = (v: string | null) => {
+    setPhoneChoice(v);
+    void validate(v);
+  };
+
+  const reservedError = check?.reservedError ?? null;
+  const variableError = check?.variableError ?? null;
+  const sendColumnBlock = check?.sendColumnError ?? null;
+  const phoneColumn = check?.phoneColumn ?? null;
+  const noEnabled = enabled !== null && enabled.length === 0;
+  const busy = progress !== null;
+
+  const previewBlock: string | null = (() => {
+    if (!campaign || !fleet) return 'Elige campaña y flota';
+    if (noEnabled || enabled === null) return 'Sin agentes habilitados';
+    if (mode === 'single' && !agent) return 'Elige el agente';
+    if (busy) return 'Procesando el archivo';
+    if (reservedError) return reservedError;
+    if (sendColumnBlock) return sendColumnBlock;
+    if (!check || !phoneColumn) return 'Carga un archivo válido';
+    if (check.validCount === 0) return 'No hay filas válidas';
+    if (variableError) return variableError;
+    return null;
+  })();
+
   const makePreview = async () => {
-    if (!validation || !fleet || !enabled || !parsed || 'error' in parsed) return;
-    const plan = buildPlan({ fleet, mode, enabled, agent, rows: validation.valid });
-    if ('error' in plan) {
-      setSendError(plan.error);
+    if (!check || !fleet || !enabled) return;
+    setProgress({ phase: 'reparto', done: 0, total: check.validCount });
+    const res = await runPhase((p) => p.plan({ mode, enabled, agent }, setProgress));
+    if (!res) return;
+    if ('error' in res) {
+      setSendError(res.error);
       return;
     }
-    setPreview({ plan, hash: await planHash(plan, validation.valid), validation, parsed });
+    setPreview(res);
   };
 
   const pollV4 = async (srcKey: string) => {
@@ -289,11 +343,31 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     setDelivery({ kind: 'pending' });
   };
 
+  /** Carga v3 grande: URL firmada y PUT directo a S3 (el BFF no recibe el archivo). */
+  const uploadLarge = async (blob: Blob): Promise<{ uploadId: string; sourceKey: string }> => {
+    setSendStep('Subiendo archivo…');
+    const signed = await apiFetch<{ uploadId: string; sourceKey: string; url: string; headers?: Record<string, string> }>(
+      `/api/campaigns/${encodeURIComponent(campaign!)}/uploads/presign`,
+      { method: 'POST', json: { fleet: 'v3', bytes: blob.size } },
+    );
+    let put: Response;
+    try {
+      put = await fetch(signed.url, { method: 'PUT', body: blob, headers: signed.headers ?? { 'Content-Type': 'text/csv' } });
+    } catch {
+      throw new ApiError(502, 'upstream_unavailable', 'No se pudo subir el archivo. Intenta de nuevo.');
+    }
+    if (!put.ok) throw new ApiError(502, 'upstream_unavailable', 'No se pudo subir el archivo. Intenta de nuevo.');
+    setSendStep('Repartiendo…');
+    return { uploadId: signed.uploadId, sourceKey: signed.sourceKey };
+  };
+
   const send = async () => {
-    if (!preview || !campaign || !fleet || !fileText || !fileName) return;
+    if (!preview || !campaign || !fleet || !fileName) return;
     setSending(true);
     setSendError(null);
     try {
+      const payload = preview.payload;
+      const data = payload.kind === 's3' ? await uploadLarge(payload.blob) : { csv: payload.csv };
       const res = await apiFetch<
         | { fleet: 'v3'; manifest: { perAgent: Array<{ agent: string; rows: number }> } }
         | { fleet: 'v4'; status: 'processing'; srcKey: string }
@@ -304,9 +378,9 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           mode,
           agent,
           fileName,
-          csv: fileText,
+          ...data,
           includeSupervisors,
-          ...(fleet === 'v4' ? { countryCode, phoneColumn: phone && 'column' in phone ? phone.column : null } : {}),
+          ...(fleet === 'v4' ? { countryCode, phoneColumn } : {}),
           plan: { agents: preview.plan.agents, counts: preview.plan.counts, hash: preview.hash },
         },
       });
@@ -335,6 +409,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
       }
     } finally {
       setSending(false);
+      setSendStep(null);
     }
   };
 
@@ -348,8 +423,11 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     types: ['uploads.changed', 'review.changed', 'roster.changed'],
     campaign,
     reload: () => setRosterVersion((v) => v + 1),
-    isDirty: () => fileText !== null || agent !== null || sending || confirmOpen,
+    isDirty: () => read !== null || busy || agent !== null || sending || confirmOpen,
   });
+
+  const pct = progress ? Math.min(100, Math.round((progress.done / Math.max(1, progress.total)) * 100)) : 0;
+  const inputsDisabled = !fleet || noEnabled || enabled === null || busy;
 
   return (
     <PageContainer>
@@ -418,7 +496,9 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           2. Archivo
         </h2>
         <p className="mt-1 text-sm text-text-light">
-          CSV con encabezado (UTF-8 o Windows-1252; coma, punto y coma o tabulador), por ejemplo la base del CRM tal cual. Límites: v3 hasta 4 MB y 20 000 filas; v4 hasta 10 MB y 50 000 filas.
+          CSV con encabezado (UTF-8 o Windows-1252; coma, punto y coma o tabulador), por ejemplo la base del CRM tal cual. Límites: v3 hasta{' '}
+          {LIMITS.v3.label} y {LIMITS.v3.maxRows.toLocaleString('es-MX')} filas (más de 4 MB se sube directo a almacenamiento); v4 hasta {LIMITS.v4.label} y{' '}
+          {LIMITS.v4.maxRows.toLocaleString('es-MX')} filas (máximo del procesador de v4).
         </p>
         <div className="mt-4 inline-flex rounded-xl border border-neutral-50 p-1" role="tablist" aria-label="Origen de los contactos">
           {(
@@ -449,7 +529,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
               id="csv-file"
               type="file"
               accept=".csv,text/csv"
-              disabled={!fleet || noEnabled || enabled === null}
+              disabled={inputsDisabled}
               onChange={(e) => void onFile(e)}
               className="block w-full text-sm text-text-muted file:mr-3 file:rounded-xl file:border-0 file:bg-primary file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground disabled:opacity-60"
             />
@@ -458,67 +538,113 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           <div className="mt-4" role="tabpanel">
             <Label htmlFor="paste-area">Pegar desde Excel</Label>
             <Textarea
+              ref={pasteArea}
               id="paste-area"
-              rows={8}
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              disabled={!fleet || noEnabled || enabled === null}
-              placeholder="Copia en Excel el rango con la fila de encabezados y pégalo aquí"
+              rows={pasted ? 2 : 8}
+              defaultValue=""
+              onPaste={onPaste}
+              onChange={(e) => setTyped(e.target.value.trim() !== '')}
+              disabled={inputsDisabled}
+              placeholder={pasted ? 'Pega de nuevo para reemplazar los datos' : 'Copia en Excel el rango con la fila de encabezados y pégalo aquí'}
               className="font-mono text-xs"
             />
+            {pasted && (
+              <div className="mt-2 rounded-xl border border-neutral-50 p-3" data-testid="paste-summary">
+                <p className="text-xs font-semibold text-text-muted">
+                  Datos pegados: {pasted.lines.toLocaleString('es-MX')} líneas · {formatBytes(pasted.bytes)}
+                </p>
+                <ul className="mt-1 flex flex-col gap-0.5 font-mono text-xs text-text-light">
+                  {pasted.sample.map((l, i) => (
+                    <li key={i} className="truncate">
+                      {l}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-3">
-              <Button variant="outline" onClick={applyPasted} disabled={!pasteText.trim() || !fleet || noEnabled || enabled === null}>
+              <Button variant="outline" onClick={applyPasted} disabled={(!pasted && !typed) || inputsDisabled}>
                 Usar datos pegados
               </Button>
+              {pasted && (
+                <Button variant="ghost" onClick={clearPaste} disabled={busy}>
+                  Quitar datos pegados
+                </Button>
+              )}
               <span className="text-xs text-text-light">La primera fila debe ser el encabezado. Mismos límites que un archivo.</span>
             </div>
           </div>
         )}
-        {fileError && <InlineMessage className="mt-3">{fileError}</InlineMessage>}
-        {parsed && !('error' in parsed) && (
-          <div className="mt-3 flex flex-col gap-1 text-xs text-text-light" data-testid="read-summary">
-            <span>
-              {parsed.rows.length} filas · {parsed.header.length} columnas · Delimitador: {DELIMITER_LABEL[parsed.delimiter]}
-              {fileEncoding ? ` · Codificación: ${fileEncoding}` : ''}
-            </span>
-            {phoneColumnsOf(parsed.header).length > 0 && <span>Columnas de teléfono: {phoneColumnsOf(parsed.header).join(', ')}</span>}
-            {parsed.joinedFields > 0 && <span>{parsed.joinedFields} campo(s) con salto de línea se unieron en una sola línea.</span>}
-            {parsed.renamed.length > 0 && <span>Columnas renombradas: {parsed.renamed.join(', ')}</span>}
+        {progress && (
+          <div className="mt-4 max-w-xl" data-testid="processing">
+            <div className="flex items-center justify-between text-xs text-text-muted">
+              <span>
+                {PHASE_LABEL[progress.phase]} · {pct}%
+                {progress.total > 1 ? ` (${progress.done.toLocaleString('es-MX')} de ${progress.total.toLocaleString('es-MX')} filas)` : ''}
+              </span>
+              <Button variant="ghost" size="sm" onClick={cancelProcessing}>
+                Cancelar
+              </Button>
+            </div>
+            <div
+              role="progressbar"
+              aria-label={`Procesando: ${PHASE_LABEL[progress.phase]}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={pct}
+              className="mt-1 h-2 w-full overflow-hidden rounded-full bg-neutral-40"
+            >
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+            </div>
           </div>
         )}
-        {parsed && 'error' in parsed && <InlineMessage className="mt-3">{parsed.error}</InlineMessage>}
-        {phone && 'error' in phone && fleet === 'v3' && <InlineMessage className="mt-3">{phone.error}</InlineMessage>}
+        {fileError && <InlineMessage className="mt-3">{fileError}</InlineMessage>}
+        {read && (
+          <div className="mt-3 flex flex-col gap-1 text-xs text-text-light" data-testid="read-summary">
+            <span>
+              {read.rows} filas · {read.header.length} columnas · Delimitador: {DELIMITER_LABEL[read.delimiter]}
+              {read.encoding ? ` · Codificación: ${read.encoding}` : ''}
+            </span>
+            {read.phoneColumns.length > 0 && <span>Columnas de teléfono: {read.phoneColumns.join(', ')}</span>}
+            {read.joinedFields > 0 && <span>{read.joinedFields} campo(s) con salto de línea se unieron en una sola línea.</span>}
+            {read.convertedDates > 0 && <span>{read.convertedDates} fecha(s) de Excel convertidas a dd/mm/aaaa.</span>}
+            {read.renamed.length > 0 && <span>Columnas renombradas: {read.renamed.join(', ')}</span>}
+            {fleet === 'v3' && read.bytes > V3_INLINE_MAX_BYTES && <span>Archivo grande: se sube directo a almacenamiento al confirmar.</span>}
+          </div>
+        )}
+        {check?.phoneError && fleet === 'v3' && <InlineMessage className="mt-3">{check.phoneError}</InlineMessage>}
         {reservedError && <InlineMessage className="mt-3">{reservedError}</InlineMessage>}
         {variableError && <InlineMessage className="mt-3">{variableError}</InlineMessage>}
-        {parsed && !('error' in parsed) && fleet === 'v4' && (
+        {read && fleet === 'v4' && (
           <div className="mt-4 max-w-xs">
             <SearchableSelect
               label="Columna de teléfono"
-              options={parsed.header.map((h) => ({ value: h, label: h }))}
-              value={phone && 'column' in phone ? phone.column : phoneChoice}
-              onChange={setPhoneChoice}
+              options={read.header.map((h) => ({ value: h, label: h }))}
+              value={phoneColumn ?? phoneChoice}
+              onChange={onPhoneChoice}
+              disabled={busy}
               emptyLabel="Elige la columna"
             />
-            {phone && 'column' in phone && usesSendColumn(phone.column) && (
+            {phoneColumn && usesSendColumn(phoneColumn) && (
               <p className="mt-1 text-xs text-text-light">
-                Si {phone.column} está vacío se usa el siguiente telefono_N con número; v4 recibe la columna {V4_SEND_COLUMN}.
+                Si {phoneColumn} está vacío se usa el siguiente telefono_N con número; v4 recibe la columna {V4_SEND_COLUMN}.
               </p>
             )}
           </div>
         )}
         {sendColumnBlock && <InlineMessage className="mt-3">{sendColumnBlock}</InlineMessage>}
 
-        {validation && (
+        {check && phoneColumn && (
           <div className="mt-4" data-testid="validation-summary">
             <div className="flex flex-wrap gap-2 text-sm">
-              <Badge variant="success">{validation.valid.length} válidas</Badge>
-              <Badge variant={validation.invalid.length ? 'error' : 'muted'}>{validation.invalid.length} inválidas</Badge>
-              <Badge variant="outline">{validation.total} filas</Badge>
+              <Badge variant="success">{check.validCount} válidas</Badge>
+              <Badge variant={check.invalidCount ? 'error' : 'muted'}>{check.invalidCount} inválidas</Badge>
+              <Badge variant="outline">{check.total} filas</Badge>
             </div>
             <p className="mt-2 text-xs text-text-light">
               Los duplicados se detectan por crédito (id_credito): un mismo teléfono con créditos distintos se conserva. Las filas sin crédito se comparan por teléfono.
             </p>
-            {validation.invalid.length > 0 && (
+            {check.invalid.length > 0 && (
               <TableContainer className="mt-3 max-h-64 overflow-y-auto">
                 <table className="w-full min-w-[400px] text-left text-sm">
                   <thead className="bg-neutral-30 text-xs uppercase tracking-wider text-text-light">
@@ -528,7 +654,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
                     </tr>
                   </thead>
                   <tbody>
-                    {validation.invalid.slice(0, 100).map((r) => (
+                    {check.invalid.map((r) => (
                       <tr key={r.rowNumber} className="border-t border-neutral-40">
                         <td className="px-3 py-1.5 font-mono text-xs">{r.rowNumber}</td>
                         <td className="px-3 py-1.5">{r.reason}</td>
@@ -538,7 +664,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
                 </table>
               </TableContainer>
             )}
-            {validation.invalid.length > 100 && <p className="mt-2 text-xs text-text-light">Se muestran las primeras 100 filas inválidas.</p>}
+            {check.invalidCount > check.invalid.length && <p className="mt-2 text-xs text-text-light">Se muestran las primeras 100 filas inválidas.</p>}
           </div>
         )}
 
@@ -567,35 +693,32 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
             3. Vista previa del reparto
           </h2>
           <p className="mt-1 text-sm text-text-light">
-            {preview.validation.valid.length} contactos válidos para {preview.plan.agents.length} agente(s). El CLI entrega una carga a la vez por agente, en orden de antigüedad.
+            {preview.validCount} contactos válidos para {preview.plan.agents.length} agente(s). El CLI entrega una carga a la vez por agente, en orden de antigüedad.
           </p>
           {tooLong && (
             <InlineMessage className="mt-3">Demasiados agentes para un reparto en v4 (assignments supera 1500 caracteres). Usa menos agentes.</InlineMessage>
           )}
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            {preview.plan.agents.map((a) => {
-              const rows = preview.validation.valid.filter((_, i) => preview.plan.assignment[i] === a).slice(0, 5);
-              return (
-                <div key={a} className="rounded-xl border border-neutral-50 p-4" data-testid={`preview-${a}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-semibold text-primary">{a}</span>
-                      {isSupervisor(a) && <Badge variant="secondary">Supervisor</Badge>}
-                    </span>
-                    <Badge>{preview.plan.counts[a] ?? 0} contactos</Badge>
-                  </div>
-                  <ul className="mt-2 flex flex-col gap-1">
-                    {rows.map((r) => (
-                      <li key={r.rowNumber} className="text-xs text-text-muted">
-                        <span className="font-mono">{r.phone}</span>
-                        {nameOf(r.record) && <span className="ml-2 text-text-light">{nameOf(r.record)}</span>}
-                        {creditOf(r.record) && <span className="ml-2 text-text-light">· crédito {creditOf(r.record)}</span>}
-                      </li>
-                    ))}
-                  </ul>
+            {preview.plan.agents.map((a) => (
+              <div key={a} className="rounded-xl border border-neutral-50 p-4" data-testid={`preview-${a}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-semibold text-primary">{a}</span>
+                    {isSupervisor(a) && <Badge variant="secondary">Supervisor</Badge>}
+                  </span>
+                  <Badge>{preview.plan.counts[a] ?? 0} contactos</Badge>
                 </div>
-              );
-            })}
+                <ul className="mt-2 flex flex-col gap-1">
+                  {(preview.samples[a] ?? []).map((r) => (
+                    <li key={r.rowNumber} className="text-xs text-text-muted">
+                      <span className="font-mono">{r.phone}</span>
+                      {r.name && <span className="ml-2 text-text-light">{r.name}</span>}
+                      {r.credit && <span className="ml-2 text-text-light">· crédito {r.credit}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
           <Button className="mt-4" onClick={() => setConfirmOpen(true)} disabled={!!tooLong || !!delivery}>
             Confirmar carga
@@ -652,8 +775,8 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
         <ConfirmDialog
           open={confirmOpen}
           title="Confirmar carga"
-          description={`${campaign} · ${fleet} · ${mode === 'distribute' ? 'Repartir' : 'Asignar a un agente'} · ${preview.validation.valid.length} contactos. Los agentes empezarán a enviar mensajes por WhatsApp.`}
-          confirmLabel="Entregar"
+          description={`${campaign} · ${fleet} · ${mode === 'distribute' ? 'Repartir' : 'Asignar a un agente'} · ${preview.validCount} contactos. Los agentes empezarán a enviar mensajes por WhatsApp.`}
+          confirmLabel={sendStep ?? 'Entregar'}
           loading={sending}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={send}

@@ -71,13 +71,13 @@ describe('/contactos', () => {
     expect(screen.getByLabelText('Archivo CSV')).toBeDisabled();
   });
 
-  it('archivo de 6 MB para v3 → mensaje y no envía nada', async () => {
-    setApi({ 'didi_vip:v3': ['ana'] });
-    await setup();
-    const big = new File([new Uint8Array(6 * 1024 * 1024)], 'grande.csv', { type: 'text/csv' });
+  it('archivo de más de 10 MB para v4 → mensaje y no envía nada', async () => {
+    setApi({ 'didi_vip:v4': ['ana'] });
+    await setup('didi_vip', 'v4 (desktop)');
+    const big = new File([new Uint8Array(11 * 1024 * 1024)], 'grande.csv', { type: 'text/csv' });
     await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
     await userEvent.upload(screen.getByLabelText('Archivo CSV'), big);
-    expect(await screen.findByText('El archivo supera 4 MB para v3')).toBeInTheDocument();
+    expect(await screen.findByText('El archivo supera 10 MB para v4')).toBeInTheDocument();
     expect(apiFetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
   });
 
@@ -178,15 +178,15 @@ describe('/contactos', () => {
     expect(sent.csv).toBe(tsv);
   });
 
-  it('Pegar desde Excel: texto de más de 4 MB para v3 → error inline sin procesar', async () => {
-    setApi({ 'didi_vip:v3': ['ana'] });
-    await setup();
+  it('Pegar desde Excel: texto de más de 10 MB para v4 → error inline sin procesar', async () => {
+    setApi({ 'didi_vip:v4': ['ana'] });
+    await setup('didi_vip', 'v4 (desktop)');
     await userEvent.click(screen.getByRole('tab', { name: 'Pegar' }));
     const area = screen.getByLabelText('Pegar desde Excel');
     await waitFor(() => expect(area).toBeEnabled());
-    fireEvent.change(area, { target: { value: 'telefono_1\n' + '5500000001\n'.repeat(400_000) } });
+    fireEvent.change(area, { target: { value: 'telefono_1\n' + '5500000001\n'.repeat(1_000_000) } });
     await userEvent.click(screen.getByRole('button', { name: 'Usar datos pegados' }));
-    expect(await screen.findByText('El texto pegado supera 4 MB para v3')).toBeInTheDocument();
+    expect(await screen.findByText('El texto pegado supera 10 MB para v4')).toBeInTheDocument();
     expect(screen.queryByTestId('read-summary')).toBeNull();
   });
 

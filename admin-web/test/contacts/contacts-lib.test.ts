@@ -36,13 +36,17 @@ describe('lectura y límites', () => {
   });
 
   it('límites por flota', () => {
-    expect(checkFileSize(6 * 1024 * 1024, 'v3')).toBe('El archivo supera 4 MB para v3');
+    // support-crm-base-upload: v3 hasta 50 MB / 200 000 filas (más de 4 MB va por S3).
+    expect(checkFileSize(6 * 1024 * 1024, 'v3')).toBeNull();
+    expect(checkFileSize(51 * 1024 * 1024, 'v3')).toBe('El archivo supera 50 MB para v3');
     expect(checkFileSize(6 * 1024 * 1024, 'v4')).toBeNull();
     expect(checkFileSize(11 * 1024 * 1024, 'v4')).toBe('El archivo supera 10 MB para v4');
     expect(checkFileSize(0, 'v4')).toBe('El archivo está vacío');
-    const big = 'phone\n' + Array.from({ length: 20_001 }, (_, i) => String(5215500000000 + i)).join('\n');
-    expect(parseCsvText(big, 'v3')).toEqual({ error: 'El archivo supera 20,000 filas para v3' });
-    expect('error' in parseCsvText(big, 'v4')).toBe(false);
+    const big = 'phone\n' + Array.from({ length: 50_001 }, (_, i) => String(5215500000000 + i)).join('\n');
+    expect(parseCsvText(big, 'v4')).toEqual({ error: 'El archivo supera 50,000 filas para v4' });
+    expect('error' in parseCsvText(big, 'v3')).toBe(false);
+    const huge = 'phone\n' + '5215500000000\n'.repeat(200_001);
+    expect(parseCsvText(huge, 'v3')).toEqual({ error: 'El archivo supera 200,000 filas para v3' });
   });
 
   it('vacío o sin filas', () => {

@@ -10,6 +10,7 @@ import {
   unknownVariableError,
   variablesResolvingToUploadId,
   LIMITS,
+  V3_INLINE_MAX_BYTES,
   parseCsvText,
   planHash,
   validateRows,
@@ -31,7 +32,10 @@ export interface UploadRequest {
   mode: Mode;
   agent?: string | null;
   fileName: string;
+  /** CSV en la solicitud (v3 hasta 4 MB, v4 hasta 10 MB). Vacío en la carga v3 por S3. */
   csv: string;
+  /** Carga v3 grande (support-crm-base-upload): CSV maestro ya subido con `POST .../uploads/presign`. */
+  large?: { uploadId: string; sourceKey: string };
   /** Toggle "Incluir supervisores" (add-supervisor-contact-access): filtra el roster igual que la vista previa. */
   includeSupervisors: boolean;
   /** v4: código de país (default `52`) y columna de teléfono. Sin plantilla: el agente escribe el mensaje. */
@@ -48,7 +52,14 @@ export function parseUploadRequest(body: unknown): UploadRequest {
   const b = (body ?? {}) as Record<string, unknown>;
   if (b.fleet !== 'v3' && b.fleet !== 'v4') throw new HttpError('invalid_request', 'Flota inválida');
   if (b.mode !== 'distribute' && b.mode !== 'single') throw new HttpError('invalid_request', 'Modo inválido');
-  if (typeof b.csv !== 'string' || !b.csv) throw new HttpError('invalid_request', 'Archivo requerido');
+  let large: UploadRequest['large'];
+  if (b.sourceKey !== undefined || b.uploadId !== undefined) {
+    if (b.fleet !== 'v3') throw new HttpError('invalid_request', 'La carga por S3 solo aplica a v3');
+    if (typeof b.uploadId !== 'string' || !UPLOAD_ID_RE.test(b.uploadId)) throw new HttpError('invalid_request', 'uploadId inválido');
+    if (typeof b.sourceKey !== 'string' || !b.sourceKey) throw new HttpError('invalid_request', 'sourceKey inválido');
+    if (b.csv !== undefined) throw new HttpError('invalid_request', 'csv y sourceKey son excluyentes');
+    large = { uploadId: b.uploadId, sourceKey: b.sourceKey };
+  } else if (typeof b.csv !== 'string' || !b.csv) throw new HttpError('invalid_request', 'Archivo requerido');
   if (typeof b.fileName !== 'string' || !b.fileName.trim()) throw new HttpError('invalid_request', 'Nombre de archivo requerido');
   const plan = b.plan as UploadRequest['plan'] | undefined;
   if (!plan || !Array.isArray(plan.agents) || typeof plan.hash !== 'string' || !plan.counts || typeof plan.counts !== 'object') {
@@ -59,7 +70,8 @@ export function parseUploadRequest(body: unknown): UploadRequest {
     mode: b.mode,
     agent: typeof b.agent === 'string' ? b.agent : null,
     fileName: b.fileName.trim().slice(0, 255),
-    csv: b.csv,
+    csv: typeof b.csv === 'string' ? b.csv : '',
+    ...(large ? { large } : {}),
     includeSupervisors: b.includeSupervisors === true,
     countryCode: typeof b.countryCode === 'string' && /^\d{1,4}$/.test(b.countryCode) ? b.countryCode : '52',
     phoneColumn: typeof b.phoneColumn === 'string' ? b.phoneColumn : null,
@@ -86,8 +98,10 @@ const sameCounts = (a: Record<string, number>, b: Record<string, number>) => {
  */
 export async function verifyPlan(req: UploadRequest, token: string, campaign: { v3: string; v4: string }) {
   const fleet = req.fleet;
-  if (Buffer.byteLength(req.csv, 'utf8') > LIMITS[fleet].maxBytes) {
-    throw new HttpError('payload_too_large', `El archivo supera ${LIMITS[fleet].label} para ${fleet}`);
+  // v3 en la solicitud: hasta 4 MB (lo que admite la Lambda); más grande va por S3.
+  const inlineMax = fleet === 'v3' ? V3_INLINE_MAX_BYTES : LIMITS[fleet].maxBytes;
+  if (Buffer.byteLength(req.csv, 'utf8') > inlineMax) {
+    throw new HttpError('payload_too_large', `El archivo supera ${fleet === 'v3' ? '4 MB' : LIMITS[fleet].label} para ${fleet}`);
   }
   const parsed = parseCsvText(req.csv, fleet);
   if ('error' in parsed) throw new HttpError('invalid_request', parsed.error);
@@ -119,6 +133,71 @@ export async function verifyPlan(req: UploadRequest, token: string, campaign: { 
 
 type Verified = Awaited<ReturnType<typeof verifyPlan>>;
 
+// ── Carga v3 grande por S3 (support-crm-base-upload) ─────────────────────
+
+export const UPLOAD_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+export const V3_MAX_ROWS = LIMITS.v3.maxRows;
+
+/** Llave del CSV maestro (misma que `incomingKey` de v3/ana-backend). */
+export const incomingKey = (campaign: string, uploadId: string): string => `uploads-incoming/${campaign}/${uploadId}.csv`;
+
+/**
+ * Carga por S3: el BFF no recibe el archivo, así que verifica el roster con
+ * el plan (orden de agentes y conteos de un reparto de `Σcounts` filas). La
+ * Lambda de v3 verifica conteos y hash contra el CSV maestro.
+ */
+export async function verifyLargePlan(req: UploadRequest, token: string, campaign: string): Promise<{ rows: number; agents: string[] }> {
+  const large = req.large!;
+  if (large.sourceKey !== incomingKey(campaign, large.uploadId)) throw new HttpError('invalid_request', 'sourceKey no corresponde a la carga');
+  if (!/^[0-9a-f]{64}$/.test(req.plan.hash)) throw new HttpError('invalid_request', 'Plan requerido');
+  const counts = Object.values(req.plan.counts);
+  if (counts.some((n) => typeof n !== 'number' || !Number.isInteger(n) || n < 0)) throw new HttpError('invalid_request', 'Plan requerido');
+  const rows = counts.reduce((a, n) => a + n, 0);
+  if (rows === 0) throw new HttpError('invalid_request', 'El archivo no tiene filas válidas');
+  if (rows > V3_MAX_ROWS) throw new HttpError('payload_too_large', `El archivo supera ${V3_MAX_ROWS.toLocaleString('es-MX')} filas para v3`);
+  const roster = await getRoster('v3', token, campaign);
+  const enabled = enabledRecipients(roster, req.includeSupervisors).agents;
+  const fake = new Array(rows).fill(null).map(() => ({ rowNumber: 0, values: [], phone: '', digits: '', record: {} }));
+  const plan = buildPlan({ fleet: 'v3', mode: req.mode, enabled, agent: req.agent, rows: fake });
+  if ('error' in plan || plan.agents.join('\n') !== req.plan.agents.join('\n') || !sameCounts(plan.counts, req.plan.counts)) {
+    throw new HttpError('conflict', ROSTER_CHANGED);
+  }
+  return { rows, agents: plan.agents };
+}
+
+/** `POST /admin/campaigns/{c}/contacts/presign` de v3: URL firmada (PUT) para el CSV maestro. */
+export async function presignV3(token: string, campaign: string, uploadId: string, bytes: number) {
+  const { v3ApiBase } = serverEnv();
+  const res = await callUpstream<{ data?: { uploadId: string; sourceKey: string; url: string; expiresIn: number; headers: Record<string, string>; maxBytes: number } }>(
+    `${v3ApiBase}/admin/campaigns/${encodeURIComponent(campaign)}/contacts/presign`,
+    { method: 'POST', token, body: { uploadId, bytes }, label: 'v3:contacts:presign' },
+  );
+  if (res.status === 413) throw new HttpError('payload_too_large', `El archivo supera ${LIMITS.v3.label} para v3`);
+  if (res.status < 200 || res.status >= 300 || !res.data?.data?.url) {
+    const code = codeForStatus(res.status);
+    throw new HttpError(code === 'unauthenticated' ? 'upstream_unavailable' : code, code === 'invalid_request' ? upstreamMessage(res.data) : undefined);
+  }
+  return res.data.data;
+}
+
+/** Entrega v3 por S3: la Lambda lee el CSV maestro, reparte, valida y escribe lo mismo que en línea. */
+export async function deliverV3Large(req: UploadRequest, token: string, campaign: string): Promise<V3Manifest> {
+  const large = req.large!;
+  return postV3Contacts(
+    {
+      uploadId: large.uploadId,
+      fileName: req.fileName,
+      mode: req.mode,
+      sourceKey: large.sourceKey,
+      plan: { agents: req.plan.agents, counts: req.plan.counts, hash: req.plan.hash },
+      ...(req.source !== undefined ? { source: req.source } : {}),
+    },
+    token,
+    campaign,
+    large.uploadId,
+  );
+}
+
 export interface V3Manifest {
   uploadId: string;
   status: string;
@@ -129,7 +208,6 @@ export interface V3Manifest {
 
 /** Entrega v3 (D3): archivos por agente a la ruta de administración; reintenta una vez con el mismo uploadId. */
 export async function deliverV3(req: UploadRequest, v: Verified, token: string, campaign: string, uploadId: string): Promise<V3Manifest> {
-  const { v3ApiBase } = serverEnv();
   const files = agentFiles(v.parsed.header, v.valid, v.plan).map(({ agent, csv }) => ({ agent, csv }));
   const body = {
     uploadId,
@@ -138,6 +216,11 @@ export async function deliverV3(req: UploadRequest, v: Verified, token: string, 
     files,
     ...(req.source !== undefined ? { source: req.source } : {}),
   };
+  return postV3Contacts(body, token, campaign, uploadId);
+}
+
+async function postV3Contacts(body: Record<string, unknown>, token: string, campaign: string, uploadId: string): Promise<V3Manifest> {
+  const { v3ApiBase } = serverEnv();
   const url = `${v3ApiBase}/admin/campaigns/${encodeURIComponent(campaign)}/contacts`;
   let res;
   try {
