@@ -34,6 +34,6 @@ _Ninguna._ (La cabecera de `GET /get/chats` y el evento realtime se especifican 
 - CLI: nuevo `results-outbox.js` (+ pruebas `node:test`), `index.js` (encolar tras cada intento), `agent-config.js` (`sourceKey` de la cabecera), `assignment-journal.js` (`source_key` opcional), `build-portable.ps1`.
 - Backend v3: nuevo `src/handlers/agentResults.ts` y `src/lib/sendResults.ts`, `chats.ts` (cabecera), `serverless.yml` (3 funciones, ciclo de vida, prefijo del puente), pruebas vitest.
 - v4 backend: `realtime.ts` (tipo `results.changed`) y `realtimeBridge.ts` (prefijo `results/`).
-- ANA Admin: rutas BFF `/api/agent/results/[campaign]` y `/api/campaigns/[campaign]/results`, `components/workspace/SendHistoryView.tsx`, `lib/workspace/send-history.ts`, páginas nuevas, sección nueva en `sections.ts`, un enlace en `MyAssignmentView.tsx`, `KNOWN_EVENTS`.
+- ANA Admin: rutas BFF `/api/agent/results/[campaign]` y `/api/campaigns/[campaign]/results`, `components/workspace/SendHistoryView.tsx`, `lib/send-history.ts`, páginas nuevas, sección nueva en `sections.ts`, un enlace en `MyAssignmentView.tsx`, `KNOWN_EVENTS`.
 - Datos: nuevo prefijo `results/` en `ana-backend-storage-prod` con teléfonos, créditos y un extracto del mensaje (mismo nivel de sensibilidad que `review/`), expira a los 180 días.
 - Despliegue: v4 backend → v3 backend → ANA Admin → release CLI 1.0.51.

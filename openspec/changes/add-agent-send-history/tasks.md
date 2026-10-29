@@ -21,7 +21,7 @@
 ## 4. ANA Admin
 
 - [x] 4.1 BFF: `/api/agent/results/[campaign]` (permiso de envío) y `/api/campaigns/[campaign]/results` (permisos de Contactos) con validación de query; pruebas de rutas
-- [x] 4.2 `lib/workspace/send-history.ts` (query, etiquetas, CSV, hora MX) y `components/workspace/SendHistoryView.tsx` (tarjetas, tabla, filtros, orden, exportación, Skeleton, recarga en vivo); páginas `/mi-asignacion/historial` y `/historial-envios`, sección nueva y enlace en Mi asignación; pruebas de vista
+- [x] 4.2 `lib/send-history.ts` (query, etiquetas, CSV, hora MX) y `components/workspace/SendHistoryView.tsx` (tarjetas, tabla, filtros, orden, exportación, Skeleton, recarga en vivo); páginas `/mi-asignacion/historial` y `/historial-envios`, sección nueva y enlace en Mi asignación; pruebas de vista
 - [x] 4.3 Verificar `test`, `typecheck`, `lint`, `check:design`, `next build` con `.env.test` y `check:bundle`
 
 ## 5. Despliegue y release
