@@ -13,8 +13,9 @@ const file = join(__dirname, '..', 'serverless.yml');
 const cfg = parse(readFileSync(file, 'utf8'));
 
 describe('serverless.yml: puente realtime', () => {
-  it('StorageBucket solo agrega EventBridgeConfiguration', () => {
-    expect(cfg.resources.Resources.StorageBucket).toEqual({
+  it('StorageBucket solo agrega EventBridgeConfiguration (y CORS/ciclo de vida de support-crm-base-upload)', () => {
+    const { CorsConfiguration: _cors, LifecycleConfiguration: _life, ...props } = cfg.resources.Resources.StorageBucket.Properties;
+    expect({ ...cfg.resources.Resources.StorageBucket, Properties: props }).toEqual({
       Type: 'AWS::S3::Bucket',
       Properties: {
         BucketName: '${self:service}-storage-${sls:stage}',
@@ -60,7 +61,10 @@ describe('serverless.yml: puente realtime', () => {
     } catch {
       return; // sin git/rama base disponible: se omite la comparación
     }
-    expect(cfg.functions).toEqual(parse(base).functions);
+    // support-crm-base-upload: ruta de presign y más memoria para la carga grande.
+    const { adminPresignContacts: _presign, ...functions } = cfg.functions;
+    const { memorySize: _mem, ...upload } = functions.adminUploadContacts;
+    expect({ ...functions, adminUploadContacts: upload }).toEqual(parse(base).functions);
     expect(cfg.provider).toEqual(parse(base).provider);
   });
 });
