@@ -12,5 +12,5 @@
 
 ## 3. Workspace y v4 (entrega 3)
 
-- [ ] 3.1 Variables `{{columna.N}}` (también en expresiones) en admin-web, v3/ana-backend y CLI; nombre `nombre_cliente` con espacios colapsados en vista previa y "Mi asignación"; pruebas
-- [ ] 3.2 v4: columna por defecto `telefono_1`, fallback por fila y columna `telefono_envio`; pruebas
+- [x] 3.1 Variables `{{columna.N}}` (también en expresiones) en admin-web, v3/ana-backend y CLI; nombre `nombre_cliente` con espacios colapsados en vista previa y "Mi asignación"; pruebas
+- [x] 3.2 v4: columna por defecto `telefono_1`, fallback por fila y columna `telefono_envio`; pruebas

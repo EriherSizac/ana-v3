@@ -52,6 +52,8 @@ interface Publication {
   sources: Array<{ key: string; rows: number; remaining: number; action: 'rewritten' | 'deleted' }>;
 }
 
+/** Solo al mostrar: espacios repetidos colapsados (base CRM: nombre_cliente con doble espacio). */
+const displayValue = (v: string) => v.replace(/\s+/g, ' ').trim();
 const fileName = (key: string) => key.split('/').pop() ?? key;
 const sizeLabel = (n: number | null) => (n == null ? '—' : n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
 const errorText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -392,7 +394,7 @@ export function MyAssignmentView() {
                 invalid={markers.length > 0}
               />
               <p className="mt-1 text-xs text-text-light">
-                Variables {'{{columna}}'} o {'{columna}'} y expresiones como {'{{total_balance*0.8}}'}; {'\\n'} es salto de línea.
+                Variables {'{{columna}}'} o {'{columna}'} y expresiones como {'{{total_balance*0.8}}'}; {'\\n'} es salto de línea. Los valores se insertan tal cual; para redondear a 2 decimales usa {'{{columna*1}}'} (también {'{{pago_minimo.1*1}}'}).
               </p>
               {markers.length > 0 && <InlineMessage className="mt-2">{unknownMarkersError(markers)}</InlineMessage>}
             </div>
@@ -484,7 +486,7 @@ export function MyAssignmentView() {
                     </td>
                     {merged.header.map((h) => (
                       <td key={h} className="whitespace-nowrap px-3 py-2 text-text-muted">
-                        {isPhoneColumn(h) ? <span className="font-mono text-xs">{maskPhone(r.record[h] ?? '')}</span> : (r.record[h] ?? '')}
+                        {isPhoneColumn(h) ? <span className="font-mono text-xs">{maskPhone(r.record[h] ?? '')}</span> : displayValue(r.record[h] ?? '')}
                       </td>
                     ))}
                     <td className="max-w-xs px-3 py-2 text-xs text-text-light">

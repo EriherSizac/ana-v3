@@ -1,4 +1,4 @@
-import { serializeCsv, type Fleet, type ValidRow } from './csv';
+import { serializeCsv, usesSendColumn, V4_SEND_COLUMN, type Fleet, type ValidRow } from './csv';
 
 // Plan de reparto determinista (design D2) compartido por navegador y BFF.
 
@@ -86,12 +86,22 @@ export function agentFiles(header: readonly string[], rows: readonly ValidRow[],
 }
 
 /** v4: CSV con solo las filas válidas, en orden (fila i del trigger = fila i del plan). */
-export function validRowsCsv(header: readonly string[], rows: readonly ValidRow[]): string {
+export function validRowsCsv(header: readonly string[], rows: readonly ValidRow[], phoneColumn?: string): string {
+  // Con `telefono_N` elegida: última columna `telefono_envio` con el teléfono resuelto por fila.
+  if (usesSendColumn(phoneColumn)) {
+    return serializeCsv(
+      [...header, V4_SEND_COLUMN],
+      rows.map((r) => [...r.values.slice(0, header.length), r.phone]),
+    );
+  }
   return serializeCsv(
     header,
     rows.map((r) => r.values),
   );
 }
+
+/** `phoneColumn` del presign de v4: `telefono_envio` si aplica el fallback por fila. */
+export const v4PhoneColumn = (phoneColumn: string): string => (usesSendColumn(phoneColumn) ? V4_SEND_COLUMN : phoneColumn);
 
 // ── Vista previa del mensaje ──────────────────────────────────────────────
 

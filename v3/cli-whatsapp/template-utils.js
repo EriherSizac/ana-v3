@@ -35,9 +35,16 @@ function lookupNumber(name, fields, raw) {
 }
 
 function evaluateExpression(expression, fields, raw) {
-  const expr = expression.replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, (colName) => {
+  // Una columna con sufijo `.N` (`pago_minimo.1`, base CRM) se toma completa si
+  // existe; si no, como antes: la columna base seguida de `.N`.
+  const expr = expression.replace(/[a-zA-Z_][a-zA-Z0-9_]*(?:\.\d+)?/g, (colName) => {
     const val = lookupNumber(colName, fields, raw);
-    return val === null ? colName : String(val);
+    if (val !== null) return String(val);
+    const dot = colName.indexOf('.');
+    if (dot < 0) return colName;
+    const base = colName.slice(0, dot);
+    const baseVal = lookupNumber(base, fields, raw);
+    return (baseVal === null ? base : String(baseVal)) + colName.slice(dot);
   });
 
   try {

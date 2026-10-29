@@ -124,10 +124,12 @@ describe('/contactos', () => {
     expect(summary).toHaveTextContent('3 válidas');
     expect(summary).toHaveTextContent('1 inválidas');
     await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }));
-    await screen.findByTestId('preview-ana');
+    // Nombre de nombre_cliente con espacios colapsados (solo al mostrar) y crédito de id_credito.
+    expect(await screen.findByTestId('preview-ana')).toHaveTextContent('MARIA DEL CARMEN ESPÍRITU· crédito 900000001');
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar carga' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Entregar' }));
     await screen.findByTestId('delivery');
+    expect(sent.csv).toContain('MARIA  DEL CARMEN ESPÍRITU');
     expect(sent.csv.split(/\r?\n/, 1)[0].split(',')).toHaveLength(76);
   });
 

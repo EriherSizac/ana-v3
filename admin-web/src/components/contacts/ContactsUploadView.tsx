@@ -31,6 +31,9 @@ import {
   type Encoding,
   hasReservedColumn,
   RESERVED_COLUMN_ERROR,
+  sendColumnError,
+  usesSendColumn,
+  V4_SEND_COLUMN,
   unknownVariableError,
   variablesResolvingToUploadId,
   detectPhoneColumn,
@@ -59,7 +62,9 @@ const POLL_INTERVAL_MS = 5_000;
 
 /** Nombre visible de una fila (vista previa). */
 const nameOf = (r: Record<string, string>): string =>
-  r.name || r.nombre || r.contact_name || [r.first_name, r.last_name].filter(Boolean).join(' ') || '';
+  (r.name || r.nombre || r.contact_name || [r.first_name, r.last_name].filter(Boolean).join(' ') || r.nombre_cliente || '').replace(/ {2,}/g, ' ').trim();
+/** Crédito visible (base CRM: id_credito). */
+const creditOf = (r: Record<string, string>): string => r.credit || r.credito || r.credit_id || r.id_credito || '';
 
 const enabledUrl = (campaign: string, fleet: Fleet, includeSupervisors: boolean) =>
   `/api/campaigns/${encodeURIComponent(campaign)}/enabled-agents?fleet=${fleet}${includeSupervisors ? '&includeSupervisors=1' : ''}`;
@@ -167,6 +172,8 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     return detectPhoneColumn(parsed.header, fleet, fleet === 'v4' ? phoneChoice : null);
   }, [parsed, fleet, phoneChoice]);
 
+  const sendColumnBlock = parsed && !('error' in parsed) && phone && 'column' in phone && fleet ? sendColumnError(parsed.header, fleet, phone.column) : null;
+
   const validation = useMemo(() => {
     if (!parsed || 'error' in parsed || !phone || 'error' in phone || !fleet) return null;
     return validateRows(parsed, fleet, phone.column);
@@ -188,6 +195,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     if (noEnabled || enabled === null) return 'Sin agentes habilitados';
     if (mode === 'single' && !agent) return 'Elige el agente';
     if (reservedError) return reservedError;
+    if (sendColumnBlock) return sendColumnBlock;
     if (!validation) return 'Carga un archivo válido';
     if (validation.valid.length === 0) return 'No hay filas válidas';
     if (variableError) return variableError;
@@ -491,8 +499,14 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
               onChange={setPhoneChoice}
               emptyLabel="Elige la columna"
             />
+            {phone && 'column' in phone && usesSendColumn(phone.column) && (
+              <p className="mt-1 text-xs text-text-light">
+                Si {phone.column} está vacío se usa el siguiente telefono_N con número; v4 recibe la columna {V4_SEND_COLUMN}.
+              </p>
+            )}
           </div>
         )}
+        {sendColumnBlock && <InlineMessage className="mt-3">{sendColumnBlock}</InlineMessage>}
 
         {validation && (
           <div className="mt-4" data-testid="validation-summary">
@@ -572,6 +586,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
                       <li key={r.rowNumber} className="text-xs text-text-muted">
                         <span className="font-mono">{r.phone}</span>
                         {nameOf(r.record) && <span className="ml-2 text-text-light">{nameOf(r.record)}</span>}
+                        {creditOf(r.record) && <span className="ml-2 text-text-light">· crédito {creditOf(r.record)}</span>}
                       </li>
                     ))}
                   </ul>

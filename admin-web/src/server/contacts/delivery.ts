@@ -13,7 +13,9 @@ import {
   parseCsvText,
   planHash,
   validateRows,
+  sendColumnError,
   validRowsCsv,
+  v4PhoneColumn,
   v4Assignments,
   type Fleet,
   type Mode,
@@ -91,6 +93,8 @@ export async function verifyPlan(req: UploadRequest, token: string, campaign: { 
   if ('error' in parsed) throw new HttpError('invalid_request', parsed.error);
   const phone = detectPhoneColumn(parsed.header, fleet, req.phoneColumn);
   if ('error' in phone) throw new HttpError('invalid_request', phone.error);
+  const sendError = sendColumnError(parsed.header, fleet, phone.column);
+  if (sendError) throw new HttpError('invalid_request', sendError);
   if (fleet === 'v3' && hasReservedColumn(parsed.header)) throw new HttpError('invalid_request', RESERVED_COLUMN_ERROR);
   const { valid } = validateRows(parsed, fleet, phone.column);
   if (valid.length === 0) throw new HttpError('invalid_request', 'El archivo no tiene filas válidas');
@@ -162,7 +166,7 @@ export async function deliverV4(req: UploadRequest, v: Verified, token: string, 
     body: {
       filename: req.fileName,
       countryCode: req.countryCode,
-      phoneColumn: v.phoneColumn,
+      phoneColumn: v4PhoneColumn(v.phoneColumn),
       campaign,
       distribute: true,
       assignments: v4Assignments(v.plan),
@@ -177,7 +181,7 @@ export async function deliverV4(req: UploadRequest, v: Verified, token: string, 
   // Igual que el desktop: la metadata firmada viaja en la query del URL; sin headers extra.
   let put: Response;
   try {
-    put = await fetch(presign.data.url, { method: 'PUT', body: validRowsCsv(v.parsed.header, v.valid), signal: AbortSignal.timeout(30_000) });
+    put = await fetch(presign.data.url, { method: 'PUT', body: validRowsCsv(v.parsed.header, v.valid, v.phoneColumn), signal: AbortSignal.timeout(30_000) });
   } catch {
     throw new HttpError('upstream_unavailable', 'No se pudo subir el archivo a v4. Intenta de nuevo.');
   }

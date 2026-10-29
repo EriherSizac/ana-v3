@@ -94,3 +94,17 @@ describe('publicación de la base CRM', () => {
     expect(cli[2]!.credit).toBe('2');
   });
 });
+
+describe('variables con sufijo .N (pago_minimo.1)', () => {
+  it('el backend renderiza igual que el CLI', async () => {
+    const { renderTemplate } = await import('../src/lib/templateRender');
+    const cliTemplate = (await import(/* @vite-ignore */ pathToFileURL(join(__dirname, '..', '..', 'cli-whatsapp', 'template-utils.js')).href)) as {
+      renderTemplate: (t: string, s: { fields?: object; raw?: object }) => string;
+    };
+    const row = { pago_minimo: '377.3296296', 'pago_minimo.1': '400', saldo: '10' };
+    for (const tpl of ['{{pago_minimo.1}}', '{{pago_minimo.1*0.5}}', '{{pago_minimo*1}}', '{{saldo.5*2}}', '{{pago_minimo.1 + saldo}}']) {
+      expect(renderTemplate(tpl, { fields: row, raw: row })).toBe(cliTemplate.renderTemplate(tpl, { fields: row, raw: row }));
+    }
+    expect(renderTemplate('{{pago_minimo.1*0.5}}', { fields: row, raw: row })).toBe('200');
+  });
+});

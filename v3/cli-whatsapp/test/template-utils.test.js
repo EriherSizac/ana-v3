@@ -101,3 +101,13 @@ test('plantilla vacía o nula', () => {
 test('replaceVariables es envoltorio de renderTemplate', () => {
   assert.equal(replaceVariables('Hola {{name}} {first_name}', { name: 'Juan', first_name: 'Ana' }), 'Hola Juan Ana');
 });
+
+// support-crm-base-upload: columnas con sufijo .N de la base CRM (pago_minimo.1).
+test('{{pago_minimo.1}} y expresiones con la columna .N completa', () => {
+  const row = { pago_minimo: '377', 'pago_minimo.1': '400' };
+  assert.equal(render('Mínimo {{pago_minimo.1}}', row), 'Mínimo 400');
+  assert.equal(render('{{pago_minimo.1*0.5}}', row), '200');
+  assert.equal(render('{{pago_minimo*1}}', row), '377');
+  // Columna .N inexistente: como antes, la base seguida de .N.
+  assert.equal(render('{{pago_minimo.5*2}}', row), '755');
+});

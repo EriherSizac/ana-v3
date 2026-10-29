@@ -157,8 +157,23 @@ export function detectPhoneColumn(header: readonly string[], fleet: Fleet, chose
  * teléfono del encabezado (el agente elige cuáles usar en "Mi asignación").
  */
 export function phoneCandidates(header: readonly string[], fleet: Fleet, column: string): string[] {
-  if (fleet === 'v4') return [column];
+  if (fleet === 'v4') {
+    // v4: con `telefono_N` elegida, fallback por fila a las demás `telefono_N` (columna telefono_envio).
+    if (!usesSendColumn(column)) return [column];
+    return [column, ...header.filter((c) => c !== column && usesSendColumn(c))];
+  }
   return [column, ...phoneColumnsOf(header).filter((c) => c !== column)];
+}
+
+/** Columna que v4 recibe con el teléfono resuelto por fila (support-crm-base-upload). */
+export const V4_SEND_COLUMN = 'telefono_envio';
+
+/** En v4 una columna `telefono_N` elegida activa el fallback por fila y la columna `telefono_envio`. */
+export const usesSendColumn = (column: string | null | undefined): boolean => !!column && /^telefono_\d+$/.test(column);
+
+/** Error si el fallback de v4 aplica y el encabezado ya trae `telefono_envio`. */
+export function sendColumnError(header: readonly string[], fleet: Fleet, column: string): string | null {
+  return fleet === 'v4' && usesSendColumn(column) && header.includes(V4_SEND_COLUMN) ? `La columna ${V4_SEND_COLUMN} está reservada en v4` : null;
 }
 
 export const digitsOf = (s: string): string => s.replace(/\D/g, '');
