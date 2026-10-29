@@ -95,20 +95,30 @@ export function waitForNextPoll({
     };
     const onWake = () => finish('woken');
     waker.attach(onWake);
-    const tick = async () => {
+    // El widget (page.evaluate en las ventanas de WhatsApp) puede colgarse si una
+    // ventana no responde: nunca se espera, para que el temporizador siga corriendo.
+    let tickBusy = false;
+    const runTick = (remaining, act) => {
+      if (tickBusy) return;
+      tickBusy = true;
+      Promise.resolve()
+        .then(() => onTick(remaining, act))
+        .catch(() => {
+          /* el widget no debe romper la espera */
+        })
+        .finally(() => {
+          tickBusy = false;
+        });
+    };
+    const tick = () => {
       if (done) return;
       const act = isActive();
       if (!act) endAt = Math.min(endAt, start + POLL_INTERVAL_MS);
       const remaining = endAt - now();
       if (remaining <= 0) return finish('timeout');
-      try {
-        await onTick(remaining, act);
-      } catch {
-        /* el widget no debe romper la espera */
-      }
-      if (done) return;
+      runTick(remaining, act);
       timer = setTimeoutImpl(tick, Math.min(tickMs, Math.max(1, endAt - now())));
     };
-    void tick();
+    tick();
   });
 }

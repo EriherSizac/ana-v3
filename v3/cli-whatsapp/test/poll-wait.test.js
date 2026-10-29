@@ -118,3 +118,24 @@ test('widget: "En vivo · respaldo en 1m 45s" con canal activo; "Próximo poll" 
   await settle();
   assert.equal(ticks[0], 'En vivo · respaldo en 2m 0s');
 });
+
+test('un widget que nunca responde no cuelga la espera (regresión 2026-10-29)', async () => {
+  const c = clock();
+  let result = null;
+  let ticks = 0;
+  waitForNextPoll({
+    isActive: () => false,
+    waker: createPollWaker(),
+    onTick: () => {
+      ticks += 1;
+      return new Promise(() => {}); // page.evaluate colgado
+    },
+    now: c.now,
+    setTimeoutImpl: c.setTimeoutImpl,
+    clearTimeoutImpl: c.clearTimeoutImpl,
+  }).then((r) => (result = r));
+  await c.advance(POLL_INTERVAL_MS);
+  await settle();
+  assert.equal(result, 'timeout');
+  assert.equal(ticks, 1, 'no se lanzan ticks encimados mientras el anterior sigue colgado');
+});
