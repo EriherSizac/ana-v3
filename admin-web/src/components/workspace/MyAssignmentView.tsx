@@ -80,6 +80,10 @@ import {
   type WizardDraft,
   type WizardStep,
 } from '@/lib/workspace/wizard';
+import { countWaStates, lookupPhonesOf, noWaPhonesOf, rowWaPhones, rowWaState, waAutoOverrides, waFilterPredicate, type WaFilter } from '@/lib/wa-status';
+import { useWaStatus } from './useWaStatus';
+import { WaStatusBadge } from './WaStatusBadge';
+import { WaStatusPanel } from './WaStatusPanel';
 import { AssignmentFilesStep } from './AssignmentFilesStep';
 import { ColumnFilterButton, type ColumnFilterStats } from './ColumnFilterPopover';
 import { WizardNav, WizardStepper } from './WizardStepper';
@@ -382,11 +386,18 @@ export function MyAssignmentView() {
   const activeRangeColumn = rangeColumn && amounts.includes(rangeColumn) ? rangeColumn : (amounts[0] ?? null);
   const filtersActive = isFilterActive(filters, merged.header);
 
+  // Registro de WhatsApp (add-whatsapp-status-registry): consulta, filtro y elección automática en modo `first`.
+  const [waFilter, setWaFilter] = useState<WaFilter>('all');
+  const waPhones = useMemo(() => lookupPhonesOf(merged.rows, phoneColumns), [merged.rows, phoneColumns]);
+  const wa = useWaStatus(campaign, waPhones);
+  const waPredicate = useMemo(() => waFilterPredicate(phoneColumns, wa.map, waFilter), [phoneColumns, wa.map, waFilter]);
+  const waAuto = useMemo(() => waAutoOverrides(merged.rows, phoneColumns, phoneMode, wa.map, overrides), [merged.rows, phoneColumns, phoneMode, wa.map, overrides]);
+
   // Diferido: escribir en un filtro no bloquea el input mientras se refiltran miles de filas.
   const deferredFilters = useDeferredValue(filters);
   const filtered = useMemo(
-    () => sortRows(applyFilters(merged.rows, merged.header, deferredFilters), sort && merged.header.includes(sort.column) ? sort : null),
-    [merged, deferredFilters, sort],
+    () => sortRows(applyFilters(merged.rows, merged.header, deferredFilters).filter(waPredicate), sort && merged.header.includes(sort.column) ? sort : null),
+    [merged, deferredFilters, sort, waPredicate],
   );
 
   // Valores del popover abierto: filas que pasan los demás filtros (estilo Excel).
@@ -440,7 +451,16 @@ export function MyAssignmentView() {
   ];
 
   const selectedRows = useMemo(() => merged.rows.filter((r) => r.valid && selected.has(r.id)), [merged, selected]);
-  const phones = useMemo(() => planPhones(selectedRows, phoneColumns, phoneMode, overrides), [selectedRows, phoneColumns, phoneMode, overrides]);
+  const phones = useMemo(() => planPhones(selectedRows, phoneColumns, phoneMode, waAuto.overrides), [selectedRows, phoneColumns, phoneMode, waAuto.overrides]);
+  const waSelected = useMemo(() => {
+    const noRows = selectedRows.filter((r) => rowWaState(r.record, phoneColumns, wa.map) === 'no');
+    return {
+      counts: countWaStates(merged.rows, phoneColumns, wa.map),
+      noRows: noRows.length,
+      noPhones: noWaPhonesOf(noRows, phoneColumns, wa.map),
+      changed: selectedRows.filter((r) => waAuto.changed.has(r.id)).length,
+    };
+  }, [merged.rows, selectedRows, phoneColumns, wa.map, waAuto.changed]);
   const summary = useMemo(() => summarizePlan(merged.rows, selectedRows, phones, phoneColumns), [merged.rows, selectedRows, phones, phoneColumns]);
   const contactCount = summary.messages;
   const markers = useMemo(
@@ -455,7 +475,7 @@ export function MyAssignmentView() {
   const suggestions = useMemo(() => suggestedFields(merged.header, phoneColumns), [merged.header, phoneColumns]);
 
   /** Teléfonos a los que se enviaría la fila (los de la publicación si está seleccionada). */
-  const sendPhonesOf = (r: MergedRow): string[] => phones.get(r.id) ?? planPhones([r], phoneColumns, phoneMode, overrides).get(r.id) ?? [];
+  const sendPhonesOf = (r: MergedRow): string[] => phones.get(r.id) ?? planPhones([r], phoneColumns, phoneMode, waAuto.overrides).get(r.id) ?? [];
   const setOverride = (id: string, phone: string | null) =>
     setOverrides((m) => {
       const n = new Map(m);
@@ -555,7 +575,7 @@ export function MyAssignmentView() {
             phoneColumns,
             phoneMode,
             sources: publishSources(files, selectedRows),
-            overrides: publishOverrides(files, selectedRows, phoneColumns, overrides),
+            overrides: publishOverrides(files, selectedRows, phoneColumns, waAuto.overrides),
           },
         },
       );
@@ -812,6 +832,17 @@ export function MyAssignmentView() {
                   </div>
                 </div>
 
+                <WaStatusPanel
+                  wa={wa}
+                  filter={waFilter}
+                  onFilter={setWaFilter}
+                  counts={waSelected.counts}
+                  selectedNoPhones={waSelected.noPhones}
+                  selectedNoRows={waSelected.noRows}
+                  changedRows={waSelected.changed}
+                  phoneMode={phoneMode}
+                />
+
                 {selectedRows.length > 0 && (
                   <div className="mt-4 flex flex-col gap-3 rounded-2xl bg-primary px-5 py-3 text-primary-foreground shadow-card sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-sm font-semibold" data-testid="selection-bar">
@@ -854,6 +885,7 @@ export function MyAssignmentView() {
                           </th>
                         ))}
                         <th className="px-3 py-2">Teléfono a enviar</th>
+                        <th className="px-3 py-2">WhatsApp</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -875,6 +907,9 @@ export function MyAssignmentView() {
                             {r.valid && (
                               <SendPhoneCell row={r} phoneColumns={phoneColumns} sending={sendPhonesOf(r)} override={overrides.get(r.id)} onPick={(p) => setOverride(r.id, p)} />
                             )}
+                          </td>
+                          <td className="px-3 py-2">
+                            {r.valid && <WaStatusBadge rowId={r.id} phones={rowWaPhones(r.record, phoneColumns)} map={wa.map} onMark={wa.request} disabled={wa.marking} />}
                           </td>
                         </tr>
                       ))}
@@ -975,6 +1010,11 @@ export function MyAssignmentView() {
                   <div className="mt-4" data-testid="summary-no-custom-field">
                     <InlineMessage kind="warning">{NO_CUSTOM_FIELD_WARNING}</InlineMessage>
                   </div>
+                )}
+                {phoneMode === 'first' && waSelected.changed > 0 && (
+                  <p className="mt-3 text-xs text-text-light" data-testid="wa-skip-summary">
+                    {waSelected.changed} fila(s) usan su siguiente teléfono porque el primero está marcado sin WhatsApp.
+                  </p>
                 )}
                 {publishError && <InlineMessage className="mt-4">{publishError}</InlineMessage>}
                 <WizardNav step={4} block={publishBlock} loading={publishing} onBack={() => setStep(3)} onNext={() => setConfirmOpen(true)} nextLabel="Enviar" />

@@ -85,6 +85,8 @@ export interface PlanSummary {
   validCount: number;
   /** Primeras 5 filas por agente. */
   samples: Record<string, PreviewRow[]>;
+  /** Teléfonos válidos para el aviso del registro de WhatsApp (máx. PHONES_SHOWN + 1: más allá basta saber que excede). */
+  phones: string[];
   payload: Payload;
 }
 
@@ -95,6 +97,8 @@ export const nameOf = (r: Record<string, string>): string =>
 export const creditOf = (r: Record<string, string>): string => r.credit || r.credito || r.credit_id || r.id_credito || '';
 
 const INVALID_SHOWN = 100;
+/** Igual a WA_UPLOAD_MAX_ROWS del aviso de WhatsApp. */
+const PHONES_SHOWN = 20_000;
 const SAMPLE_ROWS = 5;
 
 /**
@@ -220,7 +224,7 @@ export class ContactsSession {
       payload = { kind: 'inline', csv: this.text };
     }
     onProgress?.({ phase: 'reparto', done: rows.length, total: rows.length });
-    return { plan, hash, validCount: rows.length, samples, payload };
+    return { plan, hash, validCount: rows.length, samples, phones: rows.slice(0, PHONES_SHOWN + 1).map((r) => r.phone), payload };
   }
 
   /** Columna de teléfono de la última validación (v4: `phoneColumn` del presign). */
