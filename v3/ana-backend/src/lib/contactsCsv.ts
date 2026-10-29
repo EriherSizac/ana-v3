@@ -83,3 +83,43 @@ export function singleLineRows(csv: string): string[] {
       .join(',');
   });
 }
+
+/** Columnas de crédito del CLI (`FIELD_MAPPING` → credit), en orden de preferencia. */
+export const CREDIT_COLUMNS = ['credit', 'credito', 'credit_id', 'id_credito'] as const;
+
+/** Crédito normalizado para duplicados: sin espacios y en minúsculas. */
+export const normalizeCredit = (v: string): string => v.replace(/\s+/g, '').toLowerCase();
+
+/** Crédito de una fila: primer valor no vacío de las columnas de crédito (normalizado; '' si no hay). */
+export function creditKeyOf(record: Readonly<Record<string, string | undefined>>): string {
+  for (const c of CREDIT_COLUMNS) {
+    const v = normalizeCredit(record[c] ?? '');
+    if (v) return v;
+  }
+  return '';
+}
+
+/**
+ * Primer crédito repetido entre las filas de todos los CSV (support-crm-base-upload,
+ * "Créditos duplicados en la carga v3"), con el valor original de la fila
+ * repetida; `null` si no hay. Las filas sin crédito no se comprueban.
+ */
+export function duplicateCredit(csvs: readonly string[]): string | null {
+  const seen = new Set<string>();
+  for (const csv of csvs) {
+    const [first, ...rows] = singleLineRows(csv);
+    const header = parseCsvLine(first ?? '').map((h) => h.trim());
+    const cols = CREDIT_COLUMNS.map((c) => header.indexOf(c)).filter((i) => i >= 0);
+    if (!cols.length) continue;
+    for (const line of rows) {
+      if (!line) continue;
+      const values = parseCsvLine(line);
+      const raw = cols.map((i) => (values[i] ?? '').trim()).find((v) => normalizeCredit(v)) ?? '';
+      const key = normalizeCredit(raw);
+      if (!key) continue;
+      if (seen.has(key)) return raw;
+      seen.add(key);
+    }
+  }
+  return null;
+}

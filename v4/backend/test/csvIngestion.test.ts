@@ -118,6 +118,17 @@ describe('csvTrigger', () => {
     expect(del[0].args[0].input).toEqual({ Bucket: 'csv-test', Key: KEY });
   });
 
+  it('mismo teléfono en créditos distintos → un job por fila (sin deduplicar por teléfono)', async () => {
+    // support-crm-base-upload "Publicación por crédito": ANA Admin ya deduplica por crédito.
+    installObject('id_credito,telefono,mensaje\n123,5510000000,hola\n456,5510000000,hola\n', META);
+    await csvTrigger(s3Event());
+    expect(jobs).toHaveLength(2);
+    expect(jobs.map((j) => [j.phone, j.row.id_credito])).toEqual([
+      ['5510000000', '123'],
+      ['5510000000', '456'],
+    ]);
+  });
+
   it('dos cargas del mismo archivo/lada → jobs distintos', async () => {
     installObject(csvOf(2), { ...META, campaignid: 'lider.didi/1_cartera.csv' });
     await csvTrigger({ Records: [{ s3: { bucket: { name: 'csv-test' }, object: { key: 'csv-uploads/lider.didi/1_cartera.csv', size: 1 } } }] } as any);

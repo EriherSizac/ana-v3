@@ -1,7 +1,7 @@
 import { DeleteObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { requireAdminAccess } from '../lib/adminAccess';
 import { adminError, adminInternal, adminOk, parseJsonBody, type AdminEvent, type AdminResult } from '../lib/adminHttp';
-import { headerColumns, isPhoneColumnName, singleLineRows, stripBom } from '../lib/contactsCsv';
+import { duplicateCredit, headerColumns, isPhoneColumnName, singleLineRows, stripBom } from '../lib/contactsCsv';
 import { parseCampaignParam, parseUsername } from '../lib/identifiers';
 import { getEnabledAgents, RosterError } from '../lib/roster';
 import { bucketName, getText, putJson, s3 } from '../lib/s3Json';
@@ -166,6 +166,9 @@ export function validateFiles(p: Pick<ParsedUpload, 'files'>): string | null {
     if (!cols.some(isPhoneColumnName)) return `${f.agent}: falta columna de teléfono`;
     if (singleLineRows(f.csv).length < 2) return `${f.agent}: sin filas`;
   }
+  // Duplicados por crédito entre todas las filas de la carga (support-crm-base-upload).
+  const dup = duplicateCredit(p.files.map((f) => f.csv));
+  if (dup !== null) return `Crédito duplicado: ${dup}`;
   return null;
 }
 

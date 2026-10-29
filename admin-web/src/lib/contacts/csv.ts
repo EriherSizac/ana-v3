@@ -178,13 +178,20 @@ export function sendColumnError(header: readonly string[], fleet: Fleet, column:
 
 export const digitsOf = (s: string): string => s.replace(/\D/g, '');
 
+/** Columnas de crédito (alias del CLI v3 y de v4), en orden de preferencia. */
+export const CREDIT_COLUMNS = ['credit', 'credito', 'credit_id', 'id_credito'] as const;
+
+/** Crédito normalizado para duplicados: sin espacios y en minúsculas. */
+export const normalizeCredit = (v: string): string => v.replace(/\s+/g, '').toLowerCase();
+
 export type InvalidReason =
   | 'Columnas incompletas'
   | 'Más columnas que el encabezado'
   | 'Salto de línea dentro de un campo'
   | 'Sin teléfono'
   | 'Teléfono con menos de 10 dígitos'
-  | 'Teléfono duplicado';
+  | 'Teléfono duplicado'
+  | 'Crédito duplicado';
 
 export interface ValidRow {
   rowNumber: number;
@@ -203,11 +210,16 @@ export interface Validation {
 /**
  * Clasifica cada fila (spec "Validación de filas" + support-crm-base-upload):
  * válida si alguna columna candidata tiene ≥ 10 dígitos; el teléfono de la
- * fila (y del duplicado) es el primero válido. Solo las válidas se entregan.
+ * fila es el primero válido. Duplicados ("Duplicados por crédito"): mismo
+ * crédito normalizado → "Crédito duplicado" (el mismo teléfono en créditos
+ * distintos es válido); sin crédito, por teléfono solo entre filas sin
+ * crédito. Solo las válidas se entregan.
  */
 export function validateRows(parsed: ParsedCsv, fleet: Fleet, phoneColumn: string, candidates?: readonly string[]): Validation {
   const cols = (candidates ?? phoneCandidates(parsed.header, fleet, phoneColumn)).map((c) => parsed.header.indexOf(c)).filter((i) => i >= 0);
-  const seen = new Set<string>();
+  const creditCols = CREDIT_COLUMNS.map((c) => parsed.header.indexOf(c)).filter((i) => i >= 0);
+  const seenCredits = new Set<string>();
+  const seenPhones = new Set<string>();
   const valid: ValidRow[] = [];
   const invalid: Validation['invalid'] = [];
   for (const row of parsed.rows) {
@@ -218,16 +230,19 @@ export function validateRows(parsed: ParsedCsv, fleet: Fleet, phoneColumn: strin
     const present = cols.map((i) => row.values[i] ?? '').filter((v) => v);
     const phone = present.find((v) => digitsOf(v).length >= 10) ?? present[0] ?? '';
     const digits = digitsOf(phone);
+    const credit = creditCols.map((i) => normalizeCredit(row.values[i] ?? '')).find((v) => v) ?? '';
     if (!reason) {
       if (!phone) reason = 'Sin teléfono';
       else if (digits.length < 10) reason = 'Teléfono con menos de 10 dígitos';
-      else if (seen.has(digits)) reason = 'Teléfono duplicado';
+      else if (credit && seenCredits.has(credit)) reason = 'Crédito duplicado';
+      else if (!credit && seenPhones.has(digits)) reason = 'Teléfono duplicado';
     }
     if (reason) {
       invalid.push({ rowNumber: row.rowNumber, reason });
       continue;
     }
-    seen.add(digits);
+    if (credit) seenCredits.add(credit);
+    else seenPhones.add(digits);
     const record: Record<string, string> = {};
     parsed.header.forEach((h, i) => {
       record[h] = row.values[i] ?? '';

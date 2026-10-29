@@ -412,7 +412,7 @@ export function MyAssignmentView() {
                   ))}
                 </div>
               )}
-              <p className="mt-1 text-xs text-text-light">El mensaje se envía a cada teléfono válido de las columnas elegidas (máximo {MAX_PHONE_COLUMNS}).</p>
+              <p className="mt-1 text-xs text-text-light">El mensaje se envía a cada teléfono válido de las columnas elegidas (máximo {MAX_PHONE_COLUMNS}), una vez por crédito.</p>
               {selectedRows[0] && template.trim() && (
                 <div className="mt-3 rounded-xl border border-neutral-50 bg-neutral-30 p-3" data-testid="message-preview">
                   <span className="text-2xs uppercase tracking-wider text-text-light">Vista previa (primera fila seleccionada)</span>

@@ -14,3 +14,9 @@
 
 - [x] 3.1 Variables `{{columna.N}}` (también en expresiones) en admin-web, v3/ana-backend y CLI; nombre `nombre_cliente` con espacios colapsados en vista previa y "Mi asignación"; pruebas
 - [x] 3.2 v4: columna por defecto `telefono_1`, fallback por fila y columna `telefono_envio`; pruebas
+
+## 4. Duplicados por crédito (entrega 4)
+
+- [x] 4.1 admin-web `validateRows`: duplicado por crédito normalizado ("Crédito duplicado"), fallback por teléfono entre filas sin crédito; textos de la vista previa; pruebas (vista previa y BFF)
+- [x] 4.2 v3/ana-backend: 400 `Crédito duplicado` en la carga de administración; la publicación deduplica por crédito+teléfono (y `phonesFor` de admin-web igual); pruebas
+- [x] 4.3 v4: prueba de que el trigger CSV crea un job por fila con el mismo teléfono en créditos distintos
