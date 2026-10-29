@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { ArrowDown, ArrowUp, CheckCircle2, X } from 'lucide-react';
 import {
   Badge,
@@ -541,7 +542,18 @@ export function MyAssignmentView() {
 
   return (
     <PageContainer>
-      <PageHeader title="Mi asignación" description="Elige tu asignación, revisa los contactos, escribe tu mensaje y publícalo para que tu CLI lo envíe." />
+      <PageHeader
+        title="Mi asignación"
+        description="Elige tu asignación, revisa los contactos, escribe tu mensaje y publícalo para que tu CLI lo envíe."
+        actions={
+          <Link
+            href="/mi-asignacion/historial"
+            className="inline-flex h-10 items-center rounded-xl border border-neutral-60 bg-white px-4 text-sm font-semibold text-primary hover:bg-primary-light-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary"
+          >
+            Historial de envíos
+          </Link>
+        }
+      />
       <StaleNotice stale={livePending.stale} onRefresh={livePending.refresh} />
 
       <section className="pernexium-card p-6" aria-labelledby="campana-title">
