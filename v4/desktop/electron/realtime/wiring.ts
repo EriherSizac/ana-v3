@@ -1,6 +1,6 @@
 // File: Cableado del canal realtime con el poller y la configuración remota (add-realtime-v4-desktop D2/D6/D7).
 // Created: 2026-10-26
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 import { POLL_BACKUP_INTERVAL_MS, POLL_INTERVAL_MS } from '../jobs/poller';
@@ -38,6 +38,8 @@ export interface WiringDeps {
   refreshAccess: () => void | Promise<void>;
   /** Avisa al renderer que vuelva a leer `GET /me` (IPC `access:refresh`). */
   notifyRenderer: (reason: string) => void;
+  /** `release.available` del desktop: chequeo del feed (con espera aleatoria). */
+  releaseAvailable?: () => void;
   log?: (msg: string) => void;
 }
 
@@ -67,6 +69,7 @@ export function createRealtimeWiring(deps: WiringDeps) {
     onEvent(e: RealtimeEnvelope) {
       if (e.type === 'jobs.changed') deps.pollNow();
       else if (e.type === 'settings.changed' && e.ref?.scope === 'desktop') deps.settingsRefreshNow();
+      else if (e.type === 'release.available' && e.ref?.scope === 'desktop') deps.releaseAvailable?.();
     },
     /** Actualización forzada: acceso del main y del renderer, jobs y configuración. */
     onRefresh(reason: string) {

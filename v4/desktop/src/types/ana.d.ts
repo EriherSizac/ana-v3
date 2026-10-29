@@ -1,6 +1,6 @@
 // File: ana.d
 // Created: 2026-06-09
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 // Puente expuesto por electron/preload.ts (contextBridge `ana`).
@@ -96,12 +96,14 @@ export interface SendProgress {
 }
 
 export interface UpdateStatus {
-  phase: 'checking' | 'downloading' | 'installing' | 'none' | 'error';
+  phase: 'checking' | 'downloading' | 'installing' | 'restarting' | 'none' | 'error';
   percent?: number;
   version?: string;
   message?: string;
   waitingForJob?: boolean; // installing: esperando el job en curso
   bypass?: boolean; // none por acceso de emergencia de Sistemas
+  inSession?: boolean; // a media sesión: aviso no bloqueante (add-in-session-updates)
+  secondsLeft?: number; // restarting: segundos para instalar
 }
 
 declare global {

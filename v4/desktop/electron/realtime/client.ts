@@ -1,6 +1,6 @@
 // File: Cliente del canal realtime de ANA (add-realtime-v4-desktop D2): conexión, latido, backoff y refresco forzado.
 // Created: 2026-10-26
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 /**
@@ -37,6 +37,8 @@ export const KNOWN_EVENTS = [
   'review.changed',
   'roster.changed',
   'settings.changed',
+  // add-in-session-updates: versión publicada (la app consulta su feed).
+  'release.available',
 ] as const;
 export type KnownEvent = (typeof KNOWN_EVENTS)[number];
 

@@ -21,9 +21,9 @@
 
 ## 4. Desktop: actualización en sesión
 
-- [ ] 4.1 `UpdaterCore`: modo sesión (pausa al detectar, `restarting` 60 s, `quitAndInstall(true, true)`, error → `resumeJobs`), `checkNow()`; `JobPoller.resumeNewJobs()`; pruebas vitest en `updaterCore.test.ts` y `poller.test.ts`
-- [ ] 4.2 Cableado: reanudación (`power/resume.ts`), `release.available` (scope desktop, jitter) en `realtime/client.ts` y `wiring.ts`; pruebas en `wiring.test.ts`
-- [ ] 4.3 Renderer: `UpdateBanner` no bloqueante en lugar de `UpdatingOverlay`; tipos en `ana.d.ts`; `npm test`, `npm run typecheck` y `npm run build` verdes
+- [x] 4.1 `UpdaterCore`: modo sesión (pausa al detectar, `restarting` 60 s, `quitAndInstall(true, true)`, error → `resumeJobs`), `checkNow()`; `JobPoller.resumeNewJobs()`; pruebas vitest en `updaterCore.test.ts` y `poller.test.ts`
+- [x] 4.2 Cableado: reanudación (`power/resume.ts`), `release.available` (scope desktop, jitter) en `realtime/client.ts` y `wiring.ts`; pruebas en `wiring.test.ts`
+- [x] 4.3 Renderer: `UpdateBanner` no bloqueante en lugar de `UpdatingOverlay`; tipos en `ana.d.ts`; `npm test`, `npm run typecheck` y `npm run build` verdes
 
 ## 5. Documentación
 

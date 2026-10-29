@@ -174,6 +174,19 @@ describe('JobPoller.pauseNewJobs / waitIdle', () => {
     expect((await poller.approve(['j2'])).ok).toBe(false);
   });
 
+  it('resumeNewJobs (actualización fallida): vuelve a aceptar envíos', async () => {
+    const authFetch = vi.fn(async () => pollResponse([job('r1')]));
+    const { poller } = makePoller({ authFetch });
+    await poller.pollOnce();
+    poller.pauseNewJobs();
+    expect(poller.isPaused()).toBe(true);
+    expect((await poller.approve(['r1'])).ok).toBe(false);
+    poller.resumeNewJobs();
+    expect(poller.isPaused()).toBe(false);
+    expect((await poller.approve(['r1'])).ok).toBe(true);
+    await poller.currentBatch();
+  });
+
   it('waitIdle respeta el máximo', async () => {
     vi.useFakeTimers();
     try {

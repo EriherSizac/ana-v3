@@ -11,7 +11,14 @@ import { interpolate } from './whatsapp/template';
 import { Backend } from './backend';
 import { JobPoller, type SendJob } from './jobs/poller';
 import { outcomeForResolve } from './jobs/outcome';
-import { setupUpdater, retryUpdate, markUpdateBypassed, lastUpdateStatus } from './updater';
+import {
+  setupUpdater,
+  retryUpdate,
+  markUpdateBypassed,
+  lastUpdateStatus,
+  checkUpdateNow,
+  checkUpdateSoon,
+} from './updater';
 import { TokenBroker, createAuthFetch } from './auth/tokenBroker';
 import { decideSetToken, shouldHeartbeat, type SetTokenReason } from './auth/session';
 import { decideReply, type MainAccess } from './auth/replyGate';
@@ -273,6 +280,8 @@ const realtimeWiring = createRealtimeWiring({
   settingsIntervalChanged: () => remoteSettings.intervalChanged(),
   refreshAccess: () => refreshAccess(),
   notifyRenderer: (reason) => send('access:refresh', { reason }),
+  // Versión del desktop publicada (add-in-session-updates): chequeo tras 0–30 s.
+  releaseAvailable: () => checkUpdateSoon(),
   log: (m) => console.log(m),
 });
 
@@ -455,6 +464,8 @@ handle('update:check', noArgs, () => {
       hasJobInFlight: () => poller.hasJobInFlight(),
       waitIdle: (ms) => poller.waitIdle(ms),
       beforeInstall: () => wa.stop(),
+      // Actualización a media sesión fallida: se vuelve a tomar jobs.
+      resumeJobs: () => poller.resumeNewJobs(),
     });
   return { ok: true };
 });
@@ -636,6 +647,7 @@ const resumeCoordinator = createResumeCoordinator({
     await wa.restartKeepSession();
   },
   heartbeat: () => heartbeatIfConnected(),
+  checkUpdates: () => void checkUpdateNow(),
   log: (m) => console.log(m),
 });
 // Respaldo de powerMonitor: un hueco > 30 s entre ticks de 5 s = reanudación.

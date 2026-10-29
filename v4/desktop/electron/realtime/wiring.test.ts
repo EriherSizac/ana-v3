@@ -43,6 +43,22 @@ describe('createRealtimeWiring', () => {
     expect(d.settingsRefreshNow).toHaveBeenCalledTimes(1);
   });
 
+  it('release.available desktop → chequeo de actualización; scope cli se ignora', () => {
+    const releaseAvailable = vi.fn();
+    const w = createRealtimeWiring({
+      pollNow: vi.fn(),
+      pollIntervalChanged: vi.fn(),
+      settingsRefreshNow: vi.fn(),
+      settingsIntervalChanged: vi.fn(),
+      refreshAccess: vi.fn(async () => {}),
+      notifyRenderer: vi.fn(),
+      releaseAvailable,
+    });
+    w.onEvent({ v: 1, type: 'release.available', id: '1', at: 1, ref: { scope: 'cli' } });
+    w.onEvent({ v: 1, type: 'release.available', id: '2', at: 1, ref: { scope: 'desktop' } });
+    expect(releaseAvailable).toHaveBeenCalledTimes(1);
+  });
+
   it('confirmación: lectura de jobs y configuración', () => {
     const { d, w } = make();
     w.onConfirmed();

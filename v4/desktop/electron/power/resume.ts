@@ -155,6 +155,8 @@ export interface ResumeDeps {
   /** Revisa WhatsApp y lo reinicializa si hace falta (ver `decideWaAction`). */
   checkWhatsapp: () => Promise<unknown>;
   heartbeat: () => void;
+  /** Chequeo del feed de actualizaciones (add-in-session-updates). */
+  checkUpdates?: () => void;
   /** ¿Hay sesión del operador? Sin sesión solo se registra la señal. */
   hasSession: () => boolean;
   now?: () => number;
@@ -198,6 +200,8 @@ export function createResumeCoordinator(deps: ResumeDeps) {
     // 3) Lecturas inmediatas.
     step('poll', deps.pollNow);
     step('settings', deps.settingsRefreshNow);
+    // Versión publicada mientras el equipo dormía (add-in-session-updates).
+    if (deps.checkUpdates) step('update', deps.checkUpdates);
     // 4) WhatsApp (puede reinicializar; acotado).
     await withTimeout(Promise.resolve().then(deps.checkWhatsapp), stepMs, undefined, timers);
     // 5) Presencia del agente.

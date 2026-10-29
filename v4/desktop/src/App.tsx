@@ -1,6 +1,6 @@
 // File: App
 // Created: 2026-06-09
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 import { useEffect, useState } from 'react';
@@ -11,6 +11,8 @@ import { Assignment } from './routes/Assignment';
 import { AdminRolePerms } from './routes/AdminRolePerms';
 import { UpdateGate } from './routes/UpdateGate';
 import { FloatingProgress } from './ui/FloatingProgress';
+import { UpdateBanner } from './ui/UpdateBanner';
+import { isSessionUpdate } from './lib/updateBanner';
 import {
   hasSession,
   logout,
@@ -41,16 +43,32 @@ export function App() {
   // cambiar de tab. Chats lo recibe por props.
   const [waStatus, setWaStatus] = useState<WaStatus>('idle');
   const [qr, setQr] = useState<string | null>(null);
-  // Update encontrado a media sesión (chequeo periódico): overlay bloqueante.
+  // Descarga/instalación detectada al arrancar (antes de la sesión): overlay
+  // bloqueante de siempre.
   const [midUpdate, setMidUpdate] = useState<UpdateStatus | null>(null);
+  // Actualización a media sesión (add-in-session-updates): aviso NO bloqueante.
+  const [sessionUpdate, setSessionUpdate] = useState<UpdateStatus | null>(null);
 
   useEffect(() => {
+    let clearError: ReturnType<typeof setTimeout> | null = null;
     const off = window.ana.onUpdateStatus((s) => {
+      if (clearError) clearTimeout(clearError);
+      clearError = null;
+      if (isSessionUpdate(s)) {
+        setMidUpdate(null);
+        setSessionUpdate(s);
+        // El aviso de error se retira solo; los envíos ya se reanudaron.
+        if (s.phase === 'error') clearError = setTimeout(() => setSessionUpdate(null), 2 * 60 * 1000);
+        return;
+      }
       // Solo bloquea cuando ya hay algo en curso (descarga/instalación).
       if (s.phase === 'downloading' || s.phase === 'installing') setMidUpdate(s);
       else setMidUpdate(null);
     });
-    return off;
+    return () => {
+      if (clearError) clearTimeout(clearError);
+      off();
+    };
   }, []);
 
   useEffect(() => {
@@ -136,6 +154,7 @@ export function App() {
     return (
       <>
         {banner}
+        <UpdateBanner st={sessionUpdate} />
         <Login onDone={onLogin} notice={loginNotice} />
       </>
     );
@@ -199,6 +218,7 @@ export function App() {
           </button>
         </nav>
       </header>
+      <UpdateBanner st={sessionUpdate} />
 
       {current === 'admin' ? (
         <AdminRolePerms />
@@ -220,7 +240,7 @@ export function App() {
   );
 }
 
-/** Overlay bloqueante cuando se actualiza a media sesión (chequeo periódico). */
+/** Overlay bloqueante si la descarga empieza antes de terminar el arranque. */
 function UpdatingOverlay({ st }: { st: UpdateStatus }) {
   return (
     <div className="pernexium-gradient flex min-h-screen flex-col items-center justify-center px-4 text-center">

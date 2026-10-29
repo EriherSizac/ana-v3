@@ -1,6 +1,6 @@
 // File: Worker de envío. Corre en el main process.
 // Created: 2026-06-10
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 import type { AuthFetch } from '../auth/tokenBroker';
@@ -190,6 +190,21 @@ export class JobPoller {
   /** Deja de iniciar jobs (el que esté en curso termina con su ack). */
   pauseNewJobs() {
     this.paused = true;
+  }
+
+  /**
+   * Vuelve a tomar jobs (la actualización a media sesión falló). Un lote
+   * aprobado que se cortó se vuelve a aprobar desde "Mi asignación".
+   */
+  resumeNewJobs() {
+    if (!this.paused) return;
+    this.paused = false;
+    this.pollNow();
+  }
+
+  /** ¿Está en pausa por actualización? */
+  isPaused(): boolean {
+    return this.paused;
   }
 
   /** ¿Hay un job enviándose ahora mismo? */

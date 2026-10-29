@@ -169,6 +169,12 @@ describe('createResumeCoordinator', () => {
     expect(calls).toEqual(['token', 'realtime', 'poll', 'settings', 'wa', 'heartbeat']);
   });
 
+  it('con checkUpdates: revisa el feed después de la configuración', async () => {
+    const { co, calls } = coordinator({ checkUpdates: () => void calls.push('update') });
+    await co.signal('resume');
+    expect(calls).toEqual(['token', 'realtime', 'poll', 'settings', 'update', 'wa', 'heartbeat']);
+  });
+
   it('agrupa resume + unlock-screen + salto de reloj en una sola recuperación', async () => {
     const { co, calls, c } = coordinator();
     const p = co.signal('resume');

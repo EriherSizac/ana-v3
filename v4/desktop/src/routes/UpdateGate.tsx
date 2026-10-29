@@ -1,6 +1,6 @@
 // File: Bloquea la app hasta que el auto-update termine. Estados:
 // Created: 2026-06-10
-// Updated: 2026-10-26
+// Updated: 2026-10-29
 // Author: Erick Hernández Silva
 
 import { useCallback, useEffect, useState } from 'react';
@@ -61,6 +61,7 @@ export function UpdateGate({ onReady }: { onReady: (bypass: boolean) => void }) 
     checking: 'Buscando actualizaciones…',
     downloading: `Descargando actualización… ${st.percent ?? 0}%`,
     installing: st.waitingForJob ? 'Terminando el envío en curso…' : 'Instalando y reiniciando…',
+    restarting: `Reiniciando en ${st.secondsLeft ?? 0} s…`,
     none: 'Listo',
     error: 'No se pudo verificar la actualización',
   };
