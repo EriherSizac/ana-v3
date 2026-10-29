@@ -12,7 +12,7 @@ export type ClientType = (typeof CLIENT_TYPES)[number];
 export const isClientType = (v: unknown): v is ClientType => CLIENT_TYPES.includes(v as ClientType);
 
 /** Catálogo v1 (design D6): a quién va cada tipo. */
-export const USER_EVENTS = ['jobs.changed', 'assignment.pending', 'assignment.published', 'publications.changed'] as const;
+export const USER_EVENTS = ['jobs.changed', 'assignment.pending', 'assignment.published', 'publications.changed', 'results.changed'] as const;
 export const CAMPAIGN_EVENTS = ['uploads.changed', 'review.changed', 'roster.changed'] as const;
 export const SETTINGS_EVENT = 'settings.changed' as const;
 /** Versión publicada del CLI o del desktop (add-in-session-updates D8): a todas las conexiones del tipo. */

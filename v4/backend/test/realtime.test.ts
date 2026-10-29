@@ -464,6 +464,13 @@ describe('puente v3 → v4', () => {
     expect(translateS3('assignments/agents/prueba/jperez-contacts-1.csv', 'deleted')?.emit?.type).toBe('assignment.pending');
     expect(translateS3('agent-publications/prueba/jperez/p1.json', 'created')?.emit).toMatchObject({ type: 'publications.changed', users: ['jperez'] });
     expect(translateS3('review/prueba/jperez/a1.csv', 'created')?.emit).toMatchObject({ type: 'review.changed', campaign: 'prueba' });
+    // add-agent-send-history: lote de resultados → results.changed del agente
+    expect(translateS3('results/prueba/jperez/2026-10-29/ab12cd34ef567890.json', 'created')).toEqual({
+      emit: { type: 'results.changed', users: ['jperez'], campaign: 'prueba', ref: { source: 'v3' } },
+    });
+    expect(translateS3('results/prueba/jperez/2026-10-29/_compact.json', 'created')).toBeNull();
+    expect(translateS3('results/prueba/jperez/2026-10-29/ab12.json', 'deleted')).toBeNull();
+    expect(translateS3('results/prueba/x.json', 'created')).toEqual({ skipped: true });
     expect(translateS3('uploads/prueba/u1.json', 'created')?.emit).toMatchObject({ type: 'uploads.changed', ref: { source: 'v3', uploadId: 'u1' } });
     expect(translateS3('rosters/prueba.json', 'created')).toEqual({
       emit: { type: 'roster.changed', campaign: 'prueba', ref: { source: 'v3' } },

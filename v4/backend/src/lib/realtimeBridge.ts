@@ -16,7 +16,7 @@ export interface BridgeResult {
 }
 
 /** Prefijos que reenvía la regla de us-east-1 (spec v3/realtime-bridge). */
-export const BRIDGE_PREFIXES = ['agents/', 'assignments/agents/', 'agent-publications/', 'review/', 'rosters/', 'uploads/'] as const;
+export const BRIDGE_PREFIXES = ['agents/', 'assignments/agents/', 'agent-publications/', 'review/', 'rosters/', 'uploads/', 'results/'] as const;
 export const CLI_SETTINGS_KEY = 'config/cli-settings.json';
 /** Manifiesto del CLI v3: su creación = versión publicada (add-in-session-updates D8). */
 export const CLI_RELEASE_KEY = 'versions/latest.json';
@@ -81,6 +81,16 @@ export function translateS3(rawKey: string, change: S3Change): BridgeResult | nu
     if (!m || !c || !agent) return skipped;
     if (change !== 'created') return null;
     return { emit: { type: 'publications.changed', users: [agent], campaign: c, ref: { source: 'v3' } } };
+  }
+
+  // Lote de resultados del CLI (add-agent-send-history D9); `_compact.json` no avisa.
+  if (key.startsWith('results/')) {
+    const m = /^results\/([^/]+)\/([^/]+)\/\d{4}-\d{2}-\d{2}\/([^/]+)\.json$/.exec(key);
+    const c = campaignKey(m?.[1]);
+    const agent = canonicalOperatorId(m?.[2]);
+    if (!m || !c || !agent) return skipped;
+    if (change !== 'created' || m[3]!.startsWith('_')) return null;
+    return { emit: { type: 'results.changed', users: [agent], campaign: c, ref: { source: 'v3' } } };
   }
 
   if (key.startsWith('review/')) {
