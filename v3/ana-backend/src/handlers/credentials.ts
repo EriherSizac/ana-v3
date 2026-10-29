@@ -57,7 +57,7 @@ function generateRandomPhrase(): string {
 export const getCampaignCredentials = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     const campaign = normalizePathSegment(event.pathParameters?.campaign);
@@ -126,7 +126,7 @@ export const getCampaignCredentials = async (
 export const regenerateDailyPasswords = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     // Parsear el body para obtener campaign
@@ -273,7 +273,7 @@ export const regenerateDailyPasswords = async (
 export const uploadCampaignCredentials = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     // Parsear el body para obtener campaign y csv

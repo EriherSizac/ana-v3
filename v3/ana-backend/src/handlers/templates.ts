@@ -111,7 +111,7 @@ export const getTemplates = async (
 export const putTemplate = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     const body = JSON.parse(event.body || '{}');

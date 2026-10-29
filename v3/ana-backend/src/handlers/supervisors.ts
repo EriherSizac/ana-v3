@@ -123,7 +123,7 @@ const parseMultipartFormData = (
 export const listAgentAssignments = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     const agent = normalizePathSegment(event.pathParameters?.agent);
@@ -187,7 +187,7 @@ export const listAgentAssignments = async (
 export const downloadFilesByKey = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     if (!event.body) {
@@ -284,7 +284,7 @@ export const downloadFilesByKey = async (
 export const getAgentAssignments = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     const agent = normalizePathSegment(event.pathParameters?.agent);
@@ -375,7 +375,7 @@ export const getAgentAssignments = async (
 export const publishAgentContactsDeprecated = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     const agent = normalizePathSegment(event.pathParameters?.agent);
@@ -569,7 +569,7 @@ export const publishAgentContactsDeprecated = async (
 export const uploadAgentContactsLogging = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     const agent = normalizePathSegment(event.pathParameters?.agent);
@@ -1060,7 +1060,7 @@ export const uploadAgentContacts = async (
 export const getAgentContacts = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     const agent = normalizePathSegment(event.pathParameters?.agent);
@@ -1164,7 +1164,7 @@ export const getAgentContacts = async (
 export const listReviewContacts = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  const denied = requireAdmin(event);
+  const denied = requireAdmin(event, { always: true });
   if (denied) return denied;
   try {
     const campaign = normalizePathSegment(event.pathParameters?.campaign);

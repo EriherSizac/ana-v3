@@ -10,9 +10,13 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
  * Devuelve `null` si está autorizado, o la respuesta de error a retornar.
  */
 export const requireAdmin = (
-  event: Pick<APIGatewayProxyEvent, 'headers'>
+  event: Pick<APIGatewayProxyEvent, 'headers'>,
+  opts: { always?: boolean } = {},
 ): APIGatewayProxyResult | null => {
-  if (process.env.ADMIN_AUTH_ENFORCED !== 'true') return null;
+  // `always`: rutas con datos sensibles (credenciales, lecturas de supervisor) exigen
+  // la llave aunque ADMIN_AUTH_ENFORCED esté apagado; solo la carga que usa
+  // motor-de-gestion-v2 depende del flag.
+  if (!opts.always && process.env.ADMIN_AUTH_ENFORCED !== 'true') return null;
   const expected = process.env.ADMIN_API_KEY || '';
   if (!expected) return json(503, { success: false, message: 'Admin key no configurada' });
 
