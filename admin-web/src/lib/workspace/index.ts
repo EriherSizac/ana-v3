@@ -7,6 +7,7 @@ import { renderTemplateDetailed } from './template';
 export * from './csv';
 export * from './template';
 export * from './table-filters';
+export * from './personalization';
 
 export interface PendingFile {
   key: string;

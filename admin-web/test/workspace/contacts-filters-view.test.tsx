@@ -60,17 +60,17 @@ describe('Mi asignación: filtros y orden', () => {
     const table = await load();
     const header = within(table).getByRole('columnheader', { name: /saldo_vencido_actual/ });
     expect(header).toHaveAttribute('aria-sort', 'none');
-    await userEvent.click(within(header).getByRole('button'));
+    await userEvent.click(within(header).getByRole('button', { name: 'saldo_vencido_actual' }));
     expect(header).toHaveAttribute('aria-sort', 'ascending');
     expect(bodyNames(table)).toEqual(['Dora', 'Ana', 'Beto', 'Carla']);
-    await userEvent.click(within(header).getByRole('button'));
+    await userEvent.click(within(header).getByRole('button', { name: 'saldo_vencido_actual' }));
     expect(header).toHaveAttribute('aria-sort', 'descending');
     expect(bodyNames(table)).toEqual(['Carla', 'Beto', 'Ana', 'Dora']);
   });
 
   it('ordena fechas dd/mm/yyyy por fecha real', async () => {
     const table = await load();
-    await userEvent.click(within(within(table).getByRole('columnheader', { name: /fecha_pago/ })).getByRole('button'));
+    await userEvent.click(within(within(table).getByRole('columnheader', { name: /fecha_pago/ })).getByRole('button', { name: 'fecha_pago' }));
     expect(bodyNames(table)).toEqual(['Ana', 'Dora', 'Carla', 'Beto']);
   });
 
@@ -111,7 +111,7 @@ describe('Mi asignación: filtros y orden', () => {
   it('persiste filtros y orden por campaña en localStorage y los restaura', async () => {
     let table = await load();
     await userEvent.type(screen.getByLabelText('Buscar contactos'), 'a');
-    await userEvent.click(within(within(table).getByRole('columnheader', { name: /nombre/ })).getByRole('button'));
+    await userEvent.click(within(within(table).getByRole('columnheader', { name: /nombre/ })).getByRole('button', { name: 'nombre' }));
     const saved = JSON.parse(localStorage.getItem(storageKey('prueba'))!);
     expect(saved).toMatchObject({ filters: { search: 'a' }, sort: { column: 'nombre', dir: 'asc' } });
 

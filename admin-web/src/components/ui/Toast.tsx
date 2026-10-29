@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 export type ToastKind = 'success' | 'error' | 'info';
@@ -102,10 +102,19 @@ export function InlineMessage({
   children,
   className,
 }: {
-  kind?: 'error' | 'success';
+  kind?: 'error' | 'success' | 'warning';
   children: ReactNode;
   className?: string;
 }) {
+  if (kind === 'warning') {
+    // Aviso no bloqueante: fondo neutro con icono warning en error.60 (design-system §2).
+    return (
+      <div role="status" className={cn('flex items-start gap-2 rounded-xl border border-neutral-50 bg-neutral-30 px-4 py-2 text-sm text-text-muted', className)}>
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-error-60" aria-hidden="true" />
+        <div className="min-w-0 flex-1">{children}</div>
+      </div>
+    );
+  }
   return (
     <div
       role={kind === 'error' ? 'alert' : 'status'}
