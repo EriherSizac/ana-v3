@@ -1,5 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetNavigation, setLocation } from '../helpers/navigation';
 
@@ -79,12 +81,12 @@ describe('/contactos', () => {
     expect(apiFetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
   });
 
-  it('CSV en español para v3 → exige alias de teléfono', async () => {
+  it('CSV sin columna de teléfono para v3 → error', async () => {
     setApi({ 'didi_vip:v3': ['ana'] });
     await setup();
     await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
-    await userEvent.upload(screen.getByLabelText('Archivo CSV'), csvFile('telefono,nombre\n5215500000001,Ana'));
-    expect(await screen.findByText(/v3 requiere una columna de teléfono phone_number, contact_phone, contact_pho o phone/)).toBeInTheDocument();
+    await userEvent.upload(screen.getByLabelText('Archivo CSV'), csvFile('nombre,saldo\nAna,100'));
+    expect(await screen.findByText(/v3 requiere una columna de teléfono/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Vista previa' })).toBeDisabled();
   });
 
@@ -99,6 +101,43 @@ describe('/contactos', () => {
     expect(summary).toHaveTextContent('5 inválidas');
     expect(within(summary).getAllByText('Sin teléfono')).toHaveLength(3);
     expect(within(summary).getAllByText('Teléfono duplicado')).toHaveLength(2);
+  });
+
+  it('base CRM tal cual (v3): telefono_1/2/3, salto de línea unido y entrega con todas las columnas', async () => {
+    let sent: any = null;
+    setApi({ 'didi_vip:v3': ['ana'] }, (_url, init) => {
+      if (init?.method === 'POST') {
+        sent = init.json;
+        return { fleet: 'v3', status: 'completed', manifest: { perAgent: [{ agent: 'ana', rows: 3 }] } };
+      }
+      return {};
+    });
+    await setup();
+    await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
+    const bytes = readFileSync(join(__dirname, '..', 'fixtures', 'contacts', 'crm-base-bom.example.csv'));
+    await userEvent.upload(screen.getByLabelText('Archivo CSV'), new File([bytes], 'base.csv', { type: 'text/csv' }));
+    const read = await screen.findByTestId('read-summary');
+    expect(read).toHaveTextContent('4 filas · 76 columnas · Delimitador: coma · Codificación: UTF-8');
+    expect(read).toHaveTextContent('Columnas de teléfono: telefono_1, telefono_2, telefono_3');
+    expect(read).toHaveTextContent('2 campo(s) con salto de línea');
+    const summary = await screen.findByTestId('validation-summary');
+    expect(summary).toHaveTextContent('3 válidas');
+    expect(summary).toHaveTextContent('1 inválidas');
+    await userEvent.click(screen.getByRole('button', { name: 'Vista previa' }));
+    await screen.findByTestId('preview-ana');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar carga' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Entregar' }));
+    await screen.findByTestId('delivery');
+    expect(sent.csv.split(/\r?\n/, 1)[0].split(',')).toHaveLength(76);
+  });
+
+  it('exporte en Windows-1252 → muestra la codificación y lee los acentos', async () => {
+    setApi({ 'didi_vip:v3': ['ana'] });
+    await setup();
+    await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
+    const latin1 = Buffer.from('telefono_1,nombre_cliente\n5500000001,Espíritu\n', 'latin1');
+    await userEvent.upload(screen.getByLabelText('Archivo CSV'), new File([latin1], 'excel.csv', { type: 'text/csv' }));
+    expect(await screen.findByTestId('read-summary')).toHaveTextContent('Codificación: Windows-1252');
   });
 
   it('flota v3 preseleccionada y sin campo de mensaje: la vista previa no lo exige', async () => {

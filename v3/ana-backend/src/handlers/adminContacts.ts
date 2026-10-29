@@ -1,7 +1,7 @@
 import { DeleteObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { requireAdminAccess } from '../lib/adminAccess';
 import { adminError, adminInternal, adminOk, parseJsonBody, type AdminEvent, type AdminResult } from '../lib/adminHttp';
-import { headerColumns, PHONE_COLUMNS, stripBom } from '../lib/contactsCsv';
+import { headerColumns, isPhoneColumnName, singleLineRows, stripBom } from '../lib/contactsCsv';
 import { parseCampaignParam, parseUsername } from '../lib/identifiers';
 import { getEnabledAgents, RosterError } from '../lib/roster';
 import { bucketName, getText, putJson, s3 } from '../lib/s3Json';
@@ -70,9 +70,9 @@ export function appendUploadIdColumn(csv: string, uploadId: string): string {
  * termina en salto de línea) sin agregar columna `message`.
  */
 export function normalizeRows(csv: string): { csv: string; contactCount: number } {
-  const lines = csv.trim().split('\n').map((l) => l.trim());
-  const out = [lines[0] ?? ''];
-  for (const l of lines.slice(1)) if (l) out.push(l);
+  // Filas lógicas: saltos de línea dentro de comillas → espacio (support-crm-base-upload).
+  const out = singleLineRows(csv);
+  if (out.length === 0) out.push('');
   return { csv: out.join('\n') + '\n', contactCount: out.length - 1 };
 }
 
@@ -163,12 +163,8 @@ export function validateFiles(p: Pick<ParsedUpload, 'files'>): string | null {
   for (const f of p.files) {
     const cols = headerColumns(f.csv);
     if (cols.some((c) => c.toLowerCase() === UPLOAD_ID_COLUMN)) return `${f.agent}: columna reservada ${UPLOAD_ID_COLUMN}`;
-    if (!cols.some((c) => (PHONE_COLUMNS as readonly string[]).includes(c))) return `${f.agent}: falta columna de teléfono`;
-    const dataRows = f.csv
-      .split(/\r?\n/)
-      .slice(1)
-      .filter((l) => l.trim());
-    if (dataRows.length === 0) return `${f.agent}: sin filas`;
+    if (!cols.some(isPhoneColumnName)) return `${f.agent}: falta columna de teléfono`;
+    if (singleLineRows(f.csv).length < 2) return `${f.agent}: sin filas`;
   }
   return null;
 }

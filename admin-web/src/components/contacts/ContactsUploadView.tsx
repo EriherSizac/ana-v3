@@ -23,6 +23,11 @@ import {
   assignmentsTooLong,
   buildPlan,
   checkFileSize,
+  decodeBytes,
+  DELIMITER_LABEL,
+  phoneColumnsOf,
+  utf8Bytes,
+  type Encoding,
   hasReservedColumn,
   RESERVED_COLUMN_ERROR,
   unknownVariableError,
@@ -60,13 +65,13 @@ const enabledUrl = (campaign: string, fleet: Fleet, includeSupervisors: boolean)
 
 type EnabledResponse = { agents: string[]; supervisors?: string[] };
 
-/** Lee el archivo como UTF-8 (FileReader: compatible con navegadores y jsdom). */
-function readFileText(file: Blob): Promise<string> {
+/** Lee los bytes del archivo (FileReader: compatible con navegadores y jsdom). */
+function readFileBytes(file: Blob): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
     reader.onerror = () => reject(reader.error);
-    reader.readAsText(file, 'utf-8');
+    reader.readAsArrayBuffer(file);
   });
 }
 const POLL_TIMEOUT_MS = 60_000;
@@ -97,6 +102,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileText, setFileText] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [fileEncoding, setFileEncoding] = useState<Encoding | null>(null);
   const [phoneChoice, setPhoneChoice] = useState<string | null>(null);
   const [countryCode, setCountryCode] = useState('52');
   const [preview, setPreview] = useState<{ plan: Plan; hash: string; validation: Validation; parsed: ParsedCsv } | null>(null);
@@ -189,6 +195,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     setFileError(null);
     setFileText(null);
     setFileName(null);
+    setFileEncoding(null);
     setPhoneChoice(null);
     if (!file || !fleet) return;
     if (!file.name.toLowerCase().endsWith('.csv')) {
@@ -201,8 +208,16 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
       if (fileInput.current) fileInput.current.value = '';
       return;
     }
+    const decoded = decodeBytes(await readFileBytes(file));
+    // El límite se mide sobre el texto en UTF-8 (lo que recibe el servidor).
+    const decodedError = checkFileSize(utf8Bytes(decoded.text), fleet);
+    if (decodedError) {
+      setFileError(decodedError);
+      return;
+    }
     setFileName(file.name);
-    setFileText(await readFileText(file));
+    setFileEncoding(decoded.encoding);
+    setFileText(decoded.text);
   };
 
   const makePreview = async () => {
@@ -363,7 +378,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           2. Archivo
         </h2>
         <p className="mt-1 text-sm text-text-light">
-          CSV UTF-8 con encabezado. Límites: v3 hasta 4 MB y 20 000 filas; v4 hasta 10 MB y 50 000 filas.
+          CSV con encabezado (UTF-8 o Windows-1252; coma, punto y coma o tabulador), por ejemplo la base del CRM tal cual. Límites: v3 hasta 4 MB y 20 000 filas; v4 hasta 10 MB y 50 000 filas.
         </p>
         <div className="mt-4">
           <Label htmlFor="csv-file">Archivo CSV</Label>
@@ -378,6 +393,17 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           />
         </div>
         {fileError && <InlineMessage className="mt-3">{fileError}</InlineMessage>}
+        {parsed && !('error' in parsed) && (
+          <div className="mt-3 flex flex-col gap-1 text-xs text-text-light" data-testid="read-summary">
+            <span>
+              {parsed.rows.length} filas · {parsed.header.length} columnas · Delimitador: {DELIMITER_LABEL[parsed.delimiter]}
+              {fileEncoding ? ` · Codificación: ${fileEncoding}` : ''}
+            </span>
+            {phoneColumnsOf(parsed.header).length > 0 && <span>Columnas de teléfono: {phoneColumnsOf(parsed.header).join(', ')}</span>}
+            {parsed.joinedFields > 0 && <span>{parsed.joinedFields} campo(s) con salto de línea se unieron en una sola línea.</span>}
+            {parsed.renamed.length > 0 && <span>Columnas renombradas: {parsed.renamed.join(', ')}</span>}
+          </div>
+        )}
         {parsed && 'error' in parsed && <InlineMessage className="mt-3">{parsed.error}</InlineMessage>}
         {phone && 'error' in phone && fleet === 'v3' && <InlineMessage className="mt-3">{phone.error}</InlineMessage>}
         {reservedError && <InlineMessage className="mt-3">{reservedError}</InlineMessage>}

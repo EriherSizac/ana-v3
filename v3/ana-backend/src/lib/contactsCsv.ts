@@ -1,3 +1,5 @@
+import { parseCsvLine, splitCsvRows } from './assignmentCsv';
+
 /**
  * Procesamiento de la columna `message` de los CSV de contactos.
  * Extraído de `handlers/supervisors.ts` (uploadAgentContacts) sin cambiar su
@@ -50,8 +52,34 @@ export const stripBom = (text: string): string => (text.charCodeAt(0) === 0xfeff
 
 export const PHONE_COLUMNS = ['phone_number', 'contact_phone', 'contact_pho', 'phone'] as const;
 
-/** Columnas del encabezado (separadas por coma, sin comillas ni espacios). */
+/**
+ * Columnas de teléfono de la carga de administración (support-crm-base-upload):
+ * alias del CLI, `telefono`, `telefono_N` y `phone_N` (base CRM: telefono_1..3).
+ * El agente elige cuáles usar al publicar desde "Mi asignación".
+ */
+export const isPhoneColumnName = (h: string): boolean =>
+  (PHONE_COLUMNS as readonly string[]).includes(h) || h === 'telefono' || /^(telefono|phone)_\d+$/.test(h);
+
+/** Columnas del encabezado (primera fila lógica, comillas respetadas, sin espacios). */
 export const headerColumns = (csv: string): string[] => {
-  const first = stripBom(csv).split(/\r?\n/, 1)[0] ?? '';
-  return first.split(',').map((h) => h.trim().replace(/^"(.*)"$/, '$1').trim());
+  const first = splitCsvRows(stripBom(csv))[0] ?? '';
+  return parseCsvLine(first).map((h) => h.trim());
 };
+
+/** CR/LF dentro de un campo → un espacio (con los espacios de alrededor) y recorte. */
+export const joinLines = (v: string): string => v.replace(/\s*[\r\n]\s*/g, ' ').trim();
+
+/**
+ * Filas lógicas del CSV (comillas respetadas) sin saltos de línea dentro de
+ * campos: una fila con CR/LF dentro de comillas se re-serializa con esos
+ * saltos convertidos en espacio; las demás se conservan tal cual (recortadas).
+ */
+export function singleLineRows(csv: string): string[] {
+  return splitCsvRows(stripBom(csv).trim()).map((raw) => {
+    const line = raw.trim();
+    if (!/[\r\n]/.test(line)) return line;
+    return parseCsvLine(line)
+      .map((v) => escapeCSVField(joinLines(v)))
+      .join(',');
+  });
+}

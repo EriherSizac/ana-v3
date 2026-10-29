@@ -10,6 +10,8 @@ import { renderTemplateDetailed } from './templateRender';
 
 const isPhoneAlias = (h: string): boolean => (PHONE_ALIASES as readonly string[]).includes(h);
 const digitsOf = (s: string): string => s.replace(/\D/g, '');
+/** CR/LF dentro de un campo → un espacio y recorte. */
+const joinLines = (v: string): string => v.replace(/\s*[\r\n]\s*/g, ' ').trim();
 
 /** Unión de encabezados en el orden de las fuentes (sin repetir). */
 export function mergedHeader(parsed: readonly ParsedAssignment[]): string[] {
@@ -69,7 +71,8 @@ export function buildPublication(
         const r = renderTemplateDetailed(template, sources);
         for (const u of r.unresolved) if (!unresolved.includes(u)) unresolved.push(u);
         const message = r.text.replace(/\r\n|\r|\n/g, '\\n');
-        rows.push([phone, ...others.map((h) => record[h] ?? ''), message, uploadId]);
+        // Sin campos multilínea en el archivo del CLI (support-crm-base-upload).
+        rows.push([phone, ...others.map((h) => joinLines(record[h] ?? '')), message, uploadId]);
         if (uploadId) uploadIds.add(uploadId);
       }
     }

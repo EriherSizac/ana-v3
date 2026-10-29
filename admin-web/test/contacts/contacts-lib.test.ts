@@ -53,11 +53,13 @@ describe('lectura y límites', () => {
 });
 
 describe('columna de teléfono', () => {
-  it('v3 exige uno de los cuatro alias', () => {
-    expect(detectPhoneColumn(['telefono', 'nombre'], 'v3')).toEqual({
-      error: 'v3 requiere una columna de teléfono phone_number, contact_phone, contact_pho o phone',
+  it('v3 acepta alias, telefono y telefono_N (support-crm-base-upload)', () => {
+    expect(detectPhoneColumn(['telefono', 'nombre'], 'v3')).toEqual({ column: 'telefono' });
+    expect(detectPhoneColumn(['nombre', 'saldo'], 'v3')).toEqual({
+      error: 'v3 requiere una columna de teléfono (phone_number, contact_phone, contact_pho, phone, telefono o telefono_N)',
     });
     expect(detectPhoneColumn(['contact_pho', 'x'], 'v3')).toEqual({ column: 'contact_pho' });
+    expect(detectPhoneColumn(['telefono_1', 'phone'], 'v3')).toEqual({ column: 'phone' });
   });
   it('v4 acepta telefono o la elegida', () => {
     expect(detectPhoneColumn(['telefono', 'nombre'], 'v4')).toEqual({ column: 'telefono' });
@@ -96,9 +98,10 @@ describe('validación de filas', () => {
     expect(v.invalid.map((x) => x.reason)).toEqual(['Sin teléfono', 'Sin teléfono', 'Sin teléfono', 'Teléfono duplicado', 'Teléfono duplicado']);
   });
 
-  it('salto de línea dentro de un campo es inválido solo en v3', () => {
-    expect(validateRows(parsed('newline.example.csv'), 'v3', 'phone').invalid).toEqual([{ rowNumber: 2, reason: 'Salto de línea dentro de un campo' }]);
+  it('salto de línea dentro de un campo ya no invalida la fila; se une en una línea', () => {
+    expect(validateRows(parsed('newline.example.csv'), 'v3', 'phone').invalid).toEqual([]);
     expect(validateRows(parsed('newline.example.csv', 'v4'), 'v4', 'phone').invalid).toEqual([]);
+    expect(parsed('newline.example.csv').rows.every((r) => r.values.every((v) => !/[\r\n]/.test(v)))).toBe(true);
   });
 
   it('v4 rechaza filas con columnas de más', () => {
