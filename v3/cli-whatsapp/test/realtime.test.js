@@ -6,6 +6,7 @@ import {
   MAX_CONNECTION_MS,
   PING_INTERVAL_MS,
   PONG_TIMEOUT_MS,
+  PONG_STALE_MS,
   REFRESH_CLOSE_CODE,
   createRealtime,
   isAssignmentFor,
@@ -23,6 +24,11 @@ function fakeClock() {
   let seq = 0;
   const pending = new Map();
   return {
+    now: () => now,
+    /** Suspensión: el reloj avanza sin que corran temporizadores. */
+    jump(ms) {
+      now += ms;
+    },
     timers: {
       setTimeout: (fn, ms) => {
         const id = ++seq;
@@ -284,4 +290,38 @@ test('adaptador de ws: eventos y status del rechazo', () => {
   lib.emit('error', new Error('Unexpected server response: 403'));
   lib.emit('close', 1006, Buffer.from(''));
   assert.deepEqual(got, ['open', '{"type":"pong"}', { code: 1006, reason: '', status: 403 }]);
+});
+
+test('reanudación: reconnectNow cierra la conexión vigente, reinicia el backoff y conecta de inmediato', async () => {
+  const s = setup();
+  await s.connected();
+  s.last().drop({ code: 1006, status: 403 }); // backoff largo pendiente
+  await flush();
+  assert.equal(s.sockets.length, 1);
+  s.rt.reconnectNow('resume');
+  await flush();
+  assert.equal(s.sockets.length, 2, 'conecta sin esperar el backoff');
+  s.last().open();
+  s.last().pong();
+  assert.equal(s.rt.isActive(), true);
+  assert.equal(s.rt.backoffMs(), 1000, 'backoff reiniciado');
+  // Conexión viva: reconnectNow también la reemplaza (socket muerto tras suspender).
+  s.rt.reconnectNow('resume');
+  await flush();
+  assert.equal(s.sockets[1].closedWith.code, 4000);
+  assert.equal(s.sockets.length, 3);
+});
+
+test('sin pong en 2 latidos (reloj saltó) se reconecta en el siguiente ping', async () => {
+  const s = setup();
+  s.rt.stop();
+  const s2 = setup({ now: () => s2.clock.now() });
+  await s2.connected();
+  s2.clock.jump(PONG_STALE_MS + 1000);
+  assert.equal(s2.rt.isStale(), true);
+  await s2.clock.advance(PING_INTERVAL_MS);
+  assert.equal(s2.sockets[0].closedWith.code, 4000);
+  assert.equal(s2.rt.isActive(), false);
+  await s2.clock.advance(1000);
+  assert.equal(s2.sockets.length, 2);
 });

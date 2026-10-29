@@ -26,6 +26,8 @@ export const REFRESH_RECONNECT_MAX_MS = 10_000;
 export const REFRESH_CLOSE_CODE = 4001;
 /** Cada cuánto se revisa si el ID token cambió (renovación de la sesión). */
 export const TOKEN_CHECK_MS = 60_000;
+/** Sin `pong` en este lapso (2 latidos) la conexión se da por muerta (harden-client-resume). */
+export const PONG_STALE_MS = 2 * PING_INTERVAL_MS;
 
 export const KNOWN_EVENTS = Object.freeze([
   'jobs.changed',
@@ -131,6 +133,7 @@ export function wsSocketFactory(WebSocketImpl) {
 export function createRealtime(opts) {
   const timers = opts.timers || { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h) };
   const random = opts.random || Math.random;
+  const now = opts.now || (() => Date.now());
   const logger = opts.logger || console;
   const client = opts.client || 'cli';
   const listeners = { assignment: new Set(), settings: new Set(), active: new Set(), inactive: new Set(), refresh: new Set(), event: new Set() };
@@ -214,7 +217,7 @@ export function createRealtime(opts) {
   }
 
   function open(token) {
-    const conn = { ws: null, token, confirmed: false, dead: false, pingTimer: null, pongTimer: null, maxTimer: null };
+    const conn = { ws: null, token, confirmed: false, dead: false, pingTimer: null, pongTimer: null, maxTimer: null, lastPongAt: now() };
     try {
       conn.ws = opts.createSocket(connectUrl(opts.url, client, opts.version), [SUBPROTOCOL, token]);
     } catch (e) {
@@ -232,6 +235,10 @@ export function createRealtime(opts) {
 
   function ping(conn) {
     if (conn.dead) return;
+    if (conn.confirmed && now() - conn.lastPongAt > PONG_STALE_MS) {
+      logger.warn?.('[realtime] sin pong en 2 latidos; se reconecta');
+      return kill(conn, 4000, 'pong stale');
+    }
     try {
       conn.ws.send(JSON.stringify({ action: 'ping' }));
     } catch {
@@ -249,6 +256,7 @@ export function createRealtime(opts) {
     const msg = parseMessage(data);
     if (!msg) return; // JSON inválido o tipo desconocido: se ignora sin cerrar
     if (msg.type === 'pong') {
+      conn.lastPongAt = now();
       if (conn.pongTimer) timers.clearTimeout(conn.pongTimer);
       conn.pongTimer = null;
       if (!conn.confirmed) confirm(conn);
@@ -405,6 +413,29 @@ export function createRealtime(opts) {
       setActive(false);
     },
     renew,
+    /**
+     * Reconexión inmediata (reanudación del equipo, harden-client-resume):
+     * cierra la conexión vigente (posiblemente muerta tras suspender),
+     * reinicia el backoff y conecta sin esperar.
+     */
+    reconnectNow(reason = 'resume') {
+      if (!running) return;
+      logger.log?.(`[realtime] reconexión inmediata (${reason})`);
+      clearReconnect();
+      failures = 0;
+      rejected = false;
+      refreshing = false;
+      const n = next;
+      const c = current;
+      next = null;
+      current = null;
+      dispose(n, 4000, reason);
+      dispose(c, 4000, reason);
+      setActive(false);
+      void connect();
+    },
+    /** ¿La conexión vigente lleva más de 2 latidos sin pong? */
+    isStale: () => !!current && current.confirmed && now() - current.lastPongAt > PONG_STALE_MS,
     backoffMs: () => backoffMsFor(failures),
     backoffMsFor,
   };

@@ -42,7 +42,8 @@ const formatMsAsHms = (ms) => {
 const ensureStatusWidget = async (page) => {
   if (!page) return;
   try {
-    await page.evaluate(() => {
+    // Toda interacción de UI fuera del envío tiene límite (harden-client-resume).
+    await withTimeout(page.evaluate(() => {
       const ID = "ana-status-widget";
       if (document.getElementById(ID)) return;
       const el = document.createElement("div");
@@ -66,7 +67,7 @@ const ensureStatusWidget = async (page) => {
       ].join(";");
       el.textContent = "ANA";
       document.body.appendChild(el);
-    });
+    }), UI_TIMEOUT_MS, "widget");
   } catch (_) {
     // ignore
   }
@@ -75,14 +76,14 @@ const setStatusWidgetText = async (page, text) => {
   if (!page) return;
   try {
     await ensureStatusWidget(page);
-    await page.evaluate(
+    await withTimeout(page.evaluate(
       (payload) => {
         const el = document.getElementById("ana-status-widget");
         if (!el) return;
         el.textContent = String(payload?.text || "");
       },
       { text: String(text || "") },
-    );
+    ), UI_TIMEOUT_MS, "widget");
   } catch (_) {
     // ignore
   }
@@ -90,7 +91,7 @@ const setStatusWidgetText = async (page, text) => {
 const setPauseBlocker = async (page, enabled) => {
   if (!page) return;
   try {
-    await page.evaluate(
+    await withTimeout(page.evaluate(
       (payload) => {
         const ID = "ana-pause-blocker";
         const existing = document.getElementById(ID);
@@ -111,7 +112,7 @@ const setPauseBlocker = async (page, enabled) => {
         document.body.appendChild(el);
       },
       { enabled: enabled === true },
-    );
+    ), UI_TIMEOUT_MS, "pause-blocker");
   } catch (_) {
     // ignore
   }
@@ -263,6 +264,14 @@ import { agentSession, backend, sessionStore, getIdToken, CLI_VERSION } from "./
 import { createRealtime, wsSocketFactory } from "./realtime.js";
 import { createPollWaker, waitForNextPoll, waitLabel, POLL_INTERVAL_MS as POLL_FAST_MS } from "./poll-wait.js";
 import { phone } from "./phone-utils.js";
+import {
+  withTimeout,
+  UI_TIMEOUT_MS,
+  createResumeDetector,
+  createLoopHeartbeat,
+  createLoopSupervisor,
+  checkPageHealth,
+} from "./liveness.js";
 import { interactionDateTime } from "./interaction-time.js";
 import {
   createJournal,
@@ -481,6 +490,7 @@ async function main() {
         const why = await waitForNextPoll({
           isActive: () => (label ? false : Boolean(realtime?.isActive())),
           waker,
+          onBeat: () => heartbeat.beat(),
           onTick: async (remaining, active) => {
             const uiText = label ? `${label}: ${formatMsAsHms(remaining)}` : waitLabel(active, remaining);
             if (targets.length) await Promise.all(targets.map((p) => setStatusWidgetText(p, uiText)));
@@ -541,6 +551,78 @@ async function main() {
       }
 
       const POLL_INTERVAL_MS = POLL_FAST_MS;
+
+      // Vida del ciclo (harden-client-resume). Latido: si el ciclo no avanza
+      // (poll o tick de espera) en > 3× 30 s y no está enviando, se abandona la
+      // iteración colgada y empieza otra; lo pendiente se reanuda del registro local.
+      const supervisor = createLoopSupervisor();
+      const heartbeat = createLoopHeartbeat({
+        expectedMs: POLL_INTERVAL_MS,
+        onStall: ({ elapsedMs }) => {
+          const msg = `El ciclo principal no avanzó en ${Math.round(elapsedMs / 1000)} s; se reinicia el ciclo`;
+          console.warn(`\n⚠️  ${msg} (lo pendiente se reanuda del registro local).`);
+          writeCrashLog("loop stall", msg);
+          supervisor.stall();
+          waker.wake({ pendingIfIdle: false });
+        },
+      });
+
+      // Ventanas de WhatsApp tras reanudar: sondeo acotado; si no responde se
+      // recarga (la de automatización no se recarga a media asignación).
+      const checkWindows = async () => {
+        const windows = [
+          ["automatización", getPage()],
+          ["manual", getManualPage()],
+          ["monitor", getMonitorPage()],
+        ];
+        for (const [name, p] of windows) {
+          if (!p) continue;
+          const st = await checkPageHealth(p, {
+            reload: !(name === "automatización" && heartbeat.busy),
+          });
+          if (st === "ok") continue;
+          if (st === "reloaded") {
+            console.log(`🔄 Ventana ${name} de WhatsApp recargada tras la reanudación.`);
+          } else {
+            console.warn(
+              `⚠️  La ventana ${name} de WhatsApp ${st === "closed" ? "está cerrada" : "no responde"}. ANA sigue consultando asignaciones; si no se recupera, cierra ANA y vuelve a abrirlo.`,
+            );
+          }
+        }
+      };
+
+      // Suspensión/reanudación del equipo: salto de reloj > 30 s.
+      let resumeBusy = false;
+      const resumeDetector = createResumeDetector({
+        onResume: ({ gapMs }) => {
+          console.log(
+            `\n💤 Reanudación detectada (${Math.round(gapMs / 1000)} s sin actividad): reconectando y revisando sesión y ventanas...`,
+          );
+          heartbeat.beat();
+          realtime?.reconnectNow("resume");
+          remoteSettings.refreshNow();
+          waker.wake();
+          if (resumeBusy) return;
+          resumeBusy = true;
+          void (async () => {
+            try {
+              // Renovación silenciosa si el ID token vence pronto o ya venció.
+              const token = await getIdToken().catch(() => null);
+              if (!token) {
+                const authMsg = agentSession.authMessage();
+                if (authMsg) console.warn(`⚠️  ${authMsg}`);
+              }
+              await checkWindows();
+            } catch (e) {
+              console.error("⚠️  Revisión tras reanudación falló:", e?.message || e);
+            } finally {
+              resumeBusy = false;
+            }
+          })();
+        },
+      });
+      heartbeat.start();
+      resumeDetector.start();
       const PAUSE_AFTER_MESSAGES = CONSTANTS.PAUSE_AFTER_MESSAGES;
       const PAUSE_DURATION_MS = 30 * 60 * 1000;
 
@@ -596,6 +678,8 @@ async function main() {
       }
 
       while (true) {
+        const outcome = await supervisor.run(async (gen) => {
+        heartbeat.beat();
         cycle++;
         const manualPage = getManualPage();
         const monitorPage = getMonitorPage();
@@ -608,10 +692,12 @@ async function main() {
         // Sesión rechazada por el backend (401 persistente o 403, design D9): no se
         // consumen ni procesan contactos; se sigue consultando con el intervalo normal.
         const authBlock = await backend.recheckAuthorization();
+        if (!supervisor.isCurrent(gen)) return;
+        heartbeat.beat();
         if (authBlock) {
           console.warn(`⚠️  ${authBlock}`);
           await sleepUntilNextPoll([page, manualPage, monitorPage], `${authBlock} · reintento`);
-          continue;
+          return;
         }
 
         // Asignación en curso: reanudar el registro local si existe; si no, poll
@@ -655,6 +741,7 @@ async function main() {
         if (!journal) {
           console.log("📡 Obteniendo contactos del servidor...");
           const fetched = await fetchAssignedChats();
+          heartbeat.beat();
           assignmentContacts = fetched?.contacts || [];
           contacts = assignmentContacts;
           if (assignmentContacts.length > 0) {
@@ -677,6 +764,9 @@ async function main() {
             }
           }
         }
+        // Iteración abandonada por el latido: lo recibido queda en el registro
+        // local y la iteración vigente lo reanuda; esta no envía nada.
+        if (!supervisor.isCurrent(gen)) return;
         console.log(`📊 Contactos para automatización: ${contacts.length}`);
 
         if (contacts.length === 0 && !journal) {
@@ -684,8 +774,12 @@ async function main() {
           if (authMsg) console.warn(`⚠️  ${authMsg}`);
           else console.log("ℹ️  No hay contactos asignados.");
           await sleepUntilNextPoll([page, manualPage, monitorPage], authMsg ? `${authMsg} · reintento` : null);
-          continue;
+          return;
         }
+
+        // Envío en curso: el latido no reinicia el ciclo hasta terminar la asignación.
+        heartbeat.setBusy(true);
+        try {
 
         console.log(`\n╔════════════════════════════════════════╗`);
         console.log(
@@ -856,7 +950,8 @@ async function main() {
             console.log(
               `⏳ Esperando ${delaySec}s antes del siguiente contacto (aleatorio entre 30-120s, pico en 60-80s)...`,
             );
-            await page.waitForTimeout(delayMs);
+            // Temporizador de Node (no depende de que la ventana responda).
+            await new Promise((r) => setTimeout(r, delayMs));
           }
 
           if (sentSinceLastPause >= PAUSE_AFTER_MESSAGES) {
@@ -905,6 +1000,9 @@ async function main() {
 
         await saveResults(results);
         await saveResponses(results);
+        } finally {
+          heartbeat.setBusy(false);
+        }
 
         const sent = results.filter((r) => r.status === "sent").length;
         const errors = results.filter((r) => r.status === "error").length;
@@ -918,6 +1016,8 @@ async function main() {
           `\n✅ Ciclo ${cycle} completado. Volviendo a hacer poll en ${realtime?.isActive() ? "2 min (en vivo)" : `${POLL_INTERVAL_MS / 1000}s`}...`,
         );
         await sleepUntilNextPoll([page, manualPage, monitorPage]);
+        });
+        if (outcome === "stalled") console.log("♻️  Ciclo reiniciado.");
       }
     }
   } catch (error) {
