@@ -9,11 +9,11 @@ import { ADMIN, authedRequest, bodyOf, ctx, LEADER, mockFetch, setupServerTest, 
 const CSV = 'contact_phone,first_name\n5215500000001,Ana\n5215500000002,Beto\n5215500000003,Carla\n,SinTel\n';
 const S3_PUT = 'https://csv-bucket.test.invalid';
 
-async function clientPlan(csv: string, fleet: Fleet, enabled: string[], mode: Mode = 'distribute', agent?: string) {
+async function clientPlan(csv: string, fleet: Fleet, enabled: string[], mode: Mode = 'distribute', agent?: string, excluded?: string[]) {
   const p = parseCsvText(csv, fleet) as ParsedCsv;
   const phone = detectPhoneColumn(p.header, fleet) as { column: string };
   const rows = validateRows(p, fleet, phone.column).valid;
-  const plan = buildPlan({ fleet, mode, enabled, agent, rows }) as Plan;
+  const plan = buildPlan({ fleet, mode, enabled, agent, excluded, rows }) as Plan;
   return { agents: plan.agents, counts: plan.counts, hash: await planHash(plan, rows) };
 }
 
@@ -157,6 +157,32 @@ describe('POST /api/campaigns/[campaign]/uploads — v3', () => {
       const plan = await clientPlan(CSV, 'v3', ['ana', 'beto']);
       const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, plan });
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe('Agentes quitados del reparto', () => {
+    it('reparte solo entre los que quedan', async () => {
+      const { calls } = mockFetch(LEADER, routes());
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      const plan = await clientPlan(CSV, 'v3', ['ana', 'beto'], 'distribute', undefined, ['beto']);
+      const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, excluded: ['beto'], plan });
+      expect(res.status).toBe(200);
+      const sent = JSON.parse(calls.find((c) => c.url.endsWith('/contacts'))!.body!);
+      expect(sent.files.map((x: any) => x.agent)).toEqual(['ana']);
+    });
+
+    it('plan sin exclusión pero con excluded en la solicitud → 409', async () => {
+      mockFetch(LEADER, routes());
+      const plan = await clientPlan(CSV, 'v3', ['ana', 'beto']);
+      const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, excluded: ['beto'], plan });
+      expect(res.status).toBe(409);
+    });
+
+    it('excluded inválido → 400', async () => {
+      mockFetch(LEADER, routes());
+      const plan = await clientPlan(CSV, 'v3', ['ana', 'beto']);
+      const res = await req('didi_vip', { fleet: 'v3', mode: 'distribute', fileName: 'c.csv', csv: CSV, excluded: 'beto', plan });
+      expect(res.status).toBe(400);
     });
   });
 

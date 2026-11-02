@@ -34,6 +34,8 @@ export function buildPlan(input: {
   mode: Mode;
   enabled: readonly string[];
   agent?: string | null;
+  /** Repartir: habilitados que el usuario quitó del reparto (la X de la vista). */
+  excluded?: readonly string[];
   rows: readonly ValidRow[];
 }): Plan | { error: string } {
   let agents: string[];
@@ -42,7 +44,9 @@ export function buildPlan(input: {
     if (!input.enabled.includes(input.agent)) return { error: 'El agente no está habilitado' };
     agents = [input.agent];
   } else {
-    agents = agentOrder(input.enabled, input.fleet);
+    const excluded = new Set(input.excluded ?? []);
+    agents = agentOrder(input.enabled.filter((a) => !excluded.has(a)), input.fleet);
+    if (agents.length === 0 && input.enabled.length > 0) return { error: 'Quitaste a todos los agentes; reagrega al menos uno' };
   }
   if (agents.length === 0) return { error: `No hay agentes habilitados en esta campaña para ${input.fleet}` };
   const assignment = input.rows.map((_, i) => agents[i % agents.length]!);

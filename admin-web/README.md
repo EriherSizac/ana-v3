@@ -177,6 +177,10 @@ escrituras siguen exigiendo `ana:admin:agents:manage`).
    **"Incluir supervisores"** (apagado por defecto) suma a los supervisores
    habilitados de la campaña (`kind:"supervisor"` en la lista derivada) al
    reparto y al selector, etiquetados "Supervisor".
+   En "Repartir" se listan los destinatarios habilitados: la **X** quita a uno
+   del reparto y el **+** lo reagrega ("Reagregar todos" deshace todo). Las
+   exclusiones viajan como `excluded` en la confirmación y el BFF recalcula el
+   plan sin ellos; cambiar campaña, flota o el toggle las reinicia.
 2. **Archivo**: se lee y valida **en el navegador** (`src/lib/contacts/`, el
    mismo código que usa el BFF); nada sale del navegador hasta confirmar. v4
    pide además el código de país (default `52`).
@@ -185,7 +189,7 @@ escrituras siguen exigiendo `ana:admin:agents:manage`).
    "Mi asignación" del desktop (la plantilla por defecto `{mensaje}` aparece
    vacía si el CSV no trae columna `mensaje`).
 4. **Vista previa**: fila válida *i* → destinatario `i mod n` de los habilitados
-   ordenados por username (código de punto); en "Asignar", todas al elegido.
+   no quitados, ordenados por username (código de punto); en "Asignar", todas al elegido.
    Muestra conteo y primeras 5 filas (teléfono y nombre) por destinatario.
 5. **Confirmar** (`ConfirmDialog`): el BFF vuelve a parsear, relee el roster y
    compara agentes, conteos y hash SHA-256 del plan; si difiere responde 409

@@ -274,6 +274,62 @@ describe('/contactos', () => {
     expect(apiFetch.mock.calls.some(([u]) => String(u).endsWith('/uploads'))).toBe(false);
   });
 
+  it('quitar un agente con la X lo saca del reparto; reagregarlo lo devuelve', async () => {
+    let sent: any = null;
+    setApi({ 'didi_vip:v3': ['carla', 'ana', 'beto'] }, (url, init) => {
+      if (url === '/api/campaigns/didi_vip/uploads' && init?.method === 'POST') {
+        sent = init.json;
+        return { fleet: 'v3', status: 'completed', manifest: { perAgent: [{ agent: 'ana', rows: 5 }, { agent: 'carla', rows: 5 }] } };
+      }
+      return {};
+    });
+    await setup();
+    const chips = await screen.findByTestId('distribute-agents');
+    expect(chips).toHaveTextContent('Reparto entre 3 de 3');
+    await userEvent.click(within(chips).getByRole('button', { name: 'Quitar beto' }));
+    expect(chips).toHaveTextContent('Reparto entre 2 de 3');
+    expect(within(chips).getByRole('button', { name: 'Reagregar beto' })).toBeInTheDocument();
+
+    await previewTen();
+    expect(screen.queryByTestId('preview-beto')).toBeNull();
+    expect(screen.getByTestId('preview-ana')).toHaveTextContent('5 contactos');
+    expect(screen.getByTestId('preview-carla')).toHaveTextContent('5 contactos');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar carga' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Entregar' }));
+    await screen.findByTestId('delivery');
+    expect(sent).toMatchObject({ mode: 'distribute', excluded: ['beto'], plan: { agents: ['ana', 'carla'], counts: { ana: 5, carla: 5 } } });
+
+    // Reagregar invalida la vista previa y vuelve a contar a beto.
+    await userEvent.click(within(chips).getByRole('button', { name: 'Reagregar beto' }));
+    expect(chips).toHaveTextContent('Reparto entre 3 de 3');
+    expect(screen.queryByTestId('preview')).toBeNull();
+  });
+
+  it('quitar a todos bloquea la vista previa; "Reagregar todos" los devuelve', async () => {
+    setApi({ 'didi_vip:v3': ['ana', 'beto'] });
+    await setup();
+    const chips = await screen.findByTestId('distribute-agents');
+    await userEvent.click(within(chips).getByRole('button', { name: 'Quitar ana' }));
+    await userEvent.click(within(chips).getByRole('button', { name: 'Quitar beto' }));
+    await waitFor(() => expect(screen.getByLabelText('Archivo CSV')).toBeEnabled());
+    await userEvent.upload(screen.getByLabelText('Archivo CSV'), csvFile(tenRows));
+    await screen.findByTestId('validation-summary');
+    expect(screen.getByRole('button', { name: 'Vista previa' })).toBeDisabled();
+    expect(screen.getByText('Reagrega al menos un agente')).toBeInTheDocument();
+    await userEvent.click(within(chips).getByRole('button', { name: 'Reagregar todos' }));
+    expect(chips).toHaveTextContent('Reparto entre 2 de 2');
+    expect(screen.getByRole('button', { name: 'Vista previa' })).toBeEnabled();
+  });
+
+  it('asignar a un agente no muestra la lista del reparto', async () => {
+    setApi({ 'didi_vip:v3': ['ana', 'beto'] });
+    await setup();
+    await screen.findByTestId('distribute-agents');
+    await pick(/Modo/, 'Asignar a un agente');
+    expect(screen.queryByTestId('distribute-agents')).toBeNull();
+  });
+
   it('confirmación con ConfirmDialog → "Carga entregada" con conteos del manifiesto', async () => {
     let sent: any = null;
     setApi({ 'didi_vip:v3': ['ana', 'beto'] }, (url, init) => {

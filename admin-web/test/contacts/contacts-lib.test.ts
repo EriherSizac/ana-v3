@@ -138,6 +138,17 @@ describe('plan de reparto', () => {
     expect(v4Assignments(plan)).toEqual({ 'ana.lopez': 1 });
   });
 
+  it('repartir sin los agentes quitados', () => {
+    const plan = buildPlan({ fleet: 'v3', mode: 'distribute', enabled: ['carla', 'ana', 'beto'], excluded: ['ana'], rows: rowsOf(5) }) as Plan;
+    expect(plan.agents).toEqual(['beto', 'carla']);
+    expect(plan.counts).toEqual({ beto: 3, carla: 2 });
+    expect(buildPlan({ fleet: 'v3', mode: 'distribute', enabled: ['ana'], excluded: ['ana'], rows: rowsOf(2) })).toEqual({
+      error: 'Quitaste a todos los agentes; reagrega al menos uno',
+    });
+    // Asignar a un agente ignora las exclusiones del reparto.
+    expect((buildPlan({ fleet: 'v3', mode: 'single', enabled: ['ana'], agent: 'ana', excluded: ['ana'], rows: rowsOf(2) }) as Plan).agents).toEqual(['ana']);
+  });
+
   it('sin habilitados → error', () => {
     expect(buildPlan({ fleet: 'v3', mode: 'distribute', enabled: [], rows: rowsOf(2) })).toEqual({ error: 'No hay agentes habilitados en esta campaña para v3' });
   });

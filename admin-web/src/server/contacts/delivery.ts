@@ -38,6 +38,8 @@ export interface UploadRequest {
   large?: { uploadId: string; sourceKey: string };
   /** Toggle "Incluir supervisores" (add-supervisor-contact-access): filtra el roster igual que la vista previa. */
   includeSupervisors: boolean;
+  /** Repartir: habilitados que el usuario quitó del reparto. */
+  excluded: string[];
   /** v4: código de país (default `52`) y columna de teléfono. Sin plantilla: el agente escribe el mensaje. */
   countryCode?: string;
   phoneColumn?: string | null;
@@ -47,6 +49,8 @@ export interface UploadRequest {
 }
 
 export const ROSTER_CHANGED = 'El roster cambió; revisa la nueva vista previa';
+
+const MAX_EXCLUDED = 500;
 
 export function parseUploadRequest(body: unknown): UploadRequest {
   const b = (body ?? {}) as Record<string, unknown>;
@@ -61,6 +65,10 @@ export function parseUploadRequest(body: unknown): UploadRequest {
     large = { uploadId: b.uploadId, sourceKey: b.sourceKey };
   } else if (typeof b.csv !== 'string' || !b.csv) throw new HttpError('invalid_request', 'Archivo requerido');
   if (typeof b.fileName !== 'string' || !b.fileName.trim()) throw new HttpError('invalid_request', 'Nombre de archivo requerido');
+  const excluded = b.excluded ?? [];
+  if (!Array.isArray(excluded) || excluded.length > MAX_EXCLUDED || excluded.some((a) => typeof a !== 'string' || !a || a.length > 128)) {
+    throw new HttpError('invalid_request', 'Agentes excluidos inválidos');
+  }
   const plan = b.plan as UploadRequest['plan'] | undefined;
   if (!plan || !Array.isArray(plan.agents) || typeof plan.hash !== 'string' || !plan.counts || typeof plan.counts !== 'object') {
     throw new HttpError('invalid_request', 'Plan requerido');
@@ -73,6 +81,7 @@ export function parseUploadRequest(body: unknown): UploadRequest {
     csv: typeof b.csv === 'string' ? b.csv : '',
     ...(large ? { large } : {}),
     includeSupervisors: b.includeSupervisors === true,
+    excluded: excluded as string[],
     countryCode: typeof b.countryCode === 'string' && /^\d{1,4}$/.test(b.countryCode) ? b.countryCode : '52',
     phoneColumn: typeof b.phoneColumn === 'string' ? b.phoneColumn : null,
     plan,
@@ -119,7 +128,7 @@ export async function verifyPlan(req: UploadRequest, token: string, campaign: { 
 
   const roster = await getRoster(fleet, token, campaign[fleet]);
   const enabled = enabledRecipients(roster, req.includeSupervisors).agents;
-  const plan = buildPlan({ fleet, mode: req.mode, enabled, agent: req.agent, rows: valid });
+  const plan = buildPlan({ fleet, mode: req.mode, enabled, agent: req.agent, excluded: req.excluded, rows: valid });
   if ('error' in plan) throw new HttpError('conflict', ROSTER_CHANGED);
   const hash = await planHash(plan, valid);
   if (hash !== req.plan.hash || plan.agents.join('\n') !== req.plan.agents.join('\n') || !sameCounts(plan.counts, req.plan.counts)) {
@@ -158,7 +167,7 @@ export async function verifyLargePlan(req: UploadRequest, token: string, campaig
   const roster = await getRoster('v3', token, campaign);
   const enabled = enabledRecipients(roster, req.includeSupervisors).agents;
   const fake = new Array(rows).fill(null).map(() => ({ rowNumber: 0, values: [], phone: '', digits: '', record: {} }));
-  const plan = buildPlan({ fleet: 'v3', mode: req.mode, enabled, agent: req.agent, rows: fake });
+  const plan = buildPlan({ fleet: 'v3', mode: req.mode, enabled, agent: req.agent, excluded: req.excluded, rows: fake });
   if ('error' in plan || plan.agents.join('\n') !== req.plan.agents.join('\n') || !sameCounts(plan.counts, req.plan.counts)) {
     throw new HttpError('conflict', ROSTER_CHANGED);
   }

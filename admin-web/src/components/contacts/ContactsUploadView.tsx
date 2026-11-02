@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent } from 'react';
 import Link from 'next/link';
+import { Plus, X } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -72,6 +73,12 @@ function pasteInfo(text: string): { lines: number; bytes: number; sample: string
   };
 }
 
+/** Exclusiones que siguen habilitadas; misma referencia si no cambia (no invalida la vista previa). */
+const keepEnabled = (excluded: string[], agents: string[]): string[] => {
+  const kept = excluded.filter((a) => agents.includes(a));
+  return kept.length === excluded.length ? excluded : kept;
+};
+
 const PHASE_LABEL: Record<Progress['phase'], string> = { lectura: 'Lectura', validación: 'Validación', reparto: 'Reparto' };
 
 type Delivery =
@@ -97,6 +104,8 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   const [supervisors, setSupervisors] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>('distribute');
   const [agent, setAgent] = useState<string | null>(null);
+  // Repartir: habilitados quitados del reparto con la X.
+  const [excluded, setExcluded] = useState<string[]>([]);
   const [enabled, setEnabled] = useState<string[] | null>(null);
   const [enabledError, setEnabledError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -146,6 +155,8 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
         if (cancelled) return;
         setEnabled(r.agents);
         setSupervisors(r.supervisors ?? []);
+        // Una recarga del roster conserva las exclusiones de quienes siguen habilitados.
+        setExcluded((prev) => keepEnabled(prev, r.agents));
       })
       .catch((e) => {
         if (cancelled || isRedirecting(e)) return;
@@ -155,6 +166,9 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
       cancelled = true;
     };
   }, [campaign, fleet, includeSupervisors, rosterVersion]);
+
+  // Otro destino: el reparto vuelve a incluir a todos.
+  useEffect(() => setExcluded((prev) => (prev.length ? [] : prev)), [campaign, fleet, includeSupervisors]);
 
   const clearData = () => {
     processor.current?.cancel();
@@ -177,7 +191,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     setPreview(null);
     setDelivery(null);
     setSendError(null);
-  }, [campaign, fleet, mode, agent, read, check, countryCode, includeSupervisors]);
+  }, [campaign, fleet, mode, agent, excluded, read, check, countryCode, includeSupervisors]);
 
   /** Ejecuta una fase en el Worker con progreso; `null` si se canceló. */
   const runPhase = async <T,>(fn: (p: ContactsProcessor) => Promise<T>): Promise<T | null> => {
@@ -298,12 +312,15 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   const sendColumnBlock = check?.sendColumnError ?? null;
   const phoneColumn = check?.phoneColumn ?? null;
   const noEnabled = enabled !== null && enabled.length === 0;
+  const distributeTo = mode === 'distribute' && enabled ? enabled.filter((a) => !excluded.includes(a)) : [];
+  const toggleExcluded = (a: string) => setExcluded((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
   const busy = progress !== null;
 
   const previewBlock: string | null = (() => {
     if (!campaign || !fleet) return 'Elige campaña y flota';
     if (noEnabled || enabled === null) return 'Sin agentes habilitados';
     if (mode === 'single' && !agent) return 'Elige el agente';
+    if (mode === 'distribute' && distributeTo.length === 0) return 'Reagrega al menos un agente';
     if (busy) return 'Procesando el archivo';
     if (reservedError) return reservedError;
     if (sendColumnBlock) return sendColumnBlock;
@@ -316,7 +333,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
   const makePreview = async () => {
     if (!check || !fleet || !enabled) return;
     setProgress({ phase: 'reparto', done: 0, total: check.validCount });
-    const res = await runPhase((p) => p.plan({ mode, enabled, agent }, setProgress));
+    const res = await runPhase((p) => p.plan({ mode, enabled, agent, excluded: mode === 'distribute' ? excluded : [] }, setProgress));
     if (!res) return;
     if ('error' in res) {
       setSendError(res.error);
@@ -381,6 +398,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           fileName,
           ...data,
           includeSupervisors,
+          excluded: mode === 'distribute' ? excluded : [],
           ...(fleet === 'v4' ? { countryCode, phoneColumn } : {}),
           plan: { agents: preview.plan.agents, counts: preview.plan.counts, hash: preview.hash },
         },
@@ -403,6 +421,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           .then((r) => {
             setEnabled(r.agents);
             setSupervisors(r.supervisors ?? []);
+            setExcluded((prev) => keepEnabled(prev, r.agents));
           })
           .catch(() => {});
       } else {
@@ -424,7 +443,7 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
     types: ['uploads.changed', 'review.changed', 'roster.changed'],
     campaign,
     reload: () => setRosterVersion((v) => v + 1),
-    isDirty: () => read !== null || busy || agent !== null || sending || confirmOpen,
+    isDirty: () => read !== null || busy || agent !== null || excluded.length > 0 || sending || confirmOpen,
   });
 
   const pct = progress ? Math.min(100, Math.round((progress.done / Math.max(1, progress.total)) * 100)) : 0;
@@ -489,6 +508,45 @@ export function ContactsUploadView({ pollIntervalMs = POLL_INTERVAL_MS, pollTime
           <p className="mt-3 text-xs text-text-light">
             {enabled.length} destinatario(s) habilitado(s) en {campaign} ({fleet}){supervisors.length > 0 ? `, ${supervisors.length} supervisor(es)` : ''}.
           </p>
+        )}
+        {mode === 'distribute' && enabled && enabled.length > 0 && (
+          <div className="mt-3" data-testid="distribute-agents">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-xs font-semibold text-text-muted">
+                Reparto entre {distributeTo.length} de {enabled.length}
+              </p>
+              {excluded.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={() => setExcluded([])} disabled={busy || sending}>
+                  Reagregar todos
+                </Button>
+              )}
+            </div>
+            <ul className="mt-2 flex flex-wrap gap-2">
+              {enabled.map((a) => {
+                const out = excluded.includes(a);
+                return (
+                  <li
+                    key={a}
+                    className={`inline-flex items-center gap-1 rounded-full border py-0.5 pl-3 pr-1 text-xs ${
+                      out ? 'border-dashed border-neutral-50 text-text-light' : 'border-neutral-50 bg-primary-light-90 text-primary'
+                    }`}
+                  >
+                    <span className={`font-mono ${out ? 'line-through' : 'font-semibold'}`}>{labelOf(a)}</span>
+                    <button
+                      type="button"
+                      aria-label={out ? `Reagregar ${a}` : `Quitar ${a}`}
+                      title={out ? 'Reagregar al reparto' : 'Quitar del reparto'}
+                      onClick={() => toggleExcluded(a)}
+                      disabled={busy || sending}
+                      className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary disabled:opacity-60"
+                    >
+                      {out ? <Plus className="h-3.5 w-3.5" aria-hidden="true" /> : <X className="h-3.5 w-3.5" aria-hidden="true" />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
       </section>
 

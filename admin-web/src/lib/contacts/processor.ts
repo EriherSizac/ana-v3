@@ -28,7 +28,7 @@ type Body = DistOmit<WorkerRequest, 'id'>;
 export interface ContactsProcessor {
   read(input: ReadInput, onProgress?: ProgressListener): Promise<ReadSummary | { error: string }>;
   check(phoneChoice: string | null, onProgress?: ProgressListener): Promise<CheckSummary | { error: string }>;
-  plan(input: { mode: Mode; enabled: string[]; agent?: string | null }, onProgress?: ProgressListener): Promise<PlanSummary | { error: string }>;
+  plan(input: { mode: Mode; enabled: string[]; agent?: string | null; excluded?: string[] }, onProgress?: ProgressListener): Promise<PlanSummary | { error: string }>;
   /** Detiene el trabajo en curso (el Worker se reinicia y pierde el archivo leído). */
   cancel(): void;
   dispose(): void;

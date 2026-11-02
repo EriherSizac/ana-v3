@@ -193,14 +193,14 @@ export class ContactsSession {
     };
   }
 
-  async plan(input: { mode: Mode; enabled: readonly string[]; agent?: string | null }, onProgress?: ProgressCallback): Promise<PlanSummary | { error: string }> {
+  async plan(input: { mode: Mode; enabled: readonly string[]; agent?: string | null; excluded?: readonly string[] }, onProgress?: ProgressCallback): Promise<PlanSummary | { error: string }> {
     const parsed = this.parsed;
     const validation = this.validation;
     if (!parsed || !validation) return { error: 'Carga un archivo válido' };
     const fleet = this.fleet;
     const rows = validation.valid;
     onProgress?.({ phase: 'reparto', done: 0, total: rows.length });
-    const plan = buildPlan({ fleet, mode: input.mode, enabled: input.enabled, agent: input.agent, rows });
+    const plan = buildPlan({ fleet, mode: input.mode, enabled: input.enabled, agent: input.agent, excluded: input.excluded, rows });
     if ('error' in plan) return plan;
     const hash = await planHash(plan, rows);
     const samples: Record<string, PreviewRow[]> = Object.fromEntries(plan.agents.map((a) => [a, []]));
@@ -238,7 +238,7 @@ export class ContactsSession {
 export type WorkerRequest =
   | { id: number; type: 'read'; input: ReadInput }
   | { id: number; type: 'check'; phoneChoice: string | null }
-  | { id: number; type: 'plan'; input: { mode: Mode; enabled: string[]; agent?: string | null } };
+  | { id: number; type: 'plan'; input: { mode: Mode; enabled: string[]; agent?: string | null; excluded?: string[] } };
 
 export type WorkerResponse =
   | { id: number; type: 'progress'; progress: Progress }
