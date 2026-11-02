@@ -15,23 +15,29 @@ export interface CookieConfig {
   secure: boolean;
 }
 
-/** Configuración de la cookie según entorno (exportada para pruebas). */
+/** Apex del SSO de Pernexium: lo comparte el login central (login.pernexium.com.mx). */
+export const APEX = 'pernexium.com.mx';
+
+/**
+ * Configuración de la cookie según el host (exportada para pruebas). Igual que
+ * el login central: el domain del apex solo dentro del apex y sobre https; en
+ * localhost o previews (*.amplifyapp.com) la cookie es host-only o se ignora
+ * en silencio.
+ */
 export function cookieConfig(
-  nodeEnv: string | undefined = process.env.NODE_ENV,
-  cookieDomain: string | undefined = process.env.NEXT_PUBLIC_COOKIE_DOMAIN,
+  hostname: string = window.location.hostname,
+  protocol: string = window.location.protocol,
 ): CookieConfig {
-  const isProd = nodeEnv === 'production';
-  // Un domain con punto solo funciona sobre https; en localhost hay que omitir
-  // el domain y secure o la cookie se ignora en silencio.
-  const useApexDomain = isProd && !!cookieDomain && cookieDomain !== 'localhost';
+  const https = protocol === 'https:';
+  const inApex = hostname === APEX || hostname.endsWith(`.${APEX}`);
   return {
-    ...(useApexDomain ? { domain: cookieDomain } : {}),
+    ...(inApex && https ? { domain: `.${APEX}` } : {}),
     path: '/',
-    expires: 1, // días
+    expires: 30, // días, igual que el login central
     // 'lax' funciona entre subdominios same-site; 'strict' puede romper
     // navegación cross-subdominio.
     sameSite: 'lax',
-    secure: isProd,
+    secure: https,
   };
 }
 

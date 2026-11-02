@@ -24,6 +24,8 @@ import { AccessContext } from '@/components/system/AccessContext';
 import { AppHeader } from '@/components/system/AppHeader';
 import { ConsoleGate } from '@/components/system/ConsoleGate';
 import { HomeView } from '@/components/system/HomeView';
+import { logoutNavigation } from '@/components/system/LogoutButton';
+import { LOGOUT_EVENT } from '@/lib/realtime/RealtimeProvider';
 import { ApiError } from '@/lib/api-client';
 import NotFound from '@/app/not-found';
 
@@ -161,16 +163,30 @@ describe('AppHeader', () => {
     expect(screen.getByRole('button', { name: 'Menú de usuario admin.x' })).toHaveFocus();
   });
 
-  it('Cerrar sesión pide confirmación con advertencia y redirige a /login', async () => {
-    logout.mockResolvedValue(undefined);
+  it('Cerrar sesión pide confirmación con advertencia y termina en el /logout del login central', async () => {
+    const order: string[] = [];
+    const onLogoutEvent = () => order.push('realtime');
+    window.addEventListener(LOGOUT_EVENT, onLogoutEvent);
+    logout.mockImplementation(async () => {
+      order.push('logout');
+    });
+    const original = logoutNavigation.assign;
+    const assign = vi.fn((url: string) => {
+      order.push(url);
+    });
+    logoutNavigation.assign = assign;
     render(<AppHeader username="admin.x" sections={[]} />);
     await userEvent.click(screen.getByRole('button', { name: 'Menú de usuario admin.x' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'Cerrar sesión' }));
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveTextContent('también se cerrará en las demás apps Pernexium');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cerrar sesión' }));
-    expect(logout).toHaveBeenCalled();
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/login'));
+    const target = `http://localhost:3100/logout?redirect=${encodeURIComponent(window.location.origin)}`;
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(target));
+    expect(order).toEqual(['realtime', 'logout', target]);
+    expect(router.replace).not.toHaveBeenCalledWith('/login');
+    logoutNavigation.assign = original;
+    window.removeEventListener(LOGOUT_EVENT, onLogoutEvent);
   });
 });
 

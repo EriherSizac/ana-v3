@@ -1,134 +1,95 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetNavigation, router, setLocation } from '../helpers/navigation';
 
 vi.mock('next/navigation', () => import('../helpers/navigation'));
 
 const hasSession = vi.fn();
-const login = vi.fn();
-const confirmLogin = vi.fn();
-vi.mock('@/lib/auth-client', async () => {
-  const real = await vi.importActual<typeof import('@/lib/auth-client')>('@/lib/auth-client');
-  return {
-    loginErrorMessage: real.loginErrorMessage,
-    hasSession: () => hasSession(),
-    login: (...a: unknown[]) => login(...a),
-    confirmLogin: (...a: unknown[]) => confirmLogin(...a),
-  };
-});
+vi.mock('@/lib/auth-client', () => ({ hasSession: () => hasSession() }));
 
-import { LoginView } from '@/components/system/LoginView';
+import { LoginView, loginNavigation } from '@/components/system/LoginView';
 
-describe('/login', () => {
+const CENTRAL = 'http://localhost:3100'; // fuera de producción
+const back = (path: string) => `${CENTRAL}/?redirect=${encodeURIComponent(`${window.location.origin}${path}`)}`;
+
+describe('/login (login central)', () => {
+  const redirect = vi.fn();
+  const original = loginNavigation.redirect;
+
   beforeEach(() => {
     resetNavigation();
     hasSession.mockReset();
-    login.mockReset();
-    confirmLogin.mockReset();
+    redirect.mockReset();
+    loginNavigation.redirect = redirect;
+    window.sessionStorage.clear();
   });
 
-  it('con sesión vigente redirige a `next` sin mostrar el formulario', async () => {
+  afterEach(() => {
+    loginNavigation.redirect = original;
+    vi.useRealTimers();
+  });
+
+  it('con sesión vigente redirige a `next` sin ir al login central', async () => {
     setLocation('/login', 'next=/agentes');
     hasSession.mockResolvedValue(true);
     render(<LoginView />);
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/agentes'));
-    expect(screen.queryByLabelText('Usuario')).toBeNull();
+    expect(redirect).not.toHaveBeenCalled();
   });
 
-  it('`next` externo se ignora y redirige a /', async () => {
+  it('`next` externo se ignora y usa /', async () => {
     setLocation('/login', 'next=https://ejemplo.com');
     hasSession.mockResolvedValue(true);
     render(<LoginView />);
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/'));
   });
 
-  it('el campo Usuario acepta un username que no es correo', async () => {
+  it('sin sesión manda al login central con la URL absoluta de vuelta y sin formulario propio', async () => {
+    setLocation('/login', 'next=%2Fagentes%3Fcampaign%3Dx');
     hasSession.mockResolvedValue(false);
-    login.mockResolvedValue({ status: 'done' });
     render(<LoginView />);
-    const user = await screen.findByLabelText('Usuario');
-    expect(user).toHaveAttribute('type', 'text');
-    await userEvent.type(user, 'erick.silva');
-    await userEvent.type(screen.getByLabelText('Contraseña'), 'secreto');
-    await userEvent.click(screen.getByRole('button', { name: 'Entrar' }));
-    expect(login).toHaveBeenCalledWith('erick.silva', 'secreto');
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/'));
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('credenciales incorrectas → mensaje inline', async () => {
-    hasSession.mockResolvedValue(false);
-    login.mockRejectedValue(Object.assign(new Error('x'), { name: 'NotAuthorizedException' }));
-    render(<LoginView />);
-    await userEvent.type(await screen.findByLabelText('Usuario'), 'erick.silva');
-    await userEvent.type(screen.getByLabelText('Contraseña'), 'mala');
-    await userEvent.click(screen.getByRole('button', { name: 'Entrar' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Usuario o contraseña incorrectos');
+    await waitFor(() => expect(redirect).toHaveBeenCalledWith(back('/agentes?campaign=x')));
     expect(router.replace).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Usuario')).toBeNull();
+    expect(screen.queryByLabelText('Contraseña')).toBeNull();
   });
 
-  it('mostrar/ocultar contraseña', async () => {
+  it('`next` externo sin sesión vuelve al inicio de ANA Admin', async () => {
+    setLocation('/login', 'next=//ejemplo.com');
     hasSession.mockResolvedValue(false);
     render(<LoginView />);
-    const pw = await screen.findByLabelText('Contraseña');
-    expect(pw).toHaveAttribute('type', 'password');
-    await userEvent.click(screen.getByRole('button', { name: 'Mostrar contraseña' }));
-    expect(pw).toHaveAttribute('type', 'text');
+    await waitFor(() => expect(redirect).toHaveBeenCalledWith(back('/')));
   });
 
-  it('MFA TOTP: campo de 6 dígitos y completa la sesión', async () => {
-    setLocation('/login', 'next=%2Fagentes');
+  it('a la quinta ida en 30 s se detiene, muestra "Reintentar" y este vuelve a intentar', async () => {
     hasSession.mockResolvedValue(false);
-    login.mockResolvedValue({ status: 'totp' });
-    confirmLogin.mockResolvedValue({ status: 'done' });
+    for (let i = 0; i < 4; i++) {
+      const { unmount } = render(<LoginView />);
+      await waitFor(() => expect(redirect).toHaveBeenCalledTimes(i + 1));
+      unmount();
+    }
     render(<LoginView />);
-    await userEvent.type(await screen.findByLabelText('Usuario'), 'u');
-    await userEvent.type(screen.getByLabelText('Contraseña'), 'p');
-    await userEvent.click(screen.getByRole('button', { name: 'Entrar' }));
-    const code = await screen.findByLabelText('Código de 6 dígitos');
-    await userEvent.type(code, '123456');
-    await userEvent.click(screen.getByRole('button', { name: 'Verificar' }));
-    expect(confirmLogin).toHaveBeenCalledWith('123456');
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/agentes'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('no logra leerla');
+    expect(redirect).toHaveBeenCalledTimes(4);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+    await waitFor(() => expect(redirect).toHaveBeenCalledTimes(5));
   });
 
-  it('nueva contraseña obligatoria: pide confirmación', async () => {
+  it('las idas de hace más de 30 s no cuentan', async () => {
+    const old = Date.now() - 31_000;
+    window.sessionStorage.setItem('ana-admin:login-hops', JSON.stringify([old, old, old, old]));
     hasSession.mockResolvedValue(false);
-    login.mockResolvedValue({ status: 'newPassword' });
-    confirmLogin.mockResolvedValue({ status: 'done' });
     render(<LoginView />);
-    await userEvent.type(await screen.findByLabelText('Usuario'), 'u');
-    await userEvent.type(screen.getByLabelText('Contraseña'), 'p');
-    await userEvent.click(screen.getByRole('button', { name: 'Entrar' }));
-    await userEvent.type(await screen.findByLabelText('Nueva contraseña'), 'Nueva#2026');
-    await userEvent.type(screen.getByLabelText('Confirmar contraseña'), 'Otra#2026');
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar y entrar' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Las contraseñas no coinciden.');
-    await userEvent.clear(screen.getByLabelText('Confirmar contraseña'));
-    await userEvent.type(screen.getByLabelText('Confirmar contraseña'), 'Nueva#2026');
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar y entrar' }));
-    expect(confirmLogin).toHaveBeenCalledWith('Nueva#2026');
+    await waitFor(() => expect(redirect).toHaveBeenCalledTimes(1));
   });
 
-  it('alta de TOTP muestra el secreto', async () => {
-    hasSession.mockResolvedValue(false);
-    login.mockResolvedValue({ status: 'totpSetup', secret: 'ABC123', uri: 'otpauth://totp/x' });
+  it('con sesión limpia el conteo', async () => {
+    window.sessionStorage.setItem('ana-admin:login-hops', JSON.stringify([Date.now()]));
+    hasSession.mockResolvedValue(true);
     render(<LoginView />);
-    await userEvent.type(await screen.findByLabelText('Usuario'), 'u');
-    await userEvent.type(screen.getByLabelText('Contraseña'), 'p');
-    await userEvent.click(screen.getByRole('button', { name: 'Entrar' }));
-    expect(await screen.findByTestId('totp-secret')).toHaveTextContent('ABC123');
-  });
-
-  it('paso no soportado → mensaje inline y vuelve al formulario', async () => {
-    hasSession.mockResolvedValue(false);
-    login.mockResolvedValue({ status: 'unsupported', step: 'X' });
-    render(<LoginView />);
-    await userEvent.type(await screen.findByLabelText('Usuario'), 'u');
-    await userEvent.type(screen.getByLabelText('Contraseña'), 'p');
-    await userEvent.click(screen.getByRole('button', { name: 'Entrar' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/no soporta/);
-    expect(screen.getByLabelText('Usuario')).toBeInTheDocument();
+    await waitFor(() => expect(router.replace).toHaveBeenCalled());
+    expect(window.sessionStorage.getItem('ana-admin:login-hops')).toBeNull();
   });
 });

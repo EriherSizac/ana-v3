@@ -1,15 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { InlineMessage } from '@/components/ui/Toast';
 import { logout } from '@/lib/auth-client';
+import { centralLogoutUrl } from '@/lib/central-login';
 import { LOGOUT_EVENT } from '@/lib/realtime/RealtimeProvider';
+
+/** Navegación fuera de la app (sustituible en pruebas: jsdom no navega). */
+export const logoutNavigation = {
+  assign: (url: string): void => window.location.assign(url),
+};
 
 /** Diálogo de cierre de sesión con la advertencia de sesión compartida. */
 export function LogoutDialog({ open, onCancel }: { open: boolean; onCancel: () => void }) {
-  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -31,7 +35,8 @@ export function LogoutDialog({ open, onCancel }: { open: boolean; onCancel: () =
           // Cierra el canal realtime antes de cerrar la sesión.
           window.dispatchEvent(new Event(LOGOUT_EVENT));
           await logout();
-          router.replace('/login');
+          // Termina en el login central, que también limpia su estado.
+          logoutNavigation.assign(centralLogoutUrl(window.location.origin));
         } catch {
           setError('No se pudo cerrar la sesión. Intenta de nuevo.');
         } finally {

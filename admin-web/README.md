@@ -14,14 +14,18 @@ navegador ──(id token en Authorization)──▶ BFF (route handlers /api/*)
 - **SSO** (`src/lib/amplify.ts`, `src/components/system/AmplifyProvider.tsx`):
   réplica de `docs/sso-cognito-cookie-storage.md`. Los tokens de Cognito
   (pool `us-east-2_UepfOyKpd`) se guardan en cookie del apex común
-  (`domain=.pernexium.com.mx`, `secure`) solo en producción; en desarrollo sin
-  `domain` ni `secure`. ANA Admin usa el **mismo App Client** que v4
+  (`domain=.pernexium.com.mx`, `secure`, 30 días) cuando el host está dentro
+  del apex y es https, igual que el login central; en cualquier otro host
+  (localhost, previews `*.amplifyapp.com`) sin `domain`. ANA Admin usa el **mismo App Client** que v4
   (`1r6niimhkl2fmias6kk85n4ou4`): Amplify nombra las cookies por client id, así
   que un client distinto no vería la sesión de las demás apps.
-- **Login** (`/login`): fondo azul, campo *Usuario* (username, nunca correo),
-  challenges del pool (TOTP, SMS, selección de MFA, alta de TOTP, nueva
-  contraseña). Al montar comprueba la sesión y redirige a `next` (solo rutas
-  internas, `src/lib/safe-next.ts`).
+- **Login** (`/login`): sin formulario propio. Con sesión redirige a `next`
+  (solo rutas internas, `src/lib/safe-next.ts`); sin sesión manda al login
+  central de Pernexium (`https://login.pernexium.com.mx/?redirect=<origen + next>`,
+  `src/lib/central-login.ts`), que maneja contraseña, MFA y contraseña vencida y
+  regresa con la cookie del apex. Si manda allá más de 4 veces en 30 s (la app no
+  lee la cookie) se detiene y muestra "Reintentar". Cerrar sesión termina en
+  `/logout?redirect=<origen>` del login central.
 - **Gate** (`src/app/(console)/layout.tsx` → `ConsoleGate`): Skeleton mientras
   resuelve la sesión, redirect a `/login?next=` sin sesión, carga `GET /api/me`
   y muestra "Sin acceso" si el usuario no puede entrar o no tiene la sección.
@@ -59,7 +63,7 @@ identificadores públicos); el resto solo existe en el servidor y
 |---|---|---|
 | `NEXT_PUBLIC_COGNITO_USER_POOL_ID` | público | `us-east-2_UepfOyKpd` |
 | `NEXT_PUBLIC_COGNITO_CLIENT_ID` | público | App Client compartido `1r6niimhkl2fmias6kk85n4ou4` |
-| `NEXT_PUBLIC_COOKIE_DOMAIN` | público | `.pernexium.com.mx` en prod, `localhost` en dev |
+| `NEXT_PUBLIC_LOGIN_URL` | público | Opcional. Login central; por defecto `https://login.pernexium.com.mx` en prod y `http://localhost:3100` en dev |
 | `NEXT_PUBLIC_REALTIME_URL` | público | URL `wss://…execute-api…/<stage>` del canal realtime (`RealtimeWsUrl` de v4); vacía = sin canal |
 | `NEXT_PUBLIC_REALTIME_ENABLED` | público | `false` apaga el canal (por defecto encendido si hay URL) |
 | `COGNITO_ALLOWED_CLIENT_IDS` | servidor | allowlist de `aud` (separada por comas) |
@@ -72,14 +76,16 @@ identificadores públicos); el resto solo existe en el servidor y
 ```bash
 cd admin-web
 npm ci
-cp .env.example .env.local     # completa ANA_V3_API_BASE, ROLES_API_* ; deja NEXT_PUBLIC_COOKIE_DOMAIN=localhost
+cp .env.example .env.local     # completa ANA_V3_API_BASE, ROLES_API_*
 npm run dev                    # http://localhost:3000
 ```
 
-Con `NEXT_PUBLIC_COOKIE_DOMAIN=localhost` y `NODE_ENV=development` la cookie se
-escribe sin `domain` ni `secure` (una cookie con dominio apex no se setea en
-`http://localhost`). El SSO con otras apps solo se puede probar en el dominio
-real.
+El inicio de sesión vive en el login central: levántalo en local
+(`pnpm --filter @login/web dev` en su monorepo → `http://localhost:3100`). En
+`http://localhost` la cookie se escribe sin `domain` ni `secure` y se comparte
+entre puertos, así que la sesión del login local llega a `localhost:3000`. El
+login de producción no sirve desde local (la cookie del apex no llega a
+localhost); si el login local usa otro puerto, ajusta `NEXT_PUBLIC_LOGIN_URL`.
 
 ## Comandos
 
